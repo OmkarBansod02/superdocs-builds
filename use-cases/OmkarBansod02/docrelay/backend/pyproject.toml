@@ -10,6 +10,7 @@ requires-python = ">=3.12,<3.15"
 dependencies = [
   "alembic==1.19.0",
   "asyncpg==0.31.0",
+  "cryptography==46.0.3",
   "fastapi==0.141.1",
   "httpx==0.28.1",
   "pydantic==2.13.4",
@@ -34,6 +35,10 @@ packages = ["src/docrelay"]
 addopts = "-ra --strict-config --strict-markers"
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+  "live_google: opt-in test requiring an already configured real Google OAuth connection",
+  "postgresql: opt-in test requiring the local PostgreSQL service",
+]
 
 [tool.ruff]
 line-length = 100

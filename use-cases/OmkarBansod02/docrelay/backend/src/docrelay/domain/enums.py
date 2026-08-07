@@ -7,9 +7,10 @@ class Provider(StrEnum):
 
 class ConnectionStatus(StrEnum):
     PENDING = "PENDING"
-    ACTIVE = "ACTIVE"
-    REVOKED = "REVOKED"
-    ERROR = "ERROR"
+    CONNECTED = "CONNECTED"
+    DISCONNECTED = "DISCONNECTED"
+    REAUTH_REQUIRED = "REAUTH_REQUIRED"
+    INVALID = "INVALID"
 
 
 class SyncMode(StrEnum):

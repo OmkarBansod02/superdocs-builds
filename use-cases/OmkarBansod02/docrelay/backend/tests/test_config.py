@@ -34,8 +34,30 @@ def test_secrets_are_typed_as_secret_values() -> None:
         APP_ENV="test",
         DATABASE_URL="sqlite+aiosqlite:///:memory:",
         SUPERDOCS_API_KEY="not-a-real-key",
+        GOOGLE_OAUTH_CLIENT_ID="test-client-id",
         GOOGLE_OAUTH_CLIENT_SECRET="not-a-real-secret",
+        GOOGLE_OAUTH_REDIRECT_URI="http://test/api/v1/google/oauth/callback",
+        OAUTH_TOKEN_ENCRYPTION_KEYS=('{"v1":"MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="}'),
     )
     assert "not-a-real-key" not in repr(settings.superdocs_api_key)
     assert settings.superdocs_api_key is not None
     assert settings.superdocs_api_key.get_secret_value() == "not-a-real-key"
+
+
+def test_google_oauth_configuration_must_be_complete() -> None:
+    with pytest.raises(ValidationError, match="Google OAuth configuration is incomplete"):
+        Settings(
+            _env_file=None,
+            APP_ENV="test",
+            DATABASE_URL="sqlite+aiosqlite:///:memory:",
+            GOOGLE_OAUTH_CLIENT_ID="client-id-without-other-required-values",
+        )
+
+
+def test_production_requires_explicit_application_owner_subject() -> None:
+    with pytest.raises(ValidationError, match="DOCRELAY_OWNER_SUBJECT"):
+        Settings(
+            _env_file=None,
+            APP_ENV="production",
+            DATABASE_URL="postgresql+asyncpg://user:password@db/docrelay",
+        )

@@ -23,15 +23,51 @@ class Settings(BaseSettings):
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: SecretStr | None = None
     google_oauth_redirect_uri: str | None = None
-    oauth_token_encryption_key: SecretStr | None = None
+    oauth_token_encryption_keys: SecretStr | None = None
+    oauth_token_encryption_primary_version: str = "v1"
+    google_oauth_state_ttl_seconds: int = Field(default=600, ge=60, le=1800)
+    google_access_token_refresh_skew_seconds: int = Field(default=60, ge=0, le=600)
+    google_http_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    google_baseline_max_attempts: int = Field(default=3, ge=1, le=5)
+    docrelay_owner_subject: str = Field(default="local-development-owner", min_length=1)
 
     @model_validator(mode="after")
     def validate_database_driver(self) -> Self:
-        if self.database_url.startswith("postgresql+asyncpg://"):
-            return self
-        if self.app_env == "test" and self.database_url.startswith("sqlite+aiosqlite://"):
-            return self
-        raise ValueError("DATABASE_URL must use postgresql+asyncpg (SQLite is test-only)")
+        if not self.database_url.startswith("postgresql+asyncpg://") and not (
+            self.app_env == "test" and self.database_url.startswith("sqlite+aiosqlite://")
+        ):
+            raise ValueError("DATABASE_URL must use postgresql+asyncpg (SQLite is test-only)")
+
+        oauth_values = (
+            self.google_oauth_client_id,
+            self.google_oauth_client_secret,
+            self.google_oauth_redirect_uri,
+            self.oauth_token_encryption_keys,
+        )
+        configured_count = sum(value is not None for value in oauth_values)
+        if configured_count not in {0, len(oauth_values)}:
+            raise ValueError(
+                "Google OAuth configuration is incomplete; client ID, client secret, "
+                "redirect URI, and encryption keyring must be configured together"
+            )
+        if (
+            self.app_env == "production"
+            and self.docrelay_owner_subject == "local-development-owner"
+        ):
+            raise ValueError("DOCRELAY_OWNER_SUBJECT must be explicit in production")
+        return self
+
+    @property
+    def google_oauth_configured(self) -> bool:
+        return all(
+            value is not None
+            for value in (
+                self.google_oauth_client_id,
+                self.google_oauth_client_secret,
+                self.google_oauth_redirect_uri,
+                self.oauth_token_encryption_keys,
+            )
+        )
 
 
 @lru_cache(maxsize=1)

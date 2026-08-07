@@ -4,6 +4,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -100,6 +101,39 @@ class CloudConnection(IdMixin, TimestampMixin, Base):
     )
     credential_reference: Mapped[str | None] = mapped_column(String(512))
     last_validated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status_reason: Mapped[str | None] = mapped_column(String(128))
+    disconnected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OAuthCredential(IdMixin, TimestampMixin, Base):
+    __tablename__ = "oauth_credentials"
+    __table_args__ = (UniqueConstraint("connection_id", name="uq_oauth_credential_connection"),)
+
+    connection_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cloud_connections.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    encrypted_payload: Mapped[str] = mapped_column(Text, nullable=False)
+    encryption_key_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    access_token_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    refresh_token_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class GoogleOAuthState(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "google_oauth_states"
+
+    owner_subject: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    state_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    browser_nonce_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    code_verifier_ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
+    encryption_key_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_scopes: Mapped[list[str]] = mapped_column(JSON_TYPE, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CloudDocument(IdMixin, TimestampMixin, Base):
@@ -239,6 +273,30 @@ class SourceSnapshot(IdMixin, CreatedAtMixin, Base):
     exported_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     schema_version: Mapped[str] = mapped_column(String(128), nullable=False)
     capability_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
+    provider_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
+
+
+class GoogleBaselineCapture(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "google_baseline_captures"
+    __table_args__ = (
+        CheckConstraint("attempt_count >= 1", name="google_baseline_attempt_positive"),
+    )
+
+    cloud_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("cloud_documents.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    provider_revision_id: Mapped[str] = mapped_column(Text, nullable=False)
+    native_raw_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    native_canonical_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    exported_docx_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    exported_docx_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    canonicalizer_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    canonical_payload: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
+    capability_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
+    parent_ids: Mapped[list[str]] = mapped_column(JSON_TYPE, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    capture_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     provider_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
 
 
@@ -606,6 +664,11 @@ Index(
 )
 Index("ix_audit_events_type_created", AuditEvent.event_type, AuditEvent.created_at)
 Index("ix_run_operations_run_stage", RunOperation.sync_run_id, RunOperation.stage)
+Index(
+    "ix_google_baseline_document_revision",
+    GoogleBaselineCapture.cloud_document_id,
+    GoogleBaselineCapture.provider_revision_id,
+)
 
 
 __all__ = [
@@ -615,7 +678,10 @@ __all__ = [
     "CloudDocument",
     "ExternalEffect",
     "FolderRule",
+    "GoogleBaselineCapture",
+    "GoogleOAuthState",
     "MappingProof",
+    "OAuthCredential",
     "ProposedChange",
     "ReviewDecision",
     "ReviewRound",

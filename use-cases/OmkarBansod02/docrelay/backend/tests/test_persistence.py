@@ -68,7 +68,7 @@ async def test_essential_identity_and_review_lineage_persist(
         owner_subject="owner-1",
         provider=Provider.GOOGLE,
         provider_account_subject="google-principal-1",
-        status=ConnectionStatus.ACTIVE,
+        status=ConnectionStatus.CONNECTED,
         granted_scopes={"scopes": ["drive.file"]},
     )
     db_session.add(connection)
