@@ -10,10 +10,12 @@ inspection of explicitly authorized native Google Docs, and revision-consistent
 baseline capture. It does **not** write to Google. The frontend remains the Phase 1
 shell; Google Picker/UI work is intentionally separate.
 
-The code and PostgreSQL paths are deterministically tested. This checkout had no
-Google OAuth client/test-user configuration, so its Phase 2 verdict remains
-conditional until the documented opt-in live Google test is run; no live result is
-fabricated here.
+The code and PostgreSQL paths are deterministically tested. Production web OAuth and
+a forced refresh have been live-observed with exactly `openid + drive.file`. The
+Phase 2 verdict remains conditional because a confirmed-existing manually created
+test Doc returned HTTP 404 under `drive.file`; it must be explicitly app-authorized
+through Picker before the read/export baseline test can complete. No broad scope or
+fabricated result is used to bypass that boundary.
 
 ## Implemented boundary
 

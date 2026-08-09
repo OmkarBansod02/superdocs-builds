@@ -170,6 +170,163 @@ footer {
   border-top: 1px solid var(--line);
 }
 
+/* Google Drive / Picker page */
+
+.picker-hero {
+  max-width: 900px;
+  padding: clamp(48px, 7vw, 80px) 0 clamp(36px, 5vw, 56px);
+}
+
+.picker-hero h1 {
+  max-width: 850px;
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 500;
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.drive-panel {
+  padding: 28px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  margin-bottom: 36px;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.panel-message {
+  margin: 0;
+  color: var(--muted);
+}
+
+.panel-error {
+  color: var(--warning);
+}
+
+.panel-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.btn {
+  display: inline-block;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  color: #fff;
+  background: var(--accent);
+}
+
+.btn-primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btn-secondary {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.picker-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.picker-result {
+  padding: 20px;
+  border-radius: 10px;
+  width: 100%;
+}
+
+.picker-success {
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+}
+
+.picker-success p:first-child {
+  margin-top: 0;
+  color: var(--accent);
+}
+
+.picker-rejected {
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+}
+
+.picker-rejected p:first-child {
+  margin-top: 0;
+  color: var(--warning);
+}
+
+.picker-error-box {
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+}
+
+.picker-error-detail {
+  font-family: monospace;
+  font-size: 0.82rem;
+  color: var(--warning);
+}
+
+.picker-result dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 16px;
+  margin: 12px 0;
+  font-size: 0.85rem;
+}
+
+.picker-result dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.picker-result dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.picker-result code {
+  font-size: 0.78rem;
+  background: rgba(0, 0, 0, 0.04);
+  padding: 2px 4px;
+  border-radius: 3px;
+}
+
 @media (max-width: 760px) {
   main {
     width: min(100% - 28px, 1120px);
