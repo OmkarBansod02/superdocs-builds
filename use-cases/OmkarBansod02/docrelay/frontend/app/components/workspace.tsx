@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
+  ConflictChoice,
+  DryRunView,
   GoogleConnection,
   RunView,
   SourceRegistration,
@@ -11,8 +13,11 @@ import {
   resumeRun,
   startRun,
   submitDecisions,
+  decideWriteConflict,
+  writeBackSafely,
 } from "../lib/api";
 import { runNeedsPolling } from "../lib/workspace-state";
+import { canWriteBack } from "../lib/write-back-state";
 import type { WorkspaceState } from "../lib/workspace-state";
 
 import { TopBar } from "./top-bar";
@@ -24,6 +29,7 @@ import { ReviewPanel } from "./review-panel";
 import { DryRunSummary } from "./dry-run-summary";
 import { UnsupportedState } from "./unsupported-state";
 import { ErrorState } from "./error-state";
+import { WriteBackResult } from "./write-back-result";
 
 const POLL_INTERVAL_MS = 4000;
 
@@ -69,6 +75,7 @@ export function Workspace() {
   });
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const writeInFlightRef = useRef(false);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -88,7 +95,7 @@ export function Workspace() {
         try {
           const dryRunResult = await createDryRun(run.run_id);
           if (dryRunResult.status === "READY") {
-            setState({ stage: "dry-run", connection: conn, source, run, dryRun: dryRunResult });
+            setState({ stage: "dry-run", connection: conn, source, run, dryRun: dryRunResult, writing: false });
           } else {
             setState({ stage: "unsupported", connection: conn, source, run, dryRun: dryRunResult });
           }
@@ -119,7 +126,7 @@ export function Workspace() {
               try {
                 const dryRunResult = await createDryRun(updated.run_id);
                 if (dryRunResult.status === "READY") {
-                  setState({ stage: "dry-run", connection: conn, source, run: updated, dryRun: dryRunResult });
+                  setState({ stage: "dry-run", connection: conn, source, run: updated, dryRun: dryRunResult, writing: false });
                 } else {
                   setState({ stage: "unsupported", connection: conn, source, run: updated, dryRun: dryRunResult });
                 }
@@ -267,6 +274,56 @@ export function Workspace() {
     });
   }, []);
 
+  const handleWriteBack = useCallback(async (
+    conn: GoogleConnection,
+    source: SourceRegistration,
+    run: RunView,
+    dryRun: DryRunView,
+  ) => {
+    if (writeInFlightRef.current || !canWriteBack(dryRun.status, false)) return;
+    writeInFlightRef.current = true;
+    setState({ stage: "dry-run", connection: conn, source, run, dryRun, writing: true });
+    try {
+      const result = await writeBackSafely(run.run_id);
+      setState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+    } catch (err) {
+      setState({
+        stage: "error",
+        connection: conn,
+        source,
+        run,
+        message: err instanceof Error ? err.message : "Safe write-back failed",
+        recoverable: false,
+      });
+    } finally {
+      writeInFlightRef.current = false;
+    }
+  }, []);
+
+  const handleConflictDecision = useCallback(async (
+    conn: GoogleConnection,
+    source: SourceRegistration,
+    run: RunView,
+    choice: ConflictChoice,
+  ) => {
+    setState((current) => current.stage === "write-result"
+      ? { ...current, deciding: true }
+      : current);
+    try {
+      const result = await decideWriteConflict(run.run_id, choice);
+      setState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+    } catch (err) {
+      setState({
+        stage: "error",
+        connection: conn,
+        source,
+        run,
+        message: err instanceof Error ? err.message : "Conflict decision failed",
+        recoverable: false,
+      });
+    }
+  }, []);
+
   const currentStage = state.stage === "source-selected" ? "source" : state.stage;
 
   return (
@@ -345,7 +402,31 @@ export function Workspace() {
           )}
 
           {state.stage === "dry-run" && (
-            <DryRunSummary source={state.source} dryRun={state.dryRun} />
+            <DryRunSummary
+              source={state.source}
+              dryRun={state.dryRun}
+              writing={state.writing}
+              onWrite={() => handleWriteBack(
+                state.connection,
+                state.source,
+                state.run,
+                state.dryRun,
+              )}
+            />
+          )}
+
+          {state.stage === "write-result" && (
+            <WriteBackResult
+              source={state.source}
+              result={state.result}
+              deciding={state.deciding}
+              onDecision={(choice) => handleConflictDecision(
+                state.connection,
+                state.source,
+                state.run,
+                choice,
+              )}
+            />
           )}
 
           {state.stage === "unsupported" && (

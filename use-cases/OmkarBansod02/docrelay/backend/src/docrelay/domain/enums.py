@@ -86,6 +86,11 @@ class VerificationStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ConflictChoice(StrEnum):
+    CANCEL = "CANCEL"
+    REVIEW_LATEST = "REVIEW_LATEST"
+
+
 class OperationStatus(StrEnum):
     STARTED = "STARTED"
     SUCCEEDED = "SUCCEEDED"

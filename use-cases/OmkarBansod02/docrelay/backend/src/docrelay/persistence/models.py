@@ -27,6 +27,7 @@ from sqlalchemy.types import JSON
 from docrelay.domain.enums import (
     BackupStatus,
     ChangeDecision,
+    ConflictChoice,
     ConnectionStatus,
     EffectOutcome,
     EffectType,
@@ -659,6 +660,31 @@ class Backup(IdMixin, TimestampMixin, Base):
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class WriteConflict(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "write_conflicts"
+    __table_args__ = (UniqueConstraint("sync_run_id", name="uq_write_conflict_run"),)
+
+    sync_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    write_plan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("write_plans.id", ondelete="RESTRICT"), nullable=False
+    )
+    backup_id: Mapped[UUID | None] = mapped_column(ForeignKey("backups.id", ondelete="RESTRICT"))
+    baseline_revision_id: Mapped[str] = mapped_column(Text, nullable=False)
+    latest_revision_id: Mapped[str | None] = mapped_column(Text)
+    detection_stage: Mapped[str] = mapped_column(String(128), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    safe_evidence: Mapped[JsonObject] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    decision: Mapped[ConflictChoice | None] = mapped_column(
+        enum_type(ConflictChoice, "conflict_choice")
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by_subject: Mapped[str | None] = mapped_column(String(255))
+
+
 class VerificationResult(IdMixin, CreatedAtMixin, Base):
     __tablename__ = "verification_results"
 
@@ -735,6 +761,7 @@ __all__ = [
     "VerificationResult",
     "WatchConfig",
     "WatchCursor",
+    "WriteConflict",
     "WritePlan",
     "WritePlanLineage",
 ]

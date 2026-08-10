@@ -97,6 +97,18 @@ export interface RunView {
   awaiting_kind: string | null;
   pending_proposals: ProposalView[];
   export: ExportView | null;
+  write_back: WriteBackRunSummary | null;
+}
+
+export interface WriteBackRunSummary {
+  status: WriteBackStatus;
+  backup_created: boolean;
+  backup_verified: boolean;
+  write_applied: boolean;
+  structurally_verified: boolean;
+  resulting_revision_id: string | null;
+  conflict_detection_stage: string | null;
+  conflict_decision: ConflictChoice | null;
 }
 
 export type DryRunStatus = "READY" | "UNSUPPORTED" | "AMBIGUOUS" | "STALE" | "NOT_APPROVED";
@@ -128,6 +140,44 @@ export interface DryRunView {
   reason: string | null;
   candidate_count: number | null;
   cloud_mutation_performed: false;
+}
+
+export type WriteBackStatus =
+  | "READY"
+  | "IN_PROGRESS"
+  | "WRITE_VERIFIED"
+  | "CONFLICT"
+  | "ATTENTION"
+  | "VERIFICATION_FAILED"
+  | "FAILED"
+  | "CANCELLED"
+  | "REVIEW_LATEST";
+
+export type ConflictChoice = "CANCEL" | "REVIEW_LATEST";
+
+export interface WriteConflictView {
+  baseline_revision_id: string;
+  latest_revision_id: string | null;
+  detection_stage: string;
+  detected_at: string;
+  backup_created: boolean;
+  decision: ConflictChoice | null;
+}
+
+export interface WriteBackView {
+  run_id: string;
+  status: WriteBackStatus;
+  write_plan_id: string;
+  write_plan_sha256: string;
+  backup_created: boolean;
+  backup_verified: boolean;
+  source_revision_verified: boolean;
+  write_applied: boolean;
+  structurally_verified: boolean;
+  baseline_revision_id: string;
+  resulting_revision_id: string | null;
+  attention_code: string | null;
+  conflict: WriteConflictView | null;
 }
 
 class ApiError extends Error {
@@ -215,6 +265,22 @@ export function createDryRun(runId: string, proposalId?: string): Promise<DryRun
   return request<DryRunView>(`/api/v1/runs/${runId}/dry-run`, {
     method: "POST",
     body: proposalId ? JSON.stringify({ proposal_id: proposalId }) : "{}",
+  });
+}
+
+export function writeBackSafely(runId: string): Promise<WriteBackView> {
+  return request<WriteBackView>(`/api/v1/runs/${runId}/write-back`, {
+    method: "POST",
+  });
+}
+
+export function decideWriteConflict(
+  runId: string,
+  choice: ConflictChoice,
+): Promise<WriteBackView> {
+  return request<WriteBackView>(`/api/v1/runs/${runId}/conflict-decision`, {
+    method: "POST",
+    body: JSON.stringify({ choice }),
   });
 }
 

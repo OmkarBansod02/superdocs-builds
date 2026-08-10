@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from docrelay.domain.enums import ConnectionStatus, Provider
+from docrelay.integrations.google.contracts import Phase6GooglePort
 from docrelay.integrations.google.credentials import (
     CredentialEncryptionError,
     EncryptedValue,
@@ -335,6 +336,17 @@ class GoogleConnectionService:
             connection_id=document.connection_id,
             file_id=document.provider_file_id,
         )
+
+    async def write_client(self, connection_id: UUID) -> Phase6GooglePort:
+        connection = await self._owned_connection(connection_id)
+        token = await self._valid_access_token(connection)
+        factory = self._runtime.write_client_factory
+        if factory is None:
+            raise GoogleIntegrationError(
+                GoogleErrorCode.OAUTH_NOT_CONFIGURED,
+                "Google write-back is not configured on this server",
+            )
+        return factory(token)
 
     async def _consume_oauth_state(
         self, *, state: str | None, browser_nonce: str | None

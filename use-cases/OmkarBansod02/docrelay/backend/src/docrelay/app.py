@@ -35,6 +35,7 @@ from docrelay.services.phase3 import (
     SourceNotFound,
     SuperDocsNotConfigured,
 )
+from docrelay.services.phase6 import Phase6Error
 
 
 def create_app(
@@ -176,6 +177,17 @@ def create_app(
                 {"error": {"code": code, "message": message}}, separators=(",", ":")
             ),
             status_code=status_code,
+            media_type="application/json",
+        )
+
+    @app.exception_handler(Phase6Error)
+    async def handle_phase6_error(_: Request, exc: Phase6Error) -> Response:
+        return Response(
+            content=json.dumps(
+                {"error": {"code": exc.code, "message": exc.safe_message}},
+                separators=(",", ":"),
+            ),
+            status_code=409,
             media_type="application/json",
         )
 

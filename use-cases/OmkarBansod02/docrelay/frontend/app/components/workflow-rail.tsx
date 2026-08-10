@@ -6,6 +6,7 @@ const steps: { key: WorkflowStage; label: string; icon: typeof FileText }[] = [
   { key: "edit", label: "SuperDocs edit", icon: Pencil },
   { key: "review", label: "Review", icon: Search },
   { key: "dry-run", label: "Dry run", icon: Shield },
+  { key: "complete", label: "Write back", icon: CheckCircle2 },
 ];
 
 function stageIndex(stage: string): number {
@@ -17,6 +18,7 @@ function stageIndex(stage: string): number {
     review: 2,
     "dry-run": 3,
     unsupported: 3,
+    "write-result": 4,
     complete: 4,
     error: -1,
   };

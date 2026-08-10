@@ -198,10 +198,10 @@ describe("technical details default visibility", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. Write-back cannot occur in Phase 5
+// 8. Browser never constructs provider operations
 // ---------------------------------------------------------------------------
-describe("write-back not available", () => {
-  it("no Google mutation API is called in any workflow path", async () => {
+describe("provider mutation stays server-side", () => {
+  it("no browser component constructs a Google provider mutation", async () => {
     const fs = await import("fs");
     const path = await import("path");
     const componentsDir = path.resolve(import.meta.dirname, "../app/components");
@@ -218,7 +218,6 @@ describe("write-back not available", () => {
       expect(source).not.toContain("batchUpdate");
       expect(source).not.toContain("documents.batchUpdate");
       expect(source).not.toMatch(/\/execute-plan/);
-      expect(source).not.toMatch(/\/write-back/);
       expect(source).not.toMatch(/\/commit/);
     }
   });

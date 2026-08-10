@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from docrelay.domain.effects import require_effect_transition
 from docrelay.domain.enums import (
+    BackupStatus,
     ChangeDecision,
+    ConflictChoice,
     EffectOutcome,
     EffectType,
     ReviewAwaitingKind,
@@ -20,6 +22,7 @@ from docrelay.domain.enums import (
     SuperDocsJobStatus,
     SyncMode,
     SyncRunState,
+    VerificationStatus,
 )
 from docrelay.domain.state_machine import require_transition
 from docrelay.integrations.superdocs.client import SuperDocsRequestError
@@ -32,6 +35,7 @@ from docrelay.integrations.superdocs.contracts import (
     SuperDocsPort,
 )
 from docrelay.persistence.models import (
+    Backup,
     CloudConnection,
     CloudDocument,
     ExternalEffect,
@@ -45,6 +49,9 @@ from docrelay.persistence.models import (
     SuperDocsJob,
     SuperDocsSession,
     SyncRun,
+    VerificationResult,
+    WriteConflict,
+    WritePlan,
 )
 from docrelay.services.artifacts import ArtifactStore
 
@@ -161,6 +168,80 @@ class RunView(Phase3Contract):
     awaiting_kind: str | None
     pending_proposals: tuple[ProposalView, ...]
     export: ExportView | None
+    write_back: "WriteBackRunSummary | None"
+
+
+class WriteBackRunSummary(Phase3Contract):
+    status: str
+    backup_created: bool
+    backup_verified: bool
+    write_applied: bool
+    structurally_verified: bool
+    resulting_revision_id: str | None
+    conflict_detection_stage: str | None
+    conflict_decision: ConflictChoice | None
+
+
+async def _write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBackRunSummary | None:
+    plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run.id))
+    if plan is None:
+        return None
+    backup = await session.scalar(select(Backup).where(Backup.sync_run_id == run.id))
+    write_effect = await session.scalar(
+        select(ExternalEffect).where(
+            ExternalEffect.sync_run_id == run.id,
+            ExternalEffect.effect_type == EffectType.GOOGLE_BATCH_UPDATE,
+        )
+    )
+    verification = await session.scalar(
+        select(VerificationResult)
+        .where(VerificationResult.sync_run_id == run.id)
+        .order_by(VerificationResult.created_at.desc())
+    )
+    conflict = await session.scalar(
+        select(WriteConflict).where(WriteConflict.sync_run_id == run.id)
+    )
+    if verification is not None and verification.status is VerificationStatus.PASSED:
+        status = "WRITE_VERIFIED"
+    elif verification is not None:
+        status = "VERIFICATION_FAILED"
+    elif conflict is not None and conflict.decision is ConflictChoice.CANCEL:
+        status = "CANCELLED"
+    elif conflict is not None and conflict.decision is ConflictChoice.REVIEW_LATEST:
+        status = "REVIEW_LATEST"
+    elif conflict is not None:
+        status = "CONFLICT"
+    elif run.state is SyncRunState.COMMIT_OUTCOME_UNKNOWN:
+        status = "ATTENTION"
+    elif run.failure_code in {
+        "GOOGLE_PREWRITE_CHECK_UNAVAILABLE",
+        "GOOGLE_BACKUP_VERIFICATION_UNAVAILABLE",
+        "GOOGLE_POSTWRITE_READ_UNAVAILABLE",
+        "GOOGLE_WRITE_RECONCILIATION_UNAVAILABLE",
+    }:
+        status = "ATTENTION"
+    elif run.state in {SyncRunState.COMMITTING, SyncRunState.VERIFYING}:
+        status = "IN_PROGRESS"
+    elif run.state is SyncRunState.FAILED:
+        status = "FAILED"
+    else:
+        status = "READY"
+    return WriteBackRunSummary(
+        status=status,
+        backup_created=(
+            backup is not None and backup.status in {BackupStatus.CREATED, BackupStatus.VERIFIED}
+        ),
+        backup_verified=backup is not None and backup.status is BackupStatus.VERIFIED,
+        write_applied=(
+            write_effect is not None and write_effect.outcome is EffectOutcome.SUCCEEDED
+        ),
+        structurally_verified=(
+            verification is not None and verification.status is VerificationStatus.PASSED
+        ),
+        resulting_revision_id=run.resulting_revision_id,
+        conflict_detection_stage=conflict.detection_stage if conflict else None,
+        conflict_decision=conflict.decision if conflict else None,
+    )
 
 
 class Phase3Orchestrator:
@@ -378,6 +459,7 @@ class Phase3Orchestrator:
             export = await session.scalar(
                 select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
             )
+            write_back = await _write_back_summary(session, run)
             return RunView(
                 run_id=run.id,
                 source_id=run.cloud_document_id,
@@ -394,6 +476,7 @@ class Phase3Orchestrator:
                 awaiting_kind=round_row.awaiting_kind.value if round_row else None,
                 pending_proposals=proposals,
                 export=_export_view(export),
+                write_back=write_back,
             )
 
     async def list_proposals(self, run_id: UUID) -> tuple[ProposalView, ...]:

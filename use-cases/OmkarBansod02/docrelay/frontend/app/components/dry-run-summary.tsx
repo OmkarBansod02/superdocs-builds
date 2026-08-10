@@ -3,14 +3,19 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, Shield, ShieldCheck } from "lucide-react";
 import type { DryRunView, SourceRegistration } from "../lib/api";
+import { canWriteBack } from "../lib/write-back-state";
 import { SourceSummary } from "./source-summary";
 
 export function DryRunSummary({
   source,
   dryRun,
+  writing,
+  onWrite,
 }: {
   source: SourceRegistration;
   dryRun: DryRunView;
+  writing: boolean;
+  onWrite: () => void;
 }) {
   const [showDetails, setShowDetails] = useState(false);
 
@@ -80,14 +85,15 @@ export function DryRunSummary({
 
             <div className="mt-6 pt-4 border-t border-border">
               <button
-                disabled
-                className="px-4 py-2 bg-ink/20 text-ink/40 text-sm font-medium rounded cursor-not-allowed"
-                title="Write-back will be enabled in Phase 6"
+                disabled={!canWriteBack(dryRun.status, writing)}
+                onClick={onWrite}
+                className="px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors disabled:bg-ink/20 disabled:text-ink/40 disabled:cursor-not-allowed"
               >
-                Ready for safe write-back
+                {writing ? "Creating and verifying backup…" : "Write back safely"}
               </button>
               <p className="text-[11px] text-muted mt-2">
-                Write-back will be enabled in the next phase. No cloud mutation is possible.
+                A versioned backup will be created first. DocRelay stops if the source
+                revision changed.
               </p>
             </div>
           </div>

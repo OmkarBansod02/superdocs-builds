@@ -1,4 +1,4 @@
-import type { DryRunView, GoogleConnection, ProposalView, RunView, SourceRegistration } from "./api";
+import type { DryRunView, GoogleConnection, ProposalView, RunView, SourceRegistration, WriteBackView } from "./api";
 
 export type WorkflowStage = "source" | "edit" | "review" | "dry-run" | "complete";
 
@@ -36,6 +36,7 @@ export type WorkspaceState =
       source: SourceRegistration;
       run: RunView;
       dryRun: DryRunView;
+      writing: boolean;
     }
   | {
       stage: "unsupported";
@@ -43,6 +44,14 @@ export type WorkspaceState =
       source: SourceRegistration;
       run: RunView;
       dryRun: DryRunView;
+    }
+  | {
+      stage: "write-result";
+      connection: GoogleConnection;
+      source: SourceRegistration;
+      run: RunView;
+      result: WriteBackView;
+      deciding: boolean;
     }
   | {
       stage: "error";

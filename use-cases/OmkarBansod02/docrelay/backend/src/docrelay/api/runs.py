@@ -4,8 +4,11 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Request, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from docrelay.core.config import Settings
+from docrelay.domain.enums import ConflictChoice
+from docrelay.integrations.google.contracts import Phase6GooglePort
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import GoogleConnectionService
 from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
@@ -29,6 +32,7 @@ from docrelay.services.phase3 import (
     SuperDocsNotConfigured,
 )
 from docrelay.services.phase4 import DryRunView, Phase4PlanningService
+from docrelay.services.phase6 import Phase6ExecutionService, WriteBackView
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -72,6 +76,10 @@ class DryRunRequest(RunAPIModel):
     proposal_id: UUID | None = None
 
 
+class ConflictDecisionRequest(RunAPIModel):
+    choice: ConflictChoice
+
+
 def _orchestrator(request: Request) -> Phase3Orchestrator:
     runtime: SuperDocsRuntime | None = request.app.state.superdocs_runtime
     if runtime is None:
@@ -84,6 +92,31 @@ def _orchestrator(request: Request) -> Phase3Orchestrator:
         superdocs=runtime.client,
         artifacts=artifacts,
         owner_subject=settings.docrelay_owner_subject,
+    )
+
+
+def _phase6(request: Request) -> Phase6ExecutionService:
+    runtime: GoogleRuntime | None = request.app.state.google_runtime
+    if runtime is None or runtime.write_client_factory is None:
+        raise SuperDocsNotConfigured("Google write-back is not configured on this server")
+    database: Database = request.app.state.database
+    settings: Settings = request.app.state.settings
+
+    async def provider_factory(session: AsyncSession, connection_id: UUID) -> Phase6GooglePort:
+        google = GoogleConnectionService(
+            session=session,
+            runtime=runtime,
+            owner_subject=settings.docrelay_owner_subject,
+            state_ttl_seconds=settings.google_oauth_state_ttl_seconds,
+            refresh_skew_seconds=settings.google_access_token_refresh_skew_seconds,
+            baseline_max_attempts=settings.google_baseline_max_attempts,
+        )
+        return await google.write_client(connection_id)
+
+    return Phase6ExecutionService(
+        sessions=database.sessions,
+        owner_subject=settings.docrelay_owner_subject,
+        provider_factory=provider_factory,
     )
 
 
@@ -244,3 +277,17 @@ async def create_dry_run(
         run_id,
         proposal_id=payload.proposal_id if payload else None,
     )
+
+
+@router.post("/{run_id}/write-back", response_model=WriteBackView)
+async def write_back(run_id: UUID, request: Request) -> WriteBackView:
+    return await _phase6(request).execute(run_id)
+
+
+@router.post("/{run_id}/conflict-decision", response_model=WriteBackView)
+async def decide_write_conflict(
+    run_id: UUID,
+    request: Request,
+    payload: Annotated[ConflictDecisionRequest, Body()],
+) -> WriteBackView:
+    return await _phase6(request).decide_conflict(run_id, payload.choice)

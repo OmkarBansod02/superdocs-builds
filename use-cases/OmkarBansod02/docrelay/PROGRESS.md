@@ -35,6 +35,11 @@ Branch: `docrelay`
   source selection via Google Picker, edit instruction composer, explicit proposal review,
   Phase 4 dry-run visualization with safety checklist, fail-closed unsupported mapping UI,
   and no Google mutation passed.
+- Phase 6 — **PASS**. Real versioned Google backup and canonical/permission verification,
+  dual revision prechecks, one atomic `requiredRevisionId` write, durable conflict choices,
+  UNKNOWN reconciliation without blind retry, restart/idempotency controls, complete
+  structural postimage verification, minimal frontend states, and bounded real success
+  and conflict proofs passed.
 
 ## Proven assumptions
 
@@ -51,20 +56,25 @@ Branch: `docrelay`
   one plain text run, and one internal same-UTF-16-length ASCII token replacement.
 - A SuperDocs `chunk_id` remains review lookup evidence only; MappingProof owns the
   provider-native UTF-16 range and WritePlan owns the exact future operation intent.
+- Only `WRITE_VERIFIED` is provider-write success. It requires a verified backup, an
+  advanced provider revision, and exact equality with the complete baseline-derived
+  canonical postimage.
 
 ## Unresolved assumptions
 
 - `drive.file` access for future manually added watched-folder descendants is not
   proved; the folder/future-descendant experiment remains **PENDING**. This blocks
   future watch mode only and does not block Phase 3.
-- Broader ACL/shared-drive cases, fault-injected ambiguous external outcomes, and
-  general formatting/mapping coverage remain unproved.
+- Broader ACL/shared-drive cases and general formatting/mapping coverage remain
+  unproved. Phase 6 fails closed on unknown permission forms and excludes shared drives.
+- A crashed in-flight provider mutation has a 15-minute lease before UNKNOWN
+  reconciliation. An UNKNOWN backup copy remains operator-attention-only because the
+  proven Google contract has no safe exact-copy discovery mechanism.
 
 ## Next action
 
-Begin Phase 6 only under its own scope. Phase 5 built the end-to-end workspace UI but
-did not implement write-back, backup, concurrency resolution, or watch mode. The
-folder/future-descendant experiment remains pending for watch mode only.
+Phase 7 is GO under its own scope. Do not infer watch mode, shared-drive support,
+multi-document orchestration, broader mapping, or blind UNKNOWN retries from Phase 6.
 
 ## Checkpoint log
 
@@ -111,3 +121,9 @@ Google Picker source selection, edit instruction composer, explicit per-proposal
 Phase 4 dry-run visualization with safety checklist and collapsed technical details,
 fail-closed unsupported mapping UI, bounded polling, 44 frontend tests, typecheck, lint,
 and production build passed; zero backend changes; no Google mutation; no commit created.
+
+2026-08-10 — Phase 6 checkpoint: PASS; production write-back created and verified one
+real same-parent Google backup before one exact revision-guarded batch update, then
+verified the complete canonical postimage; a separate real concurrent edit became a
+durable BEFORE_BACKUP conflict with zero DocRelay provider mutations; deterministic
+safety, restart, UNKNOWN, API, and frontend tests passed; no commit created. Phase 7 GO.

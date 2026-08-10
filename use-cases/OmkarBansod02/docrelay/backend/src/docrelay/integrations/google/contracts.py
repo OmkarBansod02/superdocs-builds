@@ -38,6 +38,18 @@ class ConsistentBaseline(GoogleContract):
     artifact_reference: str = Field(min_length=1)
 
 
+class CurrentGoogleDocument(GoogleContract):
+    identity: GoogleFileIdentity
+    name: str = Field(min_length=1)
+    revision_id: str = Field(min_length=1)
+    native_raw_sha256: Sha256
+    canonical_schema_version: str = Field(min_length=1)
+    canonical_sha256: Sha256
+    canonical_payload: dict[str, JsonValue]
+    capabilities: GoogleCapabilities
+    safe_provider_metadata: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class BackupReceipt(GoogleContract):
     backup_file_id: str = Field(min_length=1)
     parent_ids: tuple[str, ...] = Field(min_length=1)
@@ -46,6 +58,9 @@ class BackupReceipt(GoogleContract):
 
 class BackupVerification(GoogleContract):
     independently_readable: bool
+    separate_file: bool
+    expected_mime_type: bool
+    expected_location: bool
     content_matches_baseline: bool
     acl_not_broader: bool
     canonical_sha256: Sha256
@@ -90,6 +105,7 @@ class BackupCreation(Protocol):
         *,
         file_id: str,
         destination_parent_id: str,
+        backup_name: str,
         operation_metadata: dict[str, str],
     ) -> BackupReceipt: ...
 
@@ -98,6 +114,7 @@ class BackupCreation(Protocol):
         *,
         source_file_id: str,
         backup_file_id: str,
+        expected_parent_id: str,
         expected_baseline_sha256: Sha256,
     ) -> BackupVerification: ...
 
@@ -115,3 +132,31 @@ class GuardedCommit(Protocol):
 
 class CanonicalRead(Protocol):
     async def reread_canonical(self, file_id: str) -> CanonicalReread: ...
+
+
+class Phase6GooglePort(Protocol):
+    async def inspect_current(
+        self, *, file_id: str, destination_parent_id: str
+    ) -> CurrentGoogleDocument: ...
+
+    async def create_backup(
+        self,
+        *,
+        file_id: str,
+        destination_parent_id: str,
+        backup_name: str,
+        operation_metadata: dict[str, str],
+    ) -> BackupReceipt: ...
+
+    async def verify_backup(
+        self,
+        *,
+        source_file_id: str,
+        backup_file_id: str,
+        expected_parent_id: str,
+        expected_baseline_sha256: Sha256,
+    ) -> BackupVerification: ...
+
+    async def commit_guarded(
+        self, *, file_id: str, operation: GoogleDocsBatchUpdate
+    ) -> GuardedCommitResult: ...

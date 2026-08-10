@@ -48,3 +48,19 @@ async def test_phase3_machine_routes_exist_and_unconfigured_error_is_safe() -> N
         "/api/v1/runs/{run_id}/export",
     }
     assert expected_paths.issubset(openapi["paths"])
+
+
+async def test_phase6_routes_accept_no_browser_provider_operations() -> None:
+    app = create_app(settings=_settings(), database=StubDatabase())  # type: ignore[arg-type]
+    run_id = uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        write = await client.post(f"/api/v1/runs/{run_id}/write-back")
+        openapi = (await client.get("/api/openapi.json")).json()
+
+    write_path = openapi["paths"]["/api/v1/runs/{run_id}/write-back"]["post"]
+    assert "requestBody" not in write_path
+    assert "/api/v1/runs/{run_id}/conflict-decision" in openapi["paths"]
+    assert write.status_code == 503
+    serialized = write.text.lower()
+    for forbidden in ("authorization", "access_token", "refresh_token", "raw_payload"):
+        assert forbidden not in serialized
