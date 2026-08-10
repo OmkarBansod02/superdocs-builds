@@ -94,7 +94,10 @@ async def test_real_postgresql_jsonb_constraints_indexes_and_immutability() -> N
                     text(
                         "SELECT conname FROM pg_constraint "
                         "WHERE conrelid IN "
-                        "('cloud_connections'::regclass, 'google_baseline_captures'::regclass)"
+                        "('cloud_connections'::regclass, "
+                        "'google_baseline_captures'::regclass, "
+                        "'sync_runs'::regclass, 'external_effects'::regclass, "
+                        "'proposed_changes'::regclass, 'superdocs_exports'::regclass)"
                     )
                 )
             )
@@ -102,6 +105,11 @@ async def test_real_postgresql_jsonb_constraints_indexes_and_immutability() -> N
                 "ck_cloud_connections_connection_status",
                 "ck_google_baseline_captures_google_baseline_attempt_positive",
                 "uq_cloud_connection_owner_provider_account",
+                "ck_sync_runs_sync_run_state",
+                "ck_external_effects_effect_type",
+                "ck_proposed_changes_ordinal_positive",
+                "uq_proposed_change_round_ordinal",
+                "uq_superdocs_export_job",
             }.issubset(constraint_names)
 
             trigger_names = set(
@@ -112,7 +120,8 @@ async def test_real_postgresql_jsonb_constraints_indexes_and_immutability() -> N
                         "('mapping_proofs'::regclass, 'proposed_changes'::regclass, "
                         "'review_decisions'::regclass, 'write_plans'::regclass, "
                         "'write_plan_lineage'::regclass, "
-                        "'google_baseline_captures'::regclass)"
+                        "'google_baseline_captures'::regclass, "
+                        "'superdocs_exports'::regclass)"
                     )
                 )
             )
@@ -123,6 +132,7 @@ async def test_real_postgresql_jsonb_constraints_indexes_and_immutability() -> N
                 "trg_write_plans_immutable",
                 "trg_write_plan_lineage_immutable",
                 "trg_google_baseline_captures_immutable",
+                "trg_superdocs_exports_immutable",
             } == trigger_names
 
             with pytest.raises(DBAPIError, match="immutable DocRelay evidence"):

@@ -5,17 +5,13 @@
 DocRelay is a safety-first control plane between an authoritative cloud document and
 [SuperDocs](https://superdocs.app). The cloud file remains the source of truth.
 
-The Phase 2 backend implements a Google web-application OAuth connection, read-only
-inspection of explicitly authorized native Google Docs, and revision-consistent
-baseline capture. It does **not** write to Google. The frontend remains the Phase 1
-shell; Google Picker/UI work is intentionally separate.
-
-The code and PostgreSQL paths are deterministically tested. Production web OAuth and
-a forced refresh have been live-observed with exactly `openid + drive.file`. The
-Phase 2 verdict remains conditional because a confirmed-existing manually created
-test Doc returned HTTP 404 under `drive.file`; it must be explicitly app-authorized
-through Picker before the read/export baseline test can complete. No broad scope or
-fabricated result is used to bypass that boundary.
+The Phase 3 backend adds the production SuperDocs REST boundary and a durable,
+machine-driven human-review workflow to the Phase 2 Google source layer. It freshly
+ingests one exact Google baseline revision, starts one explicitly targeted async edit,
+persists every review round/proposal/decision, recovers the same job after restart,
+focuses the exact target after actual completion, and stores a hashed reviewed DOCX
+artifact. It does **not** map changes to Google ranges or write anything to Google.
+The frontend remains intentionally unpolished and is not the review authority.
 
 ## Implemented boundary
 
@@ -29,6 +25,25 @@ browser
             ├─ Drive files.export as DOCX
             └─ PostgreSQL source and immutable baseline evidence
 ```
+
+Phase 3 continues from that boundary:
+
+```text
+immutable Google A/DOCX
+  → private baseline artifact + fresh SuperDocs session
+  → multipart upload + exact roster target
+  → async ask_every_time job
+  → durable polling / explicit review rounds
+  → completed job
+  → exact focus + strict DOCX export
+  → reviewed artifact identity/hash
+  → STOP (no Google mapping or mutation)
+```
+
+Every external SuperDocs mutation-like operation is checkpointed before dispatch.
+Lost upload/job-start/review/focus outcomes remain `UNKNOWN` until deterministic
+session/job state reconciles them. A restart never launches a replacement edit merely
+because local memory was lost.
 
 The source identity is `(Google connection/principal, provider file ID)`. Filename,
 title, and path are display/location metadata only. A baseline is accepted only by
@@ -70,6 +85,17 @@ uv sync --all-groups
 uv run alembic upgrade head
 uv run uvicorn docrelay.main:app --reload --port 8000
 ```
+
+Run the database-backed Phase 3 poller in a second process when desired:
+
+```bash
+uv run python -m docrelay.worker
+```
+
+The API and worker must use the same `DOCRELAY_ARTIFACT_DIR`. The default private
+local store is `backend/.docrelay-artifacts/`, which is ignored by Git. A deployed
+multi-process installation must place it on appropriately protected shared durable
+storage.
 
 The backend runs without Google configuration; Google status then reports
 `oauth_configured: false`. Health endpoints are `GET /health/live` and
@@ -150,9 +176,8 @@ https://www.googleapis.com/auth/drive.file
   and their additional verification/security-assessment burden.
 - **GOOGLE DOCUMENTED:** [Google Picker requires an access
   token](https://developers.google.com/workspace/drive/picker/guides/web-picker).
-  Picker/browser token acquisition and file selection are frontend work and are not
-  implemented here. The backend accepts only an opaque file ID that has already been
-  authorized for this OAuth client; it does not expose a token or provide Drive-wide
+  Picker uses a separate browser-memory GIS token and sends only the selected opaque
+  file ID to the backend. The backend exposes no token and provides no Drive-wide
   listing.
 - **INFERENCE (fail-closed):** official documentation found for this phase does not
   guarantee that selecting a folder with `drive.file` grants durable access to
@@ -161,8 +186,8 @@ https://www.googleapis.com/auth/drive.file
   experiment proves it necessary. Watcher/folder execution is not implemented.
 
 Although `drive.file` technically allows changes to individually authorized files,
-least privilege is also enforced at the application boundary: Phase 2 constructs no
-Google mutation request.
+least privilege is also enforced at the application boundary: the production Google
+transport still constructs no Google content mutation request.
 
 ## Credential storage
 
@@ -187,6 +212,13 @@ application encryption boundary, not a local imitation of KMS.
 | `GET /api/v1/google/oauth/callback` | Validates state/browser binding, exchanges the code, resolves opaque `sub`, and stores encrypted credentials. |
 | `POST /api/v1/google/connections/{connection_id}/disconnect` | Revokes and disconnects the connection. |
 | `POST /api/v1/google/connections/{connection_id}/sources` | Validates one explicitly authorized native Google Doc ID and captures an A → DOCX → A baseline. |
+| `POST /api/v1/runs` | Starts or deduplicates one SuperDocs edit intent for a selected immutable baseline. |
+| `GET /api/v1/runs/{run_id}` | Returns durable stage/session/document/job/review/export status. |
+| `POST /api/v1/runs/{run_id}/resume` | Reconciles/polls the same persisted job and advances one safe step. |
+| `GET /api/v1/runs/{run_id}/proposals` | Lists immutable proposals and decisions across review rounds. |
+| `POST /api/v1/runs/{run_id}/decisions` | Submits one complete explicit per-proposal decision set. |
+| `POST /api/v1/runs/{run_id}/continue` | Resolves only a real `continue_prompt` gate. |
+| `GET /api/v1/runs/{run_id}/export` | Returns safe reviewed artifact metadata, never document bytes. |
 
 Example source registration after the file has been explicitly authorized:
 
@@ -207,13 +239,35 @@ found, unsupported/trashed source, changed-during-capture, rate limited, unavail
 and invalid-response outcomes. Provider bodies, authorization headers, document
 bodies, and DOCX bytes are not logged.
 
+Starting a run requires the source UUID and immutable capture UUID returned by source
+registration. DocRelay repeats the read-only `A → DOCX → A` capture and requires the
+opaque revision plus native raw/canonical hashes to match before sending bytes to
+SuperDocs. The newly exported per-run DOCX bytes are then frozen in the private
+artifact store; Google DOCX packages are not assumed byte-reproducible across export
+requests:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "source_id":"SOURCE_UUID",
+    "baseline_capture_id":"CAPTURE_UUID",
+    "instruction":"Change 45 days to 30 days and nothing else."
+  }'
+```
+
+Review decisions use local immutable proposal UUIDs. The submitted set must equal the
+entire current proposal set; omissions and duplicates are rejected before any
+provider call. `changes_summary` is not used as the approval ledger or a completion
+signal.
+
 ## Tests
 
 Deterministic checks do not require Google credentials:
 
 ```bash
 cd backend
-uv run pytest -m 'not live_google and not postgresql'
+uv run pytest -m 'not live_google and not live_superdocs and not postgresql'
 uv run ruff check src tests alembic
 uv run ruff format --check src tests alembic
 uv run mypy src
@@ -226,8 +280,8 @@ DOCRELAY_TEST_POSTGRES_URL=postgresql+asyncpg://docrelay:docrelay@localhost:5432
   uv run pytest -m postgresql
 ```
 
-It verifies JSONB operators/types, constraints, indexes, all Phase 1 immutable
-evidence triggers, the new baseline trigger, and an actually rejected update.
+It verifies JSONB operators/types, constraints, indexes, the immutable baseline and
+reviewed-export triggers, and an actually rejected evidence update.
 
 ### Opt-in live Google test
 
@@ -247,6 +301,24 @@ Add `DOCRELAY_LIVE_FORCE_REFRESH=1` to observe a real refresh through the persis
 server credential. The test accepts no copied access token and never mutates Google
 content. Normal test runs skip this module.
 
+### Opt-in live Phase 3 proof
+
+The single bounded proof uses an already registered synthetic Google Doc whose
+selected baseline contains `45 days`. It performs one SuperDocs edit job,
+reconstructs the local orchestration service while review is pending, explicitly
+approves the sole proposal, exports, and checks the DOCX XML for `30 days` and absence
+of `45 days`:
+
+```bash
+DOCRELAY_RUN_LIVE_SUPERDOCS=1 \
+DOCRELAY_LIVE_GOOGLE_SOURCE_ID=source-uuid \
+DOCRELAY_LIVE_GOOGLE_BASELINE_CAPTURE_ID=capture-uuid \
+uv run pytest -q -m live_superdocs
+```
+
+The test refuses to run without the opt-in flag and both opaque IDs. It never calls a
+Google mutation endpoint.
+
 ## Canonicalization
 
 `docrelay.google-native-canonical.v1` is a provider-specific baseline representation,
@@ -259,11 +331,10 @@ bytes are not persisted by the Phase 2 baseline table.
 
 ## Not implemented
 
-- frontend Google Picker/connection UI;
 - reliable watched-folder discovery or scheduling;
-- SuperDocs production client, ingestion, AI editing, review, or export;
 - mapping/compiler or WritePlan generation runtime;
 - provider backup, Google writes, permissions changes, or `batchUpdate`;
-- watcher/worker, folder-rules execution, MCP, or deployment.
+- folder watcher/rule execution, MCP, polished review UI, or deployment.
 
-These are deliberate phase boundaries. Phase 2 stops at the authoritative read path.
+These are deliberate phase boundaries. Phase 3 stops at the reviewed SuperDocs
+artifact and does not begin provider-native mapping.

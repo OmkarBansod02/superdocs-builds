@@ -24,14 +24,20 @@ Branch: `docrelay`
   fail-closed; valid browser tokens are reused in memory; and no normal-use revoke
   occurs.
 - Security regression review — **PASS**.
-- Phase 3 — **GO**. The folder/future-descendant experiment remains **PENDING** and
-  blocks future watch mode only, not Phase 3.
+- Phase 3 — **PASS**. The production SuperDocs adapter, durable HITL orchestration,
+  explicit review lineage, restart recovery, focus-before-export, artifact hashing,
+  API, worker, PostgreSQL migration, and bounded valid-credential live proof passed.
+  Exactly one edit job was created; no Google write occurred.
+- Phase 4 — **GO**. Phase 4 has not been started.
 
 ## Proven assumptions
 
 - The Google source identity is connection/principal + stable file ID; a Docs
   `revisionId` is opaque and is the concurrency authority.
 - Capture accepts a DOCX export only when the surrounding native revisions match.
+- Repeated Google DOCX exports of the same unchanged native revision are not assumed
+  to be byte-identical. A Phase 3 run freezes its newly captured package after verifying
+  the provider revision and native raw/canonical hashes against the selected baseline.
 - SuperDocs chunk IDs are fresh-ingestion lookup evidence, not Google ranges.
 - Only a uniquely proven, exact-range operation with the baseline revision may write;
   first-match/global replace and whole-document replacement are prohibited.
@@ -46,8 +52,8 @@ Branch: `docrelay`
 
 ## Next action
 
-Run the folder/future-descendant experiment before enabling future watch mode. It
-remains pending for watch mode only; Phase 3 is cleared to proceed.
+Begin Phase 4 mapping/compiler work only under its own scope. The folder/future-descendant
+experiment remains pending for watch mode only.
 
 ## Checkpoint log
 
@@ -67,6 +73,18 @@ expiry is fail-closed, valid browser tokens are reused in memory, and no normal-
 revoke occurs; Phase 3 GO. The folder/future-descendant experiment remains PENDING
 for future watch mode only.
 
-Latest verification used implementation commit `a431369` plus the current uncommitted
-Picker lifecycle changes. This progress record and the private Phase 2 evidence were
-updated without committing.
+2026-08-10 — Phase 3 checkpoint: CONDITIONAL PASS; deterministic backend suite,
+real-PostgreSQL migration/integration, lint, formatting, and typing passed; the single
+opt-in production proof was blocked before SuperDocs job creation by HTTP 401 and made
+no Google write; Phase 4 NO-GO until a valid credential completes the same-job
+restart/review/export proof.
+
+2026-08-10 — Phase 3 final checkpoint: PASS; valid-credential live proof completed one
+fresh upload, one edit job, awaiting review, proposal persistence, local-process
+reconstruction, same session/job recovery, explicit approval, actual completion,
+exact-target focus, and DOCX export containing `30 days` and no `45 days`; remote and
+local job counts were both one and no Google mutation occurred. Phase 4 GO; Phase 4
+implementation has not started.
+
+Latest verification uses implementation commit `34144fd` plus the current uncommitted
+Phase 3 changes. No commit was created.

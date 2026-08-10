@@ -232,10 +232,10 @@ class SyncRun(IdMixin, TimestampMixin, Base):
     cloud_document_id: Mapped[UUID] = mapped_column(
         ForeignKey("cloud_documents.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    folder_rule_id: Mapped[UUID] = mapped_column(
-        ForeignKey("folder_rules.id", ondelete="RESTRICT"), nullable=False
+    folder_rule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("folder_rules.id", ondelete="RESTRICT"), nullable=True
     )
-    folder_rule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    folder_rule_version: Mapped[int | None] = mapped_column(Integer)
     rule_snapshot: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
     mode: Mapped[SyncMode] = mapped_column(enum_type(SyncMode, "sync_mode"), nullable=False)
     state: Mapped[SyncRunState] = mapped_column(
@@ -271,6 +271,7 @@ class SourceSnapshot(IdMixin, CreatedAtMixin, Base):
     native_raw_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     native_canonical_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     exported_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_reference: Mapped[str | None] = mapped_column(String(512))
     schema_version: Mapped[str] = mapped_column(String(128), nullable=False)
     capability_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
     provider_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
@@ -383,7 +384,7 @@ class SuperDocsDocument(IdMixin, CreatedAtMixin, Base):
     )
     session_document_id: Mapped[str] = mapped_column(String(255), nullable=False)
     durable_document_id: Mapped[str | None] = mapped_column(String(255))
-    upload_version_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    upload_version_id: Mapped[str | None] = mapped_column(String(255))
     final_version_id: Mapped[str | None] = mapped_column(String(255))
     baseline_html_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     baseline_evidence: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
@@ -417,6 +418,41 @@ class SuperDocsJob(IdMixin, TimestampMixin, Base):
     )
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SuperDocsExport(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "superdocs_exports"
+    __table_args__ = (
+        UniqueConstraint("superdocs_job_id", name="uq_superdocs_export_job"),
+        UniqueConstraint("artifact_reference", name="uq_superdocs_export_artifact_reference"),
+    )
+
+    sync_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    source_snapshot_id: Mapped[UUID] = mapped_column(
+        ForeignKey("source_snapshots.id", ondelete="RESTRICT"), nullable=False
+    )
+    superdocs_session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("superdocs_sessions.id", ondelete="RESTRICT"), nullable=False
+    )
+    superdocs_document_id: Mapped[UUID] = mapped_column(
+        ForeignKey("superdocs_documents.id", ondelete="RESTRICT"), nullable=False
+    )
+    superdocs_job_id: Mapped[UUID] = mapped_column(
+        ForeignKey("superdocs_jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    artifact_reference: Mapped[str] = mapped_column(String(512), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_disposition: Mapped[str | None] = mapped_column(String(1024))
+    warnings_raw: Mapped[str | None] = mapped_column(Text)
+    warnings: Mapped[list[JsonObject]] = mapped_column(
+        JSON_TYPE, nullable=False, default=list, server_default=text("'[]'")
+    )
+    final_version_id: Mapped[str | None] = mapped_column(String(255))
+    exported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ReviewRound(IdMixin, TimestampMixin, Base):
@@ -453,6 +489,8 @@ class ProposedChange(IdMixin, CreatedAtMixin, Base):
             "superdocs_change_id",
             name="uq_proposed_change_job_external_id",
         ),
+        UniqueConstraint("review_round_id", "ordinal", name="uq_proposed_change_round_ordinal"),
+        CheckConstraint("ordinal IS NULL OR ordinal >= 1", name="ordinal_positive"),
     )
 
     sync_run_id: Mapped[UUID] = mapped_column(
@@ -471,6 +509,7 @@ class ProposedChange(IdMixin, CreatedAtMixin, Base):
         ForeignKey("proposed_changes.id", ondelete="RESTRICT")
     )
     superdocs_change_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    ordinal: Mapped[int | None] = mapped_column(Integer)
     operation: Mapped[ProposalOperation] = mapped_column(
         enum_type(ProposalOperation, "proposal_operation"), nullable=False
     )
@@ -689,6 +728,7 @@ __all__ = [
     "RunTransition",
     "SourceSnapshot",
     "SuperDocsDocument",
+    "SuperDocsExport",
     "SuperDocsJob",
     "SuperDocsSession",
     "SyncRun",

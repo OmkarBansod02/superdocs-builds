@@ -316,6 +316,26 @@ class GoogleConnectionService:
         await self._session.commit()
         return RegisteredBaseline(document=document, capture=baseline, result=result)
 
+    async def recapture_registered_source(self, source_id: UUID) -> RegisteredBaseline:
+        document = await self._session.scalar(
+            select(CloudDocument)
+            .join(CloudConnection, CloudConnection.id == CloudDocument.connection_id)
+            .where(
+                CloudDocument.id == source_id,
+                CloudConnection.owner_subject == self._owner_subject,
+                CloudConnection.provider == Provider.GOOGLE,
+            )
+        )
+        if document is None:
+            raise GoogleIntegrationError(
+                GoogleErrorCode.FILE_NOT_FOUND,
+                "The registered Google source was not found",
+            )
+        return await self.register_and_capture(
+            connection_id=document.connection_id,
+            file_id=document.provider_file_id,
+        )
+
     async def _consume_oauth_state(
         self, *, state: str | None, browser_nonce: str | None
     ) -> GoogleOAuthState:

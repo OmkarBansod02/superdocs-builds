@@ -17,6 +17,8 @@ HAPPY_PATH = (
     SyncRunState.AWAITING_REVIEW,
     SyncRunState.EDITING,
     SyncRunState.AWAITING_REVIEW,
+    SyncRunState.EDITING,
+    SyncRunState.REVIEWED_EXPORT_READY,
     SyncRunState.READY_TO_COMMIT,
     SyncRunState.COMMITTING,
     SyncRunState.VERIFYING,

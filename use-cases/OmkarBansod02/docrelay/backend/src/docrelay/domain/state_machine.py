@@ -37,6 +37,7 @@ _ALLOWED_TRANSITIONS: dict[SyncRunState, frozenset[SyncRunState]] = {
     SyncRunState.EDITING: frozenset(
         {
             SyncRunState.AWAITING_REVIEW,
+            SyncRunState.REVIEWED_EXPORT_READY,
             SyncRunState.READY_TO_COMMIT,
             SyncRunState.UNSUPPORTED,
             SyncRunState.SKIPPED,
@@ -48,6 +49,15 @@ _ALLOWED_TRANSITIONS: dict[SyncRunState, frozenset[SyncRunState]] = {
     SyncRunState.AWAITING_REVIEW: frozenset(
         {
             SyncRunState.EDITING,
+            SyncRunState.READY_TO_COMMIT,
+            SyncRunState.UNSUPPORTED,
+            SyncRunState.EXPIRED,
+            SyncRunState.FAILED,
+            SyncRunState.CANCELLED,
+        }
+    ),
+    SyncRunState.REVIEWED_EXPORT_READY: frozenset(
+        {
             SyncRunState.READY_TO_COMMIT,
             SyncRunState.UNSUPPORTED,
             SyncRunState.EXPIRED,

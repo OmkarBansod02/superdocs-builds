@@ -1,4 +1,5 @@
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, SecretStr, model_validator
@@ -20,6 +21,10 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=30)
 
     superdocs_api_key: SecretStr | None = None
+    superdocs_api_base: str = "https://api.superdocs.app/v1"
+    superdocs_http_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    phase3_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    docrelay_artifact_dir: Path = Path(".docrelay-artifacts")
     google_oauth_client_id: str | None = None
     google_oauth_client_secret: SecretStr | None = None
     google_oauth_redirect_uri: str | None = None
@@ -55,6 +60,8 @@ class Settings(BaseSettings):
             and self.docrelay_owner_subject == "local-development-owner"
         ):
             raise ValueError("DOCRELAY_OWNER_SUBJECT must be explicit in production")
+        if self.app_env == "production" and not self.superdocs_api_base.startswith("https://"):
+            raise ValueError("SUPERDOCS_API_BASE must use HTTPS in production")
         return self
 
     @property
@@ -72,4 +79,4 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    return Settings()
+    return Settings()  # type: ignore[call-arg]  # BaseSettings loads database_url from env

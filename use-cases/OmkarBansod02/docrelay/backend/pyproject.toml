@@ -37,6 +37,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
   "live_google: opt-in test requiring an already configured real Google OAuth connection",
+  "live_superdocs: opt-in Phase 3 proof requiring configured Google and SuperDocs credentials",
   "postgresql: opt-in test requiring the local PostgreSQL service",
 ]
 

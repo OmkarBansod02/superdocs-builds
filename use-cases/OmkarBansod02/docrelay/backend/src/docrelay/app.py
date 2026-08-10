@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,12 +10,31 @@ from docrelay.api.google import GoogleErrorBody, GoogleErrorResponse
 from docrelay.api.google import router as google_router
 from docrelay.api.health import router as health_router
 from docrelay.api.middleware import RequestIdMiddleware
+from docrelay.api.runs import router as runs_router
 from docrelay.core.config import Settings, get_settings
 from docrelay.core.logging import configure_logging
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import OAUTH_BROWSER_COOKIE
+from docrelay.integrations.superdocs.client import (
+    SuperDocsError,
+    SuperDocsInvalidResponse,
+    SuperDocsRequestError,
+)
+from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
 from docrelay.persistence.database import Database
+from docrelay.services.artifacts import ArtifactStore, FilesystemArtifactStore
+from docrelay.services.phase3 import (
+    ExportNotReady,
+    IncompleteDecisionSet,
+    Phase3Error,
+    ReviewOperationInvalid,
+    ReviewPayloadInvalid,
+    RunNotFound,
+    SelectedBaselineChanged,
+    SourceNotFound,
+    SuperDocsNotConfigured,
+)
 
 
 def create_app(
@@ -22,10 +42,16 @@ def create_app(
     settings: Settings | None = None,
     database: Database | None = None,
     google_runtime: GoogleRuntime | None = None,
+    superdocs_runtime: SuperDocsRuntime | None = None,
+    artifact_store: ArtifactStore | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app_database = database or Database(app_settings.database_url)
     app_google_runtime = google_runtime or GoogleRuntime.from_settings(app_settings)
+    app_superdocs_runtime = superdocs_runtime or SuperDocsRuntime.from_settings(app_settings)
+    app_artifact_store = artifact_store or FilesystemArtifactStore(
+        app_settings.docrelay_artifact_dir
+    )
     configure_logging(app_settings.log_level)
 
     @asynccontextmanager
@@ -33,6 +59,8 @@ def create_app(
         yield
         if app_google_runtime is not None:
             await app_google_runtime.close()
+        if app_superdocs_runtime is not None:
+            await app_superdocs_runtime.close()
         await app_database.dispose()
 
     app = FastAPI(
@@ -47,6 +75,8 @@ def create_app(
     app.state.settings = app_settings
     app.state.database = app_database
     app.state.google_runtime = app_google_runtime
+    app.state.superdocs_runtime = app_superdocs_runtime
+    app.state.artifact_store = app_artifact_store
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
@@ -57,6 +87,7 @@ def create_app(
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health_router)
     app.include_router(google_router)
+    app.include_router(runs_router)
 
     @app.exception_handler(GoogleIntegrationError)
     async def handle_google_error(request: Request, exc: GoogleIntegrationError) -> Response:
@@ -97,5 +128,55 @@ def create_app(
                 samesite="lax",
             )
         return response
+
+    @app.exception_handler(Phase3Error)
+    async def handle_phase3_error(_: Request, exc: Phase3Error) -> Response:
+        if isinstance(exc, (RunNotFound, SourceNotFound)):
+            status_code = 404
+        elif isinstance(exc, SuperDocsNotConfigured):
+            status_code = 503
+        elif isinstance(
+            exc,
+            (
+                IncompleteDecisionSet,
+                ReviewOperationInvalid,
+                ReviewPayloadInvalid,
+                SelectedBaselineChanged,
+                ExportNotReady,
+            ),
+        ):
+            status_code = 409
+        else:
+            status_code = 422
+        return Response(
+            content=json.dumps(
+                {"error": {"code": exc.code, "message": exc.safe_message}},
+                separators=(",", ":"),
+            ),
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    @app.exception_handler(SuperDocsError)
+    async def handle_superdocs_error(_: Request, exc: SuperDocsError) -> Response:
+        if isinstance(exc, SuperDocsInvalidResponse):
+            status_code = 502
+            code = "SUPERDOCS_INVALID_RESPONSE"
+            message = str(exc)
+        elif isinstance(exc, SuperDocsRequestError):
+            status_code = 429 if exc.status_code == 429 else 503
+            code = "SUPERDOCS_UNAVAILABLE"
+            message = exc.safe_message
+        else:
+            status_code = 502
+            code = "SUPERDOCS_ERROR"
+            message = "SuperDocs integration failed"
+        return Response(
+            content=json.dumps(
+                {"error": {"code": code, "message": message}}, separators=(",", ":")
+            ),
+            status_code=status_code,
+            media_type="application/json",
+        )
 
     return app
