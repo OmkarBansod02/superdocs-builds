@@ -31,7 +31,10 @@ Branch: `docrelay`
 - Phase 4 — **PASS**. Strict approved-change normalization, production mapping against
   the persisted native Google revision, immutable MappingProof/WritePlan persistence,
   exact dry-run intent, fail-closed coverage, and the bounded offline evidence proof passed.
-- Phase 5 — **GO**. Phase 5 has not been started.
+- Phase 5 — **PASS**. End-to-end workspace UI with Tailwind CSS, real API integration,
+  source selection via Google Picker, edit instruction composer, explicit proposal review,
+  Phase 4 dry-run visualization with safety checklist, fail-closed unsupported mapping UI,
+  and no Google mutation passed.
 
 ## Proven assumptions
 
@@ -59,9 +62,9 @@ Branch: `docrelay`
 
 ## Next action
 
-Begin Phase 5 only under its own scope. Phase 4 did not execute a plan, create a backup,
-or call a Google mutation API. The folder/future-descendant experiment remains pending
-for watch mode only.
+Begin Phase 6 only under its own scope. Phase 5 built the end-to-end workspace UI but
+did not implement write-back, backup, concurrency resolution, or watch mode. The
+folder/future-descendant experiment remains pending for watch mode only.
 
 ## Checkpoint log
 
@@ -102,3 +105,9 @@ and exact delete/insert intent with zero provider mutation. Phase 5 GO but not s
 
 Latest verification uses implementation commit `34144fd` plus the current uncommitted
 Phase 3 changes. No commit was created.
+
+2026-08-10 — Phase 5 checkpoint: PASS; Tailwind CSS workspace UI with real API integration,
+Google Picker source selection, edit instruction composer, explicit per-proposal review,
+Phase 4 dry-run visualization with safety checklist and collapsed technical details,
+fail-closed unsupported mapping UI, bounded polling, 44 frontend tests, typecheck, lint,
+and production build passed; zero backend changes; no Google mutation; no commit created.
