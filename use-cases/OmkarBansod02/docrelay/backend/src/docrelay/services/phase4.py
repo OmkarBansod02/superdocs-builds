@@ -1,0 +1,531 @@
+import hashlib
+import json
+from datetime import timedelta
+from enum import StrEnum
+from typing import Literal
+from uuid import NAMESPACE_URL, UUID, uuid5
+
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from docrelay.domain.enums import (
+    ChangeDecision,
+    Provider,
+    ReviewRoundResolution,
+    SuperDocsJobStatus,
+    SyncRunState,
+)
+from docrelay.domain.write_plan import SealedWritePlan
+from docrelay.mapping.production import (
+    BaselineSnapshot,
+    MappingFailure,
+    MappingFailureCode,
+    ReviewedProposal,
+    SealedMappingProof,
+    compile_write_plan,
+    map_replacement,
+    normalize_reviewed_change,
+    write_plan_identity,
+)
+from docrelay.persistence.models import (
+    CloudConnection,
+    CloudDocument,
+    GoogleBaselineCapture,
+    MappingProof,
+    ProposedChange,
+    ReviewDecision,
+    ReviewRound,
+    SourceSnapshot,
+    SuperDocsDocument,
+    SuperDocsExport,
+    SuperDocsJob,
+    SuperDocsSession,
+    SyncRun,
+    WritePlan,
+    WritePlanLineage,
+)
+from docrelay.services.phase3 import RunNotFound
+
+
+class DryRunStatus(StrEnum):
+    READY = "READY"
+    UNSUPPORTED = "UNSUPPORTED"
+    AMBIGUOUS = "AMBIGUOUS"
+    STALE = "STALE"
+    NOT_APPROVED = "NOT_APPROVED"
+
+
+class _Phase4Model(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class DryRunSource(_Phase4Model):
+    provider: Literal[Provider.GOOGLE]
+    file_id: str
+    baseline_revision_id: str
+    native_snapshot_sha256: str
+
+
+class DryRunView(_Phase4Model):
+    run_id: UUID
+    proposal_id: UUID | None
+    status: DryRunStatus
+    source: DryRunSource | None
+    old_text: str | None
+    new_text: str | None
+    structural_location: dict[str, JsonValue] | None
+    operation_count: int = Field(ge=0)
+    operation_types: tuple[str, ...]
+    provider_operation: dict[str, JsonValue] | None
+    why_safe: tuple[str, ...]
+    mapping_proof_id: UUID | None
+    mapping_proof_sha256: str | None
+    write_plan_id: UUID | None
+    write_plan_sha256: str | None
+    reason_code: str | None
+    reason: str | None
+    candidate_count: int | None
+    cloud_mutation_performed: Literal[False] = False
+
+
+class Phase4PlanningService:
+    """Compile persisted Phase 3 review evidence without any provider dependency."""
+
+    def __init__(
+        self,
+        *,
+        sessions: async_sessionmaker[AsyncSession],
+        owner_subject: str,
+    ) -> None:
+        self._sessions = sessions
+        self._owner_subject = owner_subject
+
+    async def dry_run(self, run_id: UUID, *, proposal_id: UUID | None = None) -> DryRunView:
+        async with self._sessions() as session:
+            run, document, connection = await self._owned_run(session, run_id)
+            snapshot = await session.scalar(
+                select(SourceSnapshot).where(SourceSnapshot.sync_run_id == run.id)
+            )
+            if snapshot is None:
+                return _failure_view(
+                    run_id,
+                    proposal_id,
+                    MappingFailure(
+                        MappingFailureCode.STALE_LINEAGE,
+                        "run has no immutable source snapshot",
+                    ),
+                )
+            source = DryRunSource(
+                provider=Provider.GOOGLE,
+                file_id=document.provider_file_id,
+                baseline_revision_id=snapshot.provider_revision_id,
+                native_snapshot_sha256=snapshot.native_canonical_sha256,
+            )
+            try:
+                lineage = await self._review_lineage(session, run, snapshot, proposal_id)
+                (
+                    proposal,
+                    decision,
+                    round_row,
+                    job,
+                    superdocs_session,
+                    superdocs_document,
+                    export,
+                ) = lineage
+                capture = await self._baseline_capture(session, snapshot)
+                superseded = (
+                    await session.scalar(
+                        select(ProposedChange.id).where(
+                            ProposedChange.replaces_proposal_id == proposal.id
+                        )
+                    )
+                    is not None
+                )
+                lineage_current = (
+                    run.state is SyncRunState.REVIEWED_EXPORT_READY
+                    and run.baseline_revision_id == snapshot.provider_revision_id
+                    and proposal.sync_run_id == run.id
+                    and proposal.superdocs_job_id == job.id
+                    and proposal.review_round_id == round_row.id
+                    and proposal.target_document_id == superdocs_document.id
+                    and decision is not None
+                    and decision.sync_run_id == run.id
+                    and decision.proposed_change_id == proposal.id
+                    and round_row.sync_run_id == run.id
+                    and round_row.superdocs_job_id == job.id
+                    and round_row.resolution is ReviewRoundResolution.SUBMIT_CHANGES
+                    and job.sync_run_id == run.id
+                    and job.status is SuperDocsJobStatus.COMPLETED
+                    and job.superdocs_session_id == superdocs_session.id
+                    and job.target_document_id == superdocs_document.id
+                    and superdocs_session.sync_run_id == run.id
+                    and superdocs_document.superdocs_session_id == superdocs_session.id
+                    and superdocs_document.source_snapshot_id == snapshot.id
+                    and export.sync_run_id == run.id
+                    and export.source_snapshot_id == snapshot.id
+                    and export.superdocs_session_id == superdocs_session.id
+                    and export.superdocs_document_id == superdocs_document.id
+                    and export.superdocs_job_id == job.id
+                    and not export.warnings
+                )
+                reviewed = ReviewedProposal(
+                    proposal_id=proposal.id,
+                    decision_id=decision.id if decision else None,
+                    decision=decision.decision if decision else None,
+                    decision_sha256=decision.decision_sha256 if decision else None,
+                    superseded=superseded,
+                    operation=proposal.operation,
+                    review_round=round_row.ordinal,
+                    session_id=superdocs_session.session_id,
+                    session_document_id=superdocs_document.session_document_id,
+                    durable_document_id=superdocs_document.durable_document_id,
+                    job_id=job.provider_job_id,
+                    superdocs_export_id=export.id,
+                    approved_export_sha256=export.sha256,
+                    final_version_id=export.final_version_id,
+                    superdocs_change_id=proposal.superdocs_change_id,
+                    chunk_id=proposal.chunk_id,
+                    old_html=proposal.old_html,
+                    new_html=proposal.new_html,
+                    lineage_current=lineage_current,
+                )
+                change = normalize_reviewed_change(reviewed)
+                baseline = BaselineSnapshot(
+                    snapshot_id=snapshot.id,
+                    provider=Provider.GOOGLE,
+                    provider_principal_subject=connection.provider_account_subject,
+                    provider_file_id=document.provider_file_id,
+                    parent_ids=tuple(document.parent_ids),
+                    baseline_revision_id=snapshot.provider_revision_id,
+                    run_baseline_revision_id=run.baseline_revision_id or "",
+                    capture_revision_id=capture.provider_revision_id,
+                    native_raw_sha256=snapshot.native_raw_sha256,
+                    native_canonical_sha256=snapshot.native_canonical_sha256,
+                    exported_docx_sha256=snapshot.exported_artifact_sha256,
+                    canonical_payload=capture.canonical_payload,
+                )
+                proof = map_replacement(change, baseline, export.exported_at)
+                stored_proof = await self._persist_proof(session, run, snapshot, proof)
+                rule_hash = _hash_json(run.rule_snapshot)
+                plan = compile_write_plan(
+                    change=change,
+                    baseline=baseline,
+                    proof=proof,
+                    sync_run_id=run.id,
+                    rule_identity=run.folder_rule_id
+                    or uuid5(NAMESPACE_URL, f"docrelay:manual-rule:{rule_hash}"),
+                    rule_version=run.folder_rule_version or 1,
+                    instruction_sha256=str(
+                        run.rule_snapshot.get("instruction_sha256") or rule_hash
+                    ),
+                    configuration_sha256=rule_hash,
+                    created_at=export.exported_at,
+                    expires_at=export.exported_at + timedelta(hours=24),
+                )
+                stored_plan = await self._persist_plan(
+                    session,
+                    run,
+                    snapshot,
+                    proposal,
+                    decision,
+                    stored_proof,
+                    plan,
+                )
+                await session.commit()
+            except MappingFailure as exc:
+                await session.rollback()
+                return _failure_view(run_id, proposal_id, exc, source=source)
+            except ValidationError:
+                await session.rollback()
+                return _failure_view(
+                    run_id,
+                    proposal_id,
+                    MappingFailure(
+                        MappingFailureCode.STALE_LINEAGE,
+                        "persisted planning evidence is malformed",
+                    ),
+                    source=source,
+                )
+
+        operation = plan.payload.provider_operations[0]
+        location = proof.payload.location
+        return DryRunView(
+            run_id=run_id,
+            proposal_id=change.proposal_id,
+            status=DryRunStatus.READY,
+            source=source,
+            old_text=change.old_text,
+            new_text=change.new_text,
+            structural_location=location.model_dump(mode="json"),
+            operation_count=len(operation.requests),
+            operation_types=("deleteContentRange", "insertText"),
+            provider_operation=operation.provider_payload(),
+            why_safe=(
+                "approved immutable review decision",
+                "exact persisted baseline revision and native snapshot hash",
+                "one unique ordinary body paragraph and one plain text run",
+                "exact internal ASCII preimage with equal UTF-16 length",
+                "minimum delete-and-insert range guarded by requiredRevisionId",
+            ),
+            mapping_proof_id=stored_proof.id,
+            mapping_proof_sha256=proof.integrity_sha256,
+            write_plan_id=stored_plan.id,
+            write_plan_sha256=plan.integrity_sha256,
+            reason_code=None,
+            reason=None,
+            candidate_count=1,
+        )
+
+    async def _owned_run(
+        self, session: AsyncSession, run_id: UUID
+    ) -> tuple[SyncRun, CloudDocument, CloudConnection]:
+        row = (
+            await session.execute(
+                select(SyncRun, CloudDocument, CloudConnection)
+                .join(CloudDocument, CloudDocument.id == SyncRun.cloud_document_id)
+                .join(CloudConnection, CloudConnection.id == CloudDocument.connection_id)
+                .where(
+                    SyncRun.id == run_id,
+                    CloudConnection.owner_subject == self._owner_subject,
+                    CloudConnection.provider == Provider.GOOGLE,
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            raise RunNotFound("run was not found")
+        return row._tuple()
+
+    async def _review_lineage(
+        self,
+        session: AsyncSession,
+        run: SyncRun,
+        snapshot: SourceSnapshot,
+        proposal_id: UUID | None,
+    ) -> tuple[
+        ProposedChange,
+        ReviewDecision | None,
+        ReviewRound,
+        SuperDocsJob,
+        SuperDocsSession,
+        SuperDocsDocument,
+        SuperDocsExport,
+    ]:
+        statement = select(ProposedChange).where(ProposedChange.sync_run_id == run.id)
+        if proposal_id is not None:
+            statement = statement.where(ProposedChange.id == proposal_id)
+        proposals = tuple(await session.scalars(statement.order_by(ProposedChange.created_at)))
+        if proposal_id is None and len(proposals) > 1:
+            superseded_ids = {
+                item.replaces_proposal_id
+                for item in proposals
+                if item.replaces_proposal_id is not None
+            }
+            proposals = tuple(item for item in proposals if item.id not in superseded_ids)
+        if len(proposals) != 1:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "exactly one proposal must be selected for mapping",
+            )
+        proposal = proposals[0]
+        decision = await session.scalar(
+            select(ReviewDecision).where(ReviewDecision.proposed_change_id == proposal.id)
+        )
+        round_row = await session.get(ReviewRound, proposal.review_round_id)
+        job = await session.get(SuperDocsJob, proposal.superdocs_job_id)
+        document = await session.get(SuperDocsDocument, proposal.target_document_id)
+        export = await session.scalar(
+            select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
+        )
+        if round_row is None or job is None or document is None or export is None:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "review/export lineage is incomplete",
+            )
+        superdocs_session = await session.get(SuperDocsSession, job.superdocs_session_id)
+        if superdocs_session is None or snapshot.id != document.source_snapshot_id:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "review lineage does not bind to the source snapshot",
+            )
+        return proposal, decision, round_row, job, superdocs_session, document, export
+
+    async def _baseline_capture(
+        self, session: AsyncSession, snapshot: SourceSnapshot
+    ) -> GoogleBaselineCapture:
+        raw_capture_id = snapshot.provider_evidence.get("selected_baseline_capture_id")
+        try:
+            capture_id = UUID(str(raw_capture_id))
+        except (TypeError, ValueError) as exc:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "source snapshot has no selected native baseline capture",
+            ) from exc
+        capture = await session.get(GoogleBaselineCapture, capture_id)
+        if (
+            capture is None
+            or capture.cloud_document_id != snapshot.cloud_document_id
+            or capture.provider_revision_id != snapshot.provider_revision_id
+            or capture.native_raw_sha256 != snapshot.native_raw_sha256
+            or capture.native_canonical_sha256 != snapshot.native_canonical_sha256
+        ):
+            raise MappingFailure(
+                MappingFailureCode.STALE_SNAPSHOT,
+                "selected native baseline capture does not match the run snapshot",
+            )
+        return capture
+
+    @staticmethod
+    async def _persist_proof(
+        session: AsyncSession,
+        run: SyncRun,
+        snapshot: SourceSnapshot,
+        proof: SealedMappingProof,
+    ) -> MappingProof:
+        existing = await session.get(MappingProof, proof.mapping_proof_id)
+        payload = proof.payload.model_dump(mode="json")
+        if existing is not None:
+            if (
+                existing.sync_run_id != run.id
+                or existing.source_snapshot_id != snapshot.id
+                or existing.integrity_sha256 != proof.integrity_sha256
+                or existing.proof_payload != payload
+            ):
+                raise MappingFailure(
+                    MappingFailureCode.EXISTING_PLAN_LINEAGE_MISMATCH,
+                    "existing MappingProof has different immutable inputs",
+                )
+            return existing
+        row = MappingProof(
+            id=proof.mapping_proof_id,
+            created_at=proof.payload.created_at,
+            sync_run_id=run.id,
+            source_snapshot_id=snapshot.id,
+            schema_version=proof.payload.schema_version,
+            mapper_version=proof.payload.mapper_version,
+            integrity_sha256=proof.integrity_sha256,
+            proof_payload=payload,
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
+    @staticmethod
+    async def _persist_plan(
+        session: AsyncSession,
+        run: SyncRun,
+        snapshot: SourceSnapshot,
+        proposal: ProposedChange,
+        decision: ReviewDecision | None,
+        proof: MappingProof,
+        plan: SealedWritePlan,
+    ) -> WritePlan:
+        if decision is None or decision.decision is not ChangeDecision.APPROVE:
+            raise MappingFailure(
+                MappingFailureCode.NOT_APPROVED,
+                "only approved decisions can produce a WritePlan",
+            )
+        existing = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run.id))
+        plan_id = write_plan_identity(plan)
+        payload = plan.payload.model_dump(mode="json")
+        if existing is not None:
+            lineage = await session.scalar(
+                select(WritePlanLineage).where(WritePlanLineage.write_plan_id == existing.id)
+            )
+            if (
+                existing.id != plan_id
+                or existing.integrity_sha256 != plan.integrity_sha256
+                or existing.payload != payload
+                or lineage is None
+                or lineage.proposed_change_id != proposal.id
+                or lineage.review_decision_id != decision.id
+            ):
+                raise MappingFailure(
+                    MappingFailureCode.EXISTING_PLAN_LINEAGE_MISMATCH,
+                    "an existing WritePlan has different immutable inputs",
+                )
+            return existing
+        operation_payload = {
+            "operations": [
+                operation.model_dump(mode="json") for operation in plan.payload.provider_operations
+            ]
+        }
+        row = WritePlan(
+            id=plan_id,
+            created_at=plan.payload.created_at,
+            sync_run_id=run.id,
+            source_snapshot_id=snapshot.id,
+            mapping_proof_id=proof.id,
+            schema_version=plan.payload.schema_version,
+            provider_file_id=plan.payload.source.provider_file_id,
+            baseline_revision_id=plan.payload.source.baseline_revision_id,
+            mapper_version=plan.payload.mapping.mapper_version,
+            verifier_version=plan.payload.expected_postimage.verifier_version,
+            provider_operations=operation_payload,
+            expected_postimage_sha256=plan.payload.expected_postimage.canonical_sha256,
+            payload=payload,
+            integrity_sha256=plan.integrity_sha256,
+            sealed_at=plan.payload.created_at,
+            expires_at=plan.payload.expires_at,
+        )
+        session.add(row)
+        await session.flush()
+        session.add(
+            WritePlanLineage(
+                id=uuid5(NAMESPACE_URL, f"docrelay:write-plan-lineage:{row.id}:{proposal.id}"),
+                created_at=plan.payload.created_at,
+                write_plan_id=row.id,
+                proposed_change_id=proposal.id,
+                review_decision_id=decision.id,
+                ordinal=1,
+            )
+        )
+        await session.flush()
+        return row
+
+
+def _failure_view(
+    run_id: UUID,
+    proposal_id: UUID | None,
+    failure: MappingFailure,
+    *,
+    source: DryRunSource | None = None,
+) -> DryRunView:
+    if failure.code is MappingFailureCode.AMBIGUOUS_PREIMAGE:
+        status = DryRunStatus.AMBIGUOUS
+    elif failure.code in {
+        MappingFailureCode.STALE_LINEAGE,
+        MappingFailureCode.STALE_SNAPSHOT,
+        MappingFailureCode.WRONG_REVISION,
+        MappingFailureCode.EXISTING_PLAN_LINEAGE_MISMATCH,
+    }:
+        status = DryRunStatus.STALE
+    elif failure.code in {MappingFailureCode.NOT_APPROVED, MappingFailureCode.UNDECIDED}:
+        status = DryRunStatus.NOT_APPROVED
+    else:
+        status = DryRunStatus.UNSUPPORTED
+    return DryRunView(
+        run_id=run_id,
+        proposal_id=proposal_id,
+        status=status,
+        source=source,
+        old_text=None,
+        new_text=None,
+        structural_location=None,
+        operation_count=0,
+        operation_types=(),
+        provider_operation=None,
+        why_safe=(),
+        mapping_proof_id=None,
+        mapping_proof_sha256=None,
+        write_plan_id=None,
+        write_plan_sha256=None,
+        reason_code=failure.code,
+        reason=failure.safe_message,
+        candidate_count=failure.candidate_count,
+    )
+
+
+def _hash_json(value: object) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

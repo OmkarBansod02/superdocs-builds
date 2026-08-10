@@ -28,6 +28,7 @@ from docrelay.services.phase3 import (
     SourceNotFound,
     SuperDocsNotConfigured,
 )
+from docrelay.services.phase4 import DryRunView, Phase4PlanningService
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -65,6 +66,10 @@ class ResumeRequest(RunAPIModel):
 class ProposalsResponse(RunAPIModel):
     run_id: UUID
     proposals: tuple[ProposalView, ...]
+
+
+class DryRunRequest(RunAPIModel):
+    proposal_id: UUID | None = None
 
 
 def _orchestrator(request: Request) -> Phase3Orchestrator:
@@ -221,3 +226,21 @@ async def get_export(run_id: UUID, request: Request) -> ExportView:
     if view.export is None:
         raise ExportNotReady("reviewed SuperDocs export metadata is not ready")
     return view.export
+
+
+@router.post("/{run_id}/dry-run", response_model=DryRunView)
+async def create_dry_run(
+    run_id: UUID,
+    request: Request,
+    payload: Annotated[DryRunRequest | None, Body()] = None,
+) -> DryRunView:
+    database: Database = request.app.state.database
+    settings: Settings = request.app.state.settings
+    service = Phase4PlanningService(
+        sessions=database.sessions,
+        owner_subject=settings.docrelay_owner_subject,
+    )
+    return await service.dry_run(
+        run_id,
+        proposal_id=payload.proposal_id if payload else None,
+    )

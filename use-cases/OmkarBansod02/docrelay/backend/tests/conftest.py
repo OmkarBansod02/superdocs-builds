@@ -8,6 +8,7 @@ from docrelay.domain.enums import Provider
 from docrelay.domain.write_plan import (
     ApprovalLineageContract,
     ExpectedPostimageContract,
+    ExpectedReplacementContract,
     GoogleDocsBatchUpdate,
     MappingProofContract,
     RuleContract,
@@ -62,6 +63,7 @@ def write_plan_factory() -> Callable[..., SealedWritePlan]:
                 mapper_version="docrelay.google-plain-token-mapper.v1",
                 integrity_sha256=THREE_HASH,
             ),
+            compiler_version="docrelay.google-write-plan-compiler.v1",
             approval_lineage=(
                 ApprovalLineageContract(
                     proposal_id=proposal_id or uuid4(),
@@ -71,12 +73,21 @@ def write_plan_factory() -> Callable[..., SealedWritePlan]:
                     session_document_id="doc_primary",
                     durable_document_id="durable-audit-id",
                     job_id="superdocs-job-id",
+                    superdocs_export_id=uuid4(),
+                    approved_export_sha256=TWO_HASH,
+                    final_version_id="final-version-id",
                     superdocs_change_id="replacement-change-id",
                     chunk_id="fresh-ingestion-chunk-id",
                     approved=True,
                     old_html_sha256=ZERO_HASH,
                     new_html_sha256=ONE_HASH,
                 ),
+            ),
+            expected_replacement=ExpectedReplacementContract(
+                old_text="45",
+                new_text="30",
+                old_paragraph_sha256=ZERO_HASH,
+                new_paragraph_sha256=ONE_HASH,
             ),
             provider_operations=(
                 GoogleDocsBatchUpdate(

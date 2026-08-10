@@ -54,6 +54,9 @@ class ApprovalLineageContract(FrozenContract):
     session_document_id: str = Field(min_length=1)
     durable_document_id: str | None = None
     job_id: str = Field(min_length=1)
+    superdocs_export_id: UUID
+    approved_export_sha256: Sha256
+    final_version_id: str | None = None
     superdocs_change_id: str = Field(min_length=1)
     chunk_id: str = Field(min_length=1)
     approved: Literal[True]
@@ -87,6 +90,13 @@ class ExpectedPostimageContract(FrozenContract):
     canonical_payload: dict[str, JsonValue]
 
 
+class ExpectedReplacementContract(FrozenContract):
+    old_text: str = Field(min_length=1)
+    new_text: str = Field(min_length=1)
+    old_paragraph_sha256: Sha256
+    new_paragraph_sha256: Sha256
+
+
 class UnsupportedChangeContract(FrozenContract):
     proposal_id: UUID | None = None
     superdocs_change_id: str | None = None
@@ -102,7 +112,9 @@ class WritePlanPayload(FrozenContract):
     source: SourceSnapshotContract
     rule: RuleContract
     mapping: MappingProofContract
+    compiler_version: str = Field(min_length=1)
     approval_lineage: tuple[ApprovalLineageContract, ...] = Field(min_length=1)
+    expected_replacement: ExpectedReplacementContract
     provider_operations: tuple[GoogleDocsBatchUpdate, ...] = Field(min_length=1, max_length=1)
     expected_postimage: ExpectedPostimageContract
     unsupported_or_rejected_changes: tuple[UnsupportedChangeContract, ...] = ()
