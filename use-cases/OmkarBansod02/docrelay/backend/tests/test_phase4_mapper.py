@@ -227,6 +227,29 @@ def test_normalization_rejects_changes_outside_proven_subset(
     assert error.value.code is code
 
 
+def test_live_create_proposal_is_not_reclassified_as_a_plain_text_replacement() -> None:
+    """Sanitized shape persisted for the 2026-08-10 live add-at-end proposal."""
+    proposal = _proposal(
+        operation=ProposalOperation.CREATE,
+        chunk_id="new",
+        old_html=None,
+        new_html=(
+            '<div style="width: 100%; border-top: 2px solid #333; margin-top: 30px; '
+            'padding-top: 10px; font-family: sans-serif;">'
+            '<table style="width: 100%; border-collapse: collapse; border: none;">'
+            "<tr><td><p>Representative:</p><p>Omkar Bansod</p></td>"
+            "<td><p>Date:</p><p>August 10, 2026</p></td></tr>"
+            "</table></div>"
+        ),
+    )
+
+    with pytest.raises(MappingFailure) as error:
+        normalize_reviewed_change(proposal)
+
+    assert error.value.code is MappingFailureCode.UNSUPPORTED_OPERATION
+    assert str(error.value) == "only reviewed edit proposals are supported"
+
+
 def test_old_preimage_missing_fails_closed() -> None:
     change = normalize_reviewed_change(_proposal())
     with pytest.raises(MappingFailure) as error:

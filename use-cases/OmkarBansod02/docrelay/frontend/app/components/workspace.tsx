@@ -16,7 +16,11 @@ import {
   decideWriteConflict,
   writeBackSafely,
 } from "../lib/api";
-import { runNeedsPolling } from "../lib/workspace-state";
+import {
+  buildReviewDecisionSubmission,
+  routeRun,
+  runNeedsPolling,
+} from "../lib/workspace-state";
 import { canWriteBack } from "../lib/write-back-state";
 import type { WorkspaceState } from "../lib/workspace-state";
 
@@ -32,50 +36,25 @@ import { ErrorState } from "./error-state";
 import { WriteBackResult } from "./write-back-result";
 
 const POLL_INTERVAL_MS = 4000;
-
-function routeRun(
-  conn: GoogleConnection,
-  source: SourceRegistration,
-  run: RunView,
-): WorkspaceState | "dry-run-needed" {
-  if (run.state === "AWAITING_REVIEW" && run.pending_proposals.length > 0) {
-    return {
-      stage: "review",
-      connection: conn,
-      source,
-      run,
-      proposals: run.pending_proposals,
-      decisions: new Map(),
-      submitting: false,
-    };
-  }
-  if (run.state === "REVIEWED_EXPORT_READY") {
-    return "dry-run-needed";
-  }
-  if (run.state === "FAILED" || run.state === "CANCELLED") {
-    return {
-      stage: "error",
-      connection: conn,
-      source,
-      run,
-      message: run.attention_code
-        ? `Run failed: ${run.attention_code.replace(/_/g, " ").toLowerCase()}`
-        : "The edit run did not complete successfully.",
-      recoverable: false,
-    };
-  }
-  return { stage: "processing", connection: conn, source, run };
-}
+type WorkspaceStateUpdate = WorkspaceState | ((current: WorkspaceState) => WorkspaceState);
 
 export function Workspace() {
-  const [state, setState] = useState<WorkspaceState>({
+  const stateRef = useRef<WorkspaceState>({
     stage: "source",
     connection: null,
     loading: true,
   });
+  const [state, setState] = useState<WorkspaceState>(stateRef.current);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const writeInFlightRef = useRef(false);
+
+  const setWorkspaceState = useCallback((update: WorkspaceStateUpdate): WorkspaceState => {
+    const next = typeof update === "function" ? update(stateRef.current) : update;
+    stateRef.current = next;
+    setState(next);
+    return next;
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -95,12 +74,12 @@ export function Workspace() {
         try {
           const dryRunResult = await createDryRun(run.run_id);
           if (dryRunResult.status === "READY") {
-            setState({ stage: "dry-run", connection: conn, source, run, dryRun: dryRunResult, writing: false });
+            setWorkspaceState({ stage: "dry-run", connection: conn, source, run, dryRun: dryRunResult, writing: false });
           } else {
-            setState({ stage: "unsupported", connection: conn, source, run, dryRun: dryRunResult });
+            setWorkspaceState({ stage: "unsupported", connection: conn, source, run, dryRun: dryRunResult });
           }
         } catch (err) {
-          setState({
+          setWorkspaceState({
             stage: "error",
             connection: conn,
             source,
@@ -112,7 +91,7 @@ export function Workspace() {
         return;
       }
 
-      setState(result);
+      setWorkspaceState(result);
 
       if (result.stage === "processing" && runNeedsPolling(run.state)) {
         const poll = setInterval(async () => {
@@ -126,12 +105,12 @@ export function Workspace() {
               try {
                 const dryRunResult = await createDryRun(updated.run_id);
                 if (dryRunResult.status === "READY") {
-                  setState({ stage: "dry-run", connection: conn, source, run: updated, dryRun: dryRunResult, writing: false });
+                  setWorkspaceState({ stage: "dry-run", connection: conn, source, run: updated, dryRun: dryRunResult, writing: false });
                 } else {
-                  setState({ stage: "unsupported", connection: conn, source, run: updated, dryRun: dryRunResult });
+                  setWorkspaceState({ stage: "unsupported", connection: conn, source, run: updated, dryRun: dryRunResult });
                 }
               } catch (err) {
-                setState({
+                setWorkspaceState({
                   stage: "error",
                   connection: conn,
                   source,
@@ -147,7 +126,7 @@ export function Workspace() {
               clearInterval(poll);
               pollRef.current = null;
             }
-            setState(nextResult);
+            setWorkspaceState(nextResult);
           } catch {
             // silently retry on next interval
           }
@@ -155,33 +134,33 @@ export function Workspace() {
         pollRef.current = poll;
       }
     },
-    [stopPolling],
+    [setWorkspaceState, stopPolling],
   );
 
   const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
-    setState((s) => ({ ...s, connection: conn, loading: false }) as WorkspaceState);
-  }, []);
+    setWorkspaceState((s) => ({ ...s, connection: conn, loading: false }) as WorkspaceState);
+  }, [setWorkspaceState]);
 
   const handleSourceSelected = useCallback(
     (conn: GoogleConnection, source: SourceRegistration) => {
-      setState({ stage: "source-selected", connection: conn, source });
+      setWorkspaceState({ stage: "source-selected", connection: conn, source });
     },
-    [],
+    [setWorkspaceState],
   );
 
   const handleStartEdit = useCallback(() => {
-    setState((s) => {
+    setWorkspaceState((s) => {
       if (s.stage !== "source-selected") return s;
       return { stage: "edit", connection: s.connection, source: s.source, submitting: false };
     });
-  }, []);
+  }, [setWorkspaceState]);
 
   const handleSubmitInstruction = useCallback(
     async (instruction: string) => {
       let conn: GoogleConnection;
       let source: SourceRegistration;
 
-      setState((s) => {
+      setWorkspaceState((s) => {
         if (s.stage !== "edit") return s;
         conn = s.connection;
         source = s.source;
@@ -197,48 +176,38 @@ export function Workspace() {
         await processRun(conn!, source!, run);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to start edit";
-        setState((s) => {
+        setWorkspaceState((s) => {
           const c = s.stage !== "source" ? (s as { connection: GoogleConnection }).connection : null;
           const sr = "source" in s ? (s as { source: SourceRegistration }).source : null;
           return { stage: "error", connection: c, source: sr, run: null, message: msg, recoverable: true };
         });
       }
     },
-    [processRun],
+    [processRun, setWorkspaceState],
   );
 
   const handleDecide = useCallback((proposalId: string, approve: boolean) => {
-    setState((s) => {
+    setWorkspaceState((s) => {
       if (s.stage !== "review") return s;
       const next = new Map(s.decisions);
       next.set(proposalId, { approve });
       return { ...s, decisions: next };
     });
-  }, []);
+  }, [setWorkspaceState]);
 
   const handleSubmitDecisions = useCallback(async () => {
-    let conn: GoogleConnection;
-    let source: SourceRegistration;
-    let runId: string;
-    let decisionList: { proposal_id: string; approve: boolean; feedback?: string }[] = [];
+    const current = stateRef.current;
+    const submission = buildReviewDecisionSubmission(current);
+    if (!submission || current.stage !== "review") return;
 
-    setState((s) => {
-      if (s.stage !== "review") return s;
-      conn = s.connection;
-      source = s.source;
-      runId = s.run.run_id;
-      decisionList = s.proposals.map((p) => {
-        const d = s.decisions.get(p.proposal_id);
-        return { proposal_id: p.proposal_id, approve: d?.approve ?? false, feedback: d?.feedback };
-      });
-      return { ...s, submitting: true };
-    });
+    const { connection, source } = current;
+    setWorkspaceState({ ...current, submitting: true });
 
     try {
-      const updated = await submitDecisions(runId!, decisionList);
-      await processRun(conn!, source!, updated);
+      const updated = await submitDecisions(submission.runId, submission.decisions);
+      await processRun(connection, source, updated);
     } catch (err) {
-      setState((s) => {
+      setWorkspaceState((s) => {
         const c = "connection" in s ? (s as { connection: GoogleConnection }).connection : null;
         const sr = "source" in s ? (s as { source: SourceRegistration }).source : null;
         const r = "run" in s ? (s as { run: RunView | null }).run : null;
@@ -252,27 +221,27 @@ export function Workspace() {
         };
       });
     }
-  }, [processRun]);
+  }, [processRun, setWorkspaceState]);
 
   const handleReset = useCallback(() => {
     stopPolling();
-    setState({ stage: "source", connection: null, loading: true });
-  }, [stopPolling]);
+    setWorkspaceState({ stage: "source", connection: null, loading: true });
+  }, [setWorkspaceState, stopPolling]);
 
   const handleChangeSource = useCallback(() => {
     stopPolling();
-    setState((s) => {
+    setWorkspaceState((s) => {
       const conn = "connection" in s ? (s as { connection: GoogleConnection | null }).connection : null;
       return { stage: "source", connection: conn, loading: false };
     });
-  }, [stopPolling]);
+  }, [setWorkspaceState, stopPolling]);
 
   const handleReturnFromUnsupported = useCallback(() => {
-    setState((s) => {
+    setWorkspaceState((s) => {
       if (s.stage !== "unsupported") return s;
       return { stage: "source-selected", connection: s.connection, source: s.source };
     });
-  }, []);
+  }, [setWorkspaceState]);
 
   const handleWriteBack = useCallback(async (
     conn: GoogleConnection,
@@ -282,12 +251,12 @@ export function Workspace() {
   ) => {
     if (writeInFlightRef.current || !canWriteBack(dryRun.status, false)) return;
     writeInFlightRef.current = true;
-    setState({ stage: "dry-run", connection: conn, source, run, dryRun, writing: true });
+    setWorkspaceState({ stage: "dry-run", connection: conn, source, run, dryRun, writing: true });
     try {
       const result = await writeBackSafely(run.run_id);
-      setState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
     } catch (err) {
-      setState({
+      setWorkspaceState({
         stage: "error",
         connection: conn,
         source,
@@ -298,7 +267,7 @@ export function Workspace() {
     } finally {
       writeInFlightRef.current = false;
     }
-  }, []);
+  }, [setWorkspaceState]);
 
   const handleConflictDecision = useCallback(async (
     conn: GoogleConnection,
@@ -306,14 +275,14 @@ export function Workspace() {
     run: RunView,
     choice: ConflictChoice,
   ) => {
-    setState((current) => current.stage === "write-result"
+    setWorkspaceState((current) => current.stage === "write-result"
       ? { ...current, deciding: true }
       : current);
     try {
       const result = await decideWriteConflict(run.run_id, choice);
-      setState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
     } catch (err) {
-      setState({
+      setWorkspaceState({
         stage: "error",
         connection: conn,
         source,
@@ -322,7 +291,7 @@ export function Workspace() {
         recoverable: false,
       });
     }
-  }, []);
+  }, [setWorkspaceState]);
 
   const currentStage = state.stage === "source-selected" ? "source" : state.stage;
 

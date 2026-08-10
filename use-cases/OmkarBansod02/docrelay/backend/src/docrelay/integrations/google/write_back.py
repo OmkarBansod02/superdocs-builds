@@ -52,20 +52,46 @@ class GoogleWriteHTTPClient:
         self, *, file_id: str, destination_parent_id: str
     ) -> CurrentGoogleDocument:
         metadata = await self._read.get_file(file_id)
-        destination = await self._get_json(
-            f"{DRIVE_API_BASE}/files/{quote(destination_parent_id, safe='')}",
-            params={"fields": DESTINATION_FIELDS, "supportsAllDrives": "true"},
-        )
-        if destination.get("id") != destination_parent_id:
+        if metadata.drive_id is not None:
             raise GoogleIntegrationError(
-                GoogleErrorCode.INVALID_RESPONSE,
-                "Google Drive returned an unexpected backup destination identity",
+                GoogleErrorCode.UNSUPPORTED_BACKUP_LOCATION,
+                "Shared Drive backup locations are not supported for safe write-back",
             )
-        destination_ok = (
-            destination.get("mimeType") == DRIVE_FOLDER_MIME
-            and not bool(destination.get("trashed", False))
-            and bool((destination.get("capabilities") or {}).get("canAddChildren", False))
-        )
+        destination_proof = "readable_parent_capability"
+        try:
+            destination = await self._get_json(
+                f"{DRIVE_API_BASE}/files/{quote(destination_parent_id, safe='')}",
+                params={"fields": DESTINATION_FIELDS, "supportsAllDrives": "true"},
+            )
+        except GoogleIntegrationError as exc:
+            safe_inherited_parent = (
+                exc.code is GoogleErrorCode.FILE_NOT_FOUND
+                and metadata.is_app_authorized is True
+                and metadata.parent_ids == (destination_parent_id,)
+                and metadata.mime_type == GOOGLE_DOC_MIME
+                and not metadata.trashed
+                and metadata.capabilities.can_copy
+            )
+            if not safe_inherited_parent:
+                if exc.code is GoogleErrorCode.FILE_NOT_FOUND:
+                    raise GoogleIntegrationError(
+                        GoogleErrorCode.UNSUPPORTED_BACKUP_LOCATION,
+                        "Google Drive could not prove a safe My Drive backup location",
+                    ) from exc
+                raise
+            destination_ok = True
+            destination_proof = "my_drive_discoverable_parent_inheritance"
+        else:
+            if destination.get("id") != destination_parent_id:
+                raise GoogleIntegrationError(
+                    GoogleErrorCode.INVALID_RESPONSE,
+                    "Google Drive returned an unexpected backup destination identity",
+                )
+            destination_ok = (
+                destination.get("mimeType") == DRIVE_FOLDER_MIME
+                and not bool(destination.get("trashed", False))
+                and bool((destination.get("capabilities") or {}).get("canAddChildren", False))
+            )
         native = await self._read.get_document(file_id)
         canonical = canonicalize_google_document(native.raw_payload)
         return CurrentGoogleDocument(
@@ -96,6 +122,7 @@ class GoogleWriteHTTPClient:
                 "trashed": metadata.trashed,
                 "drive_id_present": metadata.drive_id is not None,
                 "is_app_authorized": metadata.is_app_authorized,
+                "backup_destination_proof": destination_proof,
             },
         )
 
@@ -107,6 +134,10 @@ class GoogleWriteHTTPClient:
         backup_name: str,
         operation_metadata: dict[str, str],
     ) -> BackupReceipt:
+        # With no parents override, Drive's files.copy contract inherits the
+        # source file's discoverable My Drive parent. The receipt and the
+        # independent verification below must still prove the exact parent.
+        del destination_parent_id
         response = await self._post_effect(
             f"{DRIVE_API_BASE}/files/{quote(file_id, safe='')}/copy",
             params={
@@ -116,7 +147,6 @@ class GoogleWriteHTTPClient:
             },
             payload={
                 "name": backup_name,
-                "parents": [destination_parent_id],
                 "appProperties": operation_metadata,
             },
             effect_name="Google backup copy",
@@ -162,7 +192,10 @@ class GoogleWriteHTTPClient:
         )
         separate_file = backup_file_id != source_file_id
         expected_mime = backup_metadata.mime_type == GOOGLE_DOC_MIME
-        expected_location = backup_metadata.parent_ids == (expected_parent_id,)
+        expected_location = (
+            backup_metadata.drive_id is None
+            and backup_metadata.parent_ids == (expected_parent_id,)
+        )
         content_matches = canonical_sha256 == expected_baseline_sha256
         return BackupVerification(
             independently_readable=True,
@@ -176,6 +209,10 @@ class GoogleWriteHTTPClient:
                 "separate_file": separate_file,
                 "expected_mime_type": expected_mime,
                 "expected_location": expected_location,
+                "expected_parent_id": expected_parent_id,
+                "observed_parent_ids": list(backup_metadata.parent_ids),
+                "observed_drive_id_present": backup_metadata.drive_id is not None,
+                "location_contract": "my_drive_discoverable_parent_inheritance",
                 "content_matches_baseline": content_matches,
                 "permission_comparison": acl_evidence,
             },

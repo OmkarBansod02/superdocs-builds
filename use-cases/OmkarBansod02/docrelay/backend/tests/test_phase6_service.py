@@ -515,7 +515,7 @@ async def test_immutable_plan_and_mapping_mirrors_are_revalidated_before_effects
         assert provider.events == []
 
 
-@pytest.mark.parametrize("failure", ["canonical", "acl"])
+@pytest.mark.parametrize("failure", ["canonical", "acl", "location"])
 async def test_backup_must_be_content_and_permission_verified_before_write(
     failure: str,
 ) -> None:
@@ -526,8 +526,10 @@ async def test_backup_must_be_content_and_permission_verified_before_write(
                 "content_matches_baseline": False,
                 "canonical_sha256": sha256_json(_canonical("99")),
             }
-        else:
+        elif failure == "acl":
             update = {"acl_not_broader": False}
+        else:
+            update = {"expected_location": False}
         provider.backup_verification = provider.backup_verification.model_copy(update=update)
 
         result = await service.execute(run_id)
@@ -538,7 +540,7 @@ async def test_backup_must_be_content_and_permission_verified_before_write(
         assert provider.commit_calls == 0
         assert provider.backup_verification.canonical_sha256 != sha256_json(baseline) or (
             not provider.backup_verification.acl_not_broader
-        )
+        ) or not provider.backup_verification.expected_location
 
 
 async def test_backup_unknown_is_never_retried_and_never_writes() -> None:

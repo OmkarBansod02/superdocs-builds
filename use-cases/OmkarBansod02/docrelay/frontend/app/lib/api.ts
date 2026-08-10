@@ -191,6 +191,51 @@ class ApiError extends Error {
   }
 }
 
+type ValidationIssue = {
+  loc?: unknown;
+  msg?: unknown;
+  message?: unknown;
+};
+
+function formatValidationIssue(issue: ValidationIssue): string | null {
+  const message = typeof issue.msg === "string"
+    ? issue.msg
+    : typeof issue.message === "string"
+      ? issue.message
+      : null;
+  if (!message) return null;
+
+  const location = Array.isArray(issue.loc)
+    ? issue.loc.filter((part): part is string | number => typeof part === "string" || typeof part === "number").join(" → ")
+    : "";
+  return location ? `${location}: ${message}` : message;
+}
+
+export function formatApiError(body: unknown, status: number): string {
+  if (typeof body === "string" && body.trim()) return body;
+  if (!body || typeof body !== "object") return `Request failed (${status})`;
+
+  const payload = body as {
+    error?: { message?: unknown };
+    detail?: unknown;
+  };
+  const configuredMessage = payload.error?.message;
+  if (typeof configuredMessage === "string" && configuredMessage.trim()) return configuredMessage;
+  if (typeof payload.detail === "string" && payload.detail.trim()) return payload.detail;
+  if (Array.isArray(payload.detail)) {
+    const issues = payload.detail
+      .filter((item): item is ValidationIssue => Boolean(item) && typeof item === "object")
+      .map(formatValidationIssue)
+      .filter((message): message is string => message !== null);
+    if (issues.length > 0) return issues.join("; ");
+  }
+  if (payload.detail && typeof payload.detail === "object") {
+    const issue = formatValidationIssue(payload.detail as ValidationIssue);
+    if (issue) return issue;
+  }
+  return `Request failed (${status})`;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -198,11 +243,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);
-    const code = (body as { error?: { code?: string } } | null)?.error?.code ?? "UNKNOWN";
-    const message = (body as { error?: { message?: string } } | null)?.error?.message
-      ?? (body as { detail?: string } | null)?.detail
-      ?? `Request failed (${res.status})`;
-    throw new ApiError(res.status, code, message);
+    const code = (body as { error?: { code?: unknown } } | null)?.error?.code;
+    throw new ApiError(
+      res.status,
+      typeof code === "string" ? code : "UNKNOWN",
+      formatApiError(body, res.status),
+    );
   }
   return res.json() as Promise<T>;
 }
@@ -248,6 +294,9 @@ export function submitDecisions(
   runId: string,
   decisions: { proposal_id: string; approve: boolean; feedback?: string | null }[],
 ): Promise<RunView> {
+  if (typeof runId !== "string" || runId.trim() === "" || runId === "undefined") {
+    throw new Error("The current run ID is unavailable; decisions were not submitted.");
+  }
   return request<RunView>(`/api/v1/runs/${runId}/decisions`, {
     method: "POST",
     body: JSON.stringify({ decisions }),

@@ -62,6 +62,64 @@ export type WorkspaceState =
       recoverable: boolean;
     };
 
+export type ReviewDecisionSubmission = {
+  runId: string;
+  decisions: { proposal_id: string; approve: boolean; feedback?: string }[];
+};
+
+export function routeRun(
+  connection: GoogleConnection,
+  source: SourceRegistration,
+  run: RunView,
+): WorkspaceState | "dry-run-needed" {
+  if (run.state === "AWAITING_REVIEW" && run.pending_proposals.length > 0) {
+    return {
+      stage: "review",
+      connection,
+      source,
+      run,
+      proposals: run.pending_proposals,
+      decisions: new Map(),
+      submitting: false,
+    };
+  }
+  if (run.state === "REVIEWED_EXPORT_READY") return "dry-run-needed";
+  if (run.state === "FAILED" || run.state === "CANCELLED") {
+    return {
+      stage: "error",
+      connection,
+      source,
+      run,
+      message: run.attention_code
+        ? `Run failed: ${run.attention_code.replace(/_/g, " ").toLowerCase()}`
+        : "The edit run did not complete successfully.",
+      recoverable: false,
+    };
+  }
+  return { stage: "processing", connection, source, run };
+}
+
+/** Builds a decision request from the RunView held in the current review state. */
+export function buildReviewDecisionSubmission(
+  state: WorkspaceState,
+): ReviewDecisionSubmission | null {
+  if (state.stage !== "review" || typeof state.run.run_id !== "string" || state.run.run_id.length === 0) {
+    return null;
+  }
+
+  return {
+    runId: state.run.run_id,
+    decisions: state.proposals.map((proposal) => {
+      const decision = state.decisions.get(proposal.proposal_id);
+      return {
+        proposal_id: proposal.proposal_id,
+        approve: decision?.approve ?? false,
+        feedback: decision?.feedback,
+      };
+    }),
+  };
+}
+
 export function runNeedsPolling(state: string | undefined): boolean {
   if (!state) return false;
   return ["QUEUED", "BASELINING", "EDITING"].includes(state);

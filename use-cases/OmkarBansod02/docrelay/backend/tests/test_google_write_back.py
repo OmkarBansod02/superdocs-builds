@@ -5,12 +5,67 @@ import pytest
 from pydantic import SecretStr
 
 from docrelay.domain.write_plan import GoogleDocsBatchUpdate
+from docrelay.integrations.google.canonical import canonicalize_google_document, sha256_json
 from docrelay.integrations.google.contracts import CommitClassification
+from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
+from docrelay.integrations.google.oauth import GOOGLE_DRIVE_FILE_SCOPE, GOOGLE_OAUTH_SCOPES
 from docrelay.integrations.google.write_back import (
     GoogleEffectOutcomeUnknown,
     GoogleWriteHTTPClient,
     compare_effective_permissions,
 )
+
+
+def _document(file_id: str) -> dict[str, Any]:
+    text = "Payment is due in 30 days.\n"
+    return {
+        "documentId": file_id,
+        "revisionId": "revision-A",
+        "tabs": [
+            {
+                "tabProperties": {"tabId": "t.0", "title": "Tab 1", "index": 0},
+                "documentTab": {
+                    "body": {
+                        "content": [
+                            {
+                                "startIndex": 1,
+                                "endIndex": len(text) + 1,
+                                "paragraph": {
+                                    "elements": [
+                                        {
+                                            "startIndex": 1,
+                                            "endIndex": len(text) + 1,
+                                            "textRun": {"content": text},
+                                        }
+                                    ]
+                                },
+                            }
+                        ]
+                    }
+                },
+            }
+        ],
+    }
+
+
+def _source_metadata(*, drive_id: str | None = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "id": "source-a",
+        "name": "Contract",
+        "mimeType": "application/vnd.google-apps.document",
+        "parents": ["parent-a"],
+        "trashed": False,
+        "isAppAuthorized": True,
+        "capabilities": {
+            "canEdit": True,
+            "canModifyContent": True,
+            "canDownload": True,
+            "canCopy": True,
+        },
+    }
+    if drive_id is not None:
+        payload["driveId"] = drive_id
+    return payload
 
 
 def _operation() -> GoogleDocsBatchUpdate:
@@ -41,7 +96,7 @@ def _operation() -> GoogleDocsBatchUpdate:
     )
 
 
-async def test_files_copy_uses_private_same_parent_version_metadata_without_acl_mutation() -> None:
+async def test_files_copy_inherits_same_parent_without_acl_mutation() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -78,7 +133,6 @@ async def test_files_copy_uses_private_same_parent_version_metadata_without_acl_
     payload: dict[str, Any] = __import__("json").loads(request.content)
     assert payload == {
         "name": "Contract — DocRelay backup — timestamp — revision-A",
-        "parents": ["parent-a"],
         "appProperties": {
             "docrelayPlan": "plan-a",
             "docrelayEffect": "effect-a",
@@ -86,6 +140,136 @@ async def test_files_copy_uses_private_same_parent_version_metadata_without_acl_
         },
     }
     assert "/permissions" not in request.url.path
+
+
+async def test_picker_authorized_my_drive_source_can_use_unreadable_discoverable_parent() -> None:
+    paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        if request.url.path == "/drive/v3/files/source-a":
+            return httpx.Response(200, json=_source_metadata())
+        if request.url.path == "/drive/v3/files/parent-a":
+            return httpx.Response(404, json={"error": {"status": "NOT_FOUND"}})
+        if request.url.path == "/v1/documents/source-a":
+            return httpx.Response(200, json=_document("source-a"))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        current = await GoogleWriteHTTPClient(
+            http=http, access_token=SecretStr("secret-token")
+        ).inspect_current(file_id="source-a", destination_parent_id="parent-a")
+
+    assert current.identity.drive_id is None
+    assert current.identity.parent_ids == ("parent-a",)
+    assert current.capabilities.destination_can_add_children
+    assert (
+        current.safe_provider_metadata["backup_destination_proof"]
+        == "my_drive_discoverable_parent_inheritance"
+    )
+    assert paths == [
+        "/drive/v3/files/source-a",
+        "/drive/v3/files/parent-a",
+        "/v1/documents/source-a",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("backup_drive_id", "broader_acl", "location_ok", "acl_ok"),
+    [
+        (None, False, True, True),
+        (None, True, True, False),
+        ("shared-drive-a", False, False, True),
+    ],
+)
+async def test_backup_is_independently_verified_after_copy(
+    backup_drive_id: str | None,
+    broader_acl: bool,
+    location_ok: bool,
+    acl_ok: bool,
+) -> None:
+    owner = {"id": "owner-a", "type": "user", "role": "owner"}
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        if request.url.path == "/drive/v3/files/backup-1":
+            payload = _source_metadata(drive_id=backup_drive_id) | {
+                "id": "backup-1",
+                "name": "Contract backup",
+            }
+            return httpx.Response(200, json=payload)
+        if request.url.path == "/v1/documents/backup-1":
+            return httpx.Response(200, json=_document("backup-1"))
+        if request.url.path == "/drive/v3/files/source-a/permissions":
+            return httpx.Response(200, json={"permissions": [owner]})
+        if request.url.path == "/drive/v3/files/backup-1/permissions":
+            permissions = [owner]
+            if broader_acl:
+                permissions.append({"id": "anyone", "type": "anyone", "role": "reader"})
+            return httpx.Response(200, json={"permissions": permissions})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    baseline_sha256 = sha256_json(canonicalize_google_document(_document("source-a")))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        verification = await GoogleWriteHTTPClient(
+            http=http, access_token=SecretStr("secret-token")
+        ).verify_backup(
+            source_file_id="source-a",
+            backup_file_id="backup-1",
+            expected_parent_id="parent-a",
+            expected_baseline_sha256=baseline_sha256,
+        )
+
+    assert verification.independently_readable
+    assert verification.separate_file
+    assert verification.expected_mime_type
+    assert verification.content_matches_baseline
+    assert verification.expected_location is location_ok
+    assert verification.acl_not_broader is acl_ok
+    assert requests == [
+        "/drive/v3/files/backup-1",
+        "/v1/documents/backup-1",
+        "/drive/v3/files/source-a/permissions",
+        "/drive/v3/files/backup-1/permissions",
+    ]
+
+
+async def test_shared_drive_source_fails_closed_before_parent_or_copy() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, json=_source_metadata(drive_id="shared-drive-a"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = GoogleWriteHTTPClient(http=http, access_token=SecretStr("secret-token"))
+        with pytest.raises(GoogleIntegrationError) as raised:
+            await client.inspect_current(file_id="source-a", destination_parent_id="parent-a")
+
+    assert raised.value.code is GoogleErrorCode.UNSUPPORTED_BACKUP_LOCATION
+    assert requests == ["/drive/v3/files/source-a"]
+
+
+async def test_unreadable_parent_without_my_drive_proof_has_typed_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/drive/v3/files/source-a":
+            return httpx.Response(200, json=_source_metadata() | {"isAppAuthorized": False})
+        if request.url.path == "/drive/v3/files/parent-a":
+            return httpx.Response(404, json={"error": {"status": "NOT_FOUND"}})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        client = GoogleWriteHTTPClient(http=http, access_token=SecretStr("secret-token"))
+        with pytest.raises(GoogleIntegrationError) as raised:
+            await client.inspect_current(file_id="source-a", destination_parent_id="parent-a")
+
+    assert raised.value.code is GoogleErrorCode.UNSUPPORTED_BACKUP_LOCATION
+
+
+def test_phase6_keeps_picker_scoped_drive_file_oauth() -> None:
+    assert GOOGLE_OAUTH_SCOPES == ("openid", GOOGLE_DRIVE_FILE_SCOPE)
+    assert GOOGLE_DRIVE_FILE_SCOPE == "https://www.googleapis.com/auth/drive.file"
 
 
 async def test_guarded_batch_payload_is_exact_and_never_uses_target_revision() -> None:
