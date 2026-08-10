@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { PickerTokenManager } from "./picker-token";
 
 // ---------------------------------------------------------------------------
 // Configuration from public environment variables
@@ -143,12 +144,8 @@ export function GoogleDrivePanel() {
   const [panelState, setPanelState] = useState<PanelState>({ kind: "loading" });
   const [pickerState, setPickerState] = useState<PickerState>({ kind: "idle" });
 
-  // In-memory only — never persisted. Token + expiry for reuse within session.
-  const browserTokenRef = useRef<string | null>(null);
-  const tokenExpiresAtRef = useRef<number>(0);
+  const tokenManagerRef = useRef(new PickerTokenManager());
   const panelStateRef = useRef(panelState);
-  // Tracks whether GIS consent has been completed this session (memory-only)
-  const hasAuthorizedRef = useRef(false);
   useEffect(() => {
     panelStateRef.current = panelState;
   });
@@ -192,11 +189,6 @@ export function GoogleDrivePanel() {
     // Navigate to external backend OAuth endpoint (not a Next.js page)
     // eslint-disable-next-line @next/next/no-location-assign-relative-destination
     window.location.assign(`${API_BASE_URL}/api/v1/google/oauth/authorize`);
-  }, []);
-
-  /** Returns true if a usable in-memory token exists (not expired with 30s skew). */
-  const hasValidToken = useCallback((): boolean => {
-    return browserTokenRef.current !== null && Date.now() < tokenExpiresAtRef.current - 30_000;
   }, []);
 
   const registerSource = useCallback(
@@ -279,13 +271,16 @@ export function GoogleDrivePanel() {
       await Promise.all([loadGapiScript(), loadGisScript()]);
       await loadPickerLibrary();
 
-      // Reuse the existing in-memory token if still valid
-      let token = hasValidToken() ? browserTokenRef.current! : null;
+      const tm = tokenManagerRef.current;
+      let token = tm.hasValidToken() ? tm.currentToken! : null;
 
       if (!token) {
         setPickerState({ kind: "authorizing" });
 
-        token = await new Promise<string>((resolve, reject) => {
+        const gisResult = await new Promise<{
+          accessToken: string;
+          expiresIn: number;
+        }>((resolve, reject) => {
           const tokenClient = window.google!.accounts!.oauth2!.initTokenClient({
             client_id: GOOGLE_CLIENT_ID,
             scope: DRIVE_FILE_SCOPE,
@@ -294,22 +289,20 @@ export function GoogleDrivePanel() {
                 reject(new Error(response.error_description || response.error));
                 return;
               }
-              resolve(response.access_token);
+              resolve({
+                accessToken: response.access_token,
+                expiresIn: response.expires_in,
+              });
             },
             error_callback: (error) => {
               reject(new Error(error.message || "OAuth popup was closed or denied"));
             },
           });
-          // First invocation: show account chooser + consent.
-          // Subsequent invocations: silently request a fresh token (no popup).
-          const prompt = hasAuthorizedRef.current ? "" : "consent";
-          tokenClient.requestAccessToken({ prompt });
+          tokenClient.requestAccessToken({ prompt: tm.promptHint });
         });
 
-        hasAuthorizedRef.current = true;
-        browserTokenRef.current = token;
-        // GIS tokens are typically valid for 3600s; use the reported expiry
-        tokenExpiresAtRef.current = Date.now() + 3600 * 1000;
+        tm.handleTokenResponse(gisResult.accessToken, gisResult.expiresIn);
+        token = gisResult.accessToken;
       }
 
       setPickerState({ kind: "open" });
@@ -339,7 +332,7 @@ export function GoogleDrivePanel() {
         setPickerState({ kind: "error", message });
       }
     }
-  }, [handlePickerCallback, hasValidToken]);
+  }, [handlePickerCallback]);
 
   const resetPicker = useCallback(() => {
     setPickerState({ kind: "idle" });

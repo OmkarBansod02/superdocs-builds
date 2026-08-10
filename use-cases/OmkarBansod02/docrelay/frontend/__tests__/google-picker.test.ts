@@ -10,6 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { EXPIRY_SKEW_MS, PickerTokenManager } from "../app/google-drive/picker-token";
 
 // ---------------------------------------------------------------------------
 // Extract the pure logic that we test independently of React rendering.
@@ -187,175 +188,170 @@ describe("Error handling does not leak secrets", () => {
   });
 });
 
-describe("Browser token lifecycle — reuse and no revocation", () => {
-  /**
-   * Simulates the token management logic in google-drive-panel.tsx.
-   * Key invariants:
-   * - Token is reused while valid (no new requestAccessToken call)
-   * - Token is never revoked during normal Picker use
-   * - Token is never persisted to storage
-   * - Expired token triggers a new (silent) request
-   */
+describe("PickerTokenManager — browser token lifecycle", () => {
+  it("fresh manager has no valid token — first invocation must call requestAccessToken", () => {
+    const tm = new PickerTokenManager();
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
+  });
 
-  interface TokenState {
-    token: string | null;
-    expiresAt: number; // ms since epoch
-    hasAuthorized: boolean;
-    requestTokenCallCount: number;
-    revokeCallCount: number;
-  }
+  it("handleTokenResponse uses GIS expires_in to compute expiry", () => {
+    const tm = new PickerTokenManager();
+    const now = 1_000_000;
+    tm.handleTokenResponse("ya29.token-1", 1800, now);
 
-  function createFreshState(): TokenState {
-    return {
-      token: null,
-      expiresAt: 0,
-      hasAuthorized: false,
-      requestTokenCallCount: 0,
-      revokeCallCount: 0,
-    };
-  }
+    expect(tm.currentToken).toBe("ya29.token-1");
+    expect(tm.hasValidToken(now + 100_000)).toBe(true);
+    // 1800s − 30s skew = 1770s boundary
+    expect(tm.hasValidToken(now + 1_770_001)).toBe(false);
+  });
 
-  function hasValidToken(state: TokenState, now: number): boolean {
-    return state.token !== null && now < state.expiresAt - 30_000;
-  }
+  it("second invocation before expiry reuses token — hasValidToken returns true", () => {
+    const tm = new PickerTokenManager();
+    const now = 1_000_000;
+    tm.handleTokenResponse("ya29.token-1", 3600, now);
 
-  function simulateOpenPicker(state: TokenState, now: number): TokenState {
-    if (hasValidToken(state, now)) {
-      // Reuse existing token — no GIS call
-      return state;
+    expect(tm.hasValidToken(now + 5_000)).toBe(true);
+    expect(tm.currentToken).toBe("ya29.token-1");
+  });
+
+  it("requestAccessToken is NOT needed while token is valid", () => {
+    const tm = new PickerTokenManager();
+    const now = 1_000_000;
+    tm.handleTokenResponse("ya29.token-1", 3600, now);
+
+    for (const offset of [1_000, 60_000, 600_000, 1_800_000, 3_500_000]) {
+      expect(tm.hasValidToken(now + offset)).toBe(true);
     }
-    // Need a new token
-    return {
-      ...state,
-      token: "ya29.new-token-" + state.requestTokenCallCount,
-      expiresAt: now + 3600 * 1000,
-      hasAuthorized: true,
-      requestTokenCallCount: state.requestTokenCallCount + 1,
-    };
-  }
-
-  function getPrompt(state: TokenState): string {
-    return state.hasAuthorized ? "" : "consent";
-  }
-
-  it("first Picker open requests a GIS token", () => {
-    const now = Date.now();
-    const state = createFreshState();
-    const after = simulateOpenPicker(state, now);
-    expect(after.requestTokenCallCount).toBe(1);
-    expect(after.token).not.toBeNull();
   });
 
-  it("second Picker open with valid token does NOT call requestAccessToken", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-    expect(state.requestTokenCallCount).toBe(1);
+  it("after calculated expiry minus skew, hasValidToken returns false", () => {
+    const tm = new PickerTokenManager();
+    const now = 1_000_000;
+    tm.handleTokenResponse("ya29.token-1", 3600, now);
 
-    // Open Picker again while token is valid
-    state = simulateOpenPicker(state, now + 5000);
-    expect(state.requestTokenCallCount).toBe(1); // still 1 — no new call
+    const boundary = now + 3600 * 1000 - EXPIRY_SKEW_MS;
+    expect(tm.hasValidToken(boundary - 1)).toBe(true);
+    expect(tm.hasValidToken(boundary)).toBe(false);
   });
 
-  it("third and fourth opens also reuse the same token", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-    state = simulateOpenPicker(state, now + 10_000);
-    state = simulateOpenPicker(state, now + 20_000);
-    state = simulateOpenPicker(state, now + 30_000);
-    expect(state.requestTokenCallCount).toBe(1);
+  it("different expires_in values produce different expiry windows", () => {
+    const now = 1_000_000;
+
+    const short = new PickerTokenManager();
+    short.handleTokenResponse("t1", 600, now);
+
+    const long = new PickerTokenManager();
+    long.handleTokenResponse("t2", 7200, now);
+
+    // At 9 min (540s): both valid
+    expect(short.hasValidToken(now + 540_000)).toBe(true);
+    expect(long.hasValidToken(now + 540_000)).toBe(true);
+
+    // At 10 min (600s): short expired (600s − 30s = 570s), long valid
+    expect(short.hasValidToken(now + 580_000)).toBe(false);
+    expect(long.hasValidToken(now + 580_000)).toBe(true);
+
+    // At 2h − 29s (7171s): long expired (7200s − 30s = 7170s)
+    expect(long.hasValidToken(now + 7_169_000)).toBe(true);
+    expect(long.hasValidToken(now + 7_171_000)).toBe(false);
   });
 
-  it("expired token causes a new request", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-    expect(state.requestTokenCallCount).toBe(1);
-
-    // Jump past expiry (3600s) minus 30s skew = 3570s
-    const afterExpiry = now + 3571 * 1000;
-    state = simulateOpenPicker(state, afterExpiry);
-    expect(state.requestTokenCallCount).toBe(2);
+  it("invalid expires_in (undefined) does not create a reusable token", () => {
+    const tm = new PickerTokenManager();
+    tm.handleTokenResponse("ya29.token", undefined as unknown as number);
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
+    expect(tm.hasAuthorized).toBe(true);
   });
 
-  it("token close to expiry (within 30s skew) triggers a refresh", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-
-    // Jump to 25s before expiry — within 30s skew, so treated as expired
-    const nearExpiry = state.expiresAt - 25_000;
-    state = simulateOpenPicker(state, nearExpiry);
-    expect(state.requestTokenCallCount).toBe(2);
+  it("invalid expires_in (0) does not create a reusable token", () => {
+    const tm = new PickerTokenManager();
+    tm.handleTokenResponse("ya29.token", 0);
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
   });
 
-  it("normal Picker pick does NOT revoke or clear the token", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-
-    // Simulate pick — token remains intact
-    expect(state.revokeCallCount).toBe(0);
-    expect(state.token).not.toBeNull();
+  it("invalid expires_in (negative) does not create a reusable token", () => {
+    const tm = new PickerTokenManager();
+    tm.handleTokenResponse("ya29.token", -3600);
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
   });
 
-  it("normal Picker cancel does NOT revoke or clear the token", () => {
-    const now = Date.now();
-    let state = createFreshState();
-    state = simulateOpenPicker(state, now);
-
-    // Simulate cancel — token remains intact for next use
-    expect(state.revokeCallCount).toBe(0);
-    expect(state.token).not.toBeNull();
-    expect(hasValidToken(state, now + 1000)).toBe(true);
+  it("invalid expires_in (NaN) does not create a reusable token", () => {
+    const tm = new PickerTokenManager();
+    tm.handleTokenResponse("ya29.token", NaN);
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
   });
 
-  it("first authorization uses prompt 'consent', subsequent uses ''", () => {
-    let state = createFreshState();
-    expect(getPrompt(state)).toBe("consent");
-
-    const now = Date.now();
-    state = simulateOpenPicker(state, now);
-    expect(getPrompt(state)).toBe("");
+  it("invalid expires_in (Infinity) does not create a reusable token", () => {
+    const tm = new PickerTokenManager();
+    tm.handleTokenResponse("ya29.token", Infinity);
+    expect(tm.hasValidToken()).toBe(false);
+    expect(tm.currentToken).toBeNull();
   });
 
-  it("token disappears on fresh state (simulates page reload)", () => {
-    const fresh = createFreshState();
-    expect(fresh.token).toBeNull();
-    expect(fresh.hasAuthorized).toBe(false);
-    expect(hasValidToken(fresh, Date.now())).toBe(false);
+  it("pick/cancel does not invalidate a still-valid token", () => {
+    const tm = new PickerTokenManager();
+    const now = 1_000_000;
+    tm.handleTokenResponse("ya29.token-1", 3600, now);
+
+    // Picker pick/cancel is handled by the component, not the manager.
+    // The token manager state remains unchanged.
+    expect(tm.hasValidToken(now + 5_000)).toBe(true);
+    expect(tm.currentToken).toBe("ya29.token-1");
   });
 
-  it("component source verifies correct token-reuse architecture", async () => {
+  it("prompt is 'consent' before first auth, '' afterward", () => {
+    const tm = new PickerTokenManager();
+    expect(tm.promptHint).toBe("consent");
+
+    tm.handleTokenResponse("ya29.token-1", 3600);
+    expect(tm.promptHint).toBe("");
+  });
+
+  it("component source never calls revoke during normal Picker use", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync(
       new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
-      "utf-8"
+      "utf-8",
     );
-
-    // Strip comments for code-only analysis
     const codeOnly = source
       .replace(/\/\/.*$/gm, "")
       .replace(/\/\*[\s\S]*?\*\//g, "");
 
-    // Must NOT call revoke in executable code
     expect(codeOnly).not.toContain("oauth2.revoke");
     expect(codeOnly).not.toMatch(/\.revoke\s*\(/);
+  });
 
-    // Must NOT have a dropBrowserToken that clears after every Picker use
-    // (the old bug was clearing the token after each Picker callback)
-    expect(source).toContain("hasValidToken");
-    expect(source).toContain("tokenExpiresAtRef");
-    expect(source).toContain("hasAuthorizedRef");
+  it("browser token is never persisted to storage", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync(
+      new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
+      "utf-8",
+    );
 
-    // Must NOT persist tokens
     expect(source).not.toContain("localStorage");
     expect(source).not.toContain("sessionStorage");
     expect(source).not.toContain("IndexedDB");
     expect(source).not.toContain("document.cookie");
+  });
 
-    // Must NOT hardcode prompt: "consent" as the only requestAccessToken call
-    expect(source).not.toMatch(/requestAccessToken\(\{\s*prompt:\s*["']consent["']\s*\}\)/);
+  it("component uses PickerTokenManager and response.expires_in — no hardcoded 3600", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync(
+      new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
+      "utf-8",
+    );
+    const codeOnly = source
+      .replace(/\/\/.*$/gm, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+
+    expect(codeOnly).toContain("PickerTokenManager");
+    expect(codeOnly).toContain("handleTokenResponse");
+    expect(codeOnly).toContain("response.expires_in");
+    expect(codeOnly).not.toMatch(/3600\s*\*\s*1000/);
   });
 });
