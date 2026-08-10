@@ -7,10 +7,20 @@
 /** Safety margin subtracted when checking token validity. */
 export const EXPIRY_SKEW_MS = 30_000;
 
+export type PickerTokenResponse = {
+  accessToken: string;
+  expiresIn: number;
+};
+
+export type PickerTokenRequester = (
+  prompt: "" | "consent",
+) => Promise<PickerTokenResponse>;
+
 export class PickerTokenManager {
   private _token: string | null = null;
   private _expiresAt: number = 0;
   private _hasAuthorized: boolean = false;
+  private _requestInFlight: Promise<string> | null = null;
 
   get currentToken(): string | null {
     return this._token;
@@ -63,4 +73,40 @@ export class PickerTokenManager {
     this._token = accessToken;
     this._expiresAt = now + expiresIn * 1000;
   }
+
+  /**
+   * Return the still-valid browser token, or request and cache a replacement.
+   *
+   * Keeping this decision here ensures every Picker entry point uses the same
+   * prompt transition: consent initially, then a silent prompt after expiry.
+   */
+  async getToken(requestToken: PickerTokenRequester): Promise<string> {
+    if (this.hasValidToken()) return this._token!;
+
+    if (this._requestInFlight) return this._requestInFlight;
+
+    const request = requestToken(this.promptHint).then((response) => {
+      this.handleTokenResponse(response.accessToken, response.expiresIn);
+      return response.accessToken;
+    });
+    this._requestInFlight = request;
+    void request.then(
+      () => {
+        if (this._requestInFlight === request) this._requestInFlight = null;
+      },
+      () => {
+        if (this._requestInFlight === request) this._requestInFlight = null;
+      },
+    );
+    return request;
+  }
 }
+
+/**
+ * One memory-only token manager for the loaded browser application.
+ *
+ * This intentionally lives outside React so unmounting/remounting a source
+ * chooser (for example through Change source) cannot discard a valid Picker
+ * token. It is recreated on a full page load and is never persisted.
+ */
+export const browserPickerTokenManager = new PickerTokenManager();

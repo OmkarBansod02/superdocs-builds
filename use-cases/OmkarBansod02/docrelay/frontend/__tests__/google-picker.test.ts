@@ -9,8 +9,13 @@
  * - Error states are handled safely
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { EXPIRY_SKEW_MS, PickerTokenManager } from "../app/google-drive/picker-token";
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Extract the pure logic that we test independently of React rendering.
@@ -312,13 +317,95 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     expect(tm.promptHint).toBe("");
   });
 
-  it("component source never calls revoke during normal Picker use", async () => {
+  it("requests a token for the first document, then reuses it for second and third selections", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const tm = new PickerTokenManager();
+    const requestToken = vi.fn(async () => ({
+      accessToken: "ya29.first-token",
+      expiresIn: 3600,
+    }));
+
+    await expect(tm.getToken(requestToken)).resolves.toBe("ya29.first-token");
+    await expect(tm.getToken(requestToken)).resolves.toBe("ya29.first-token");
+    await expect(tm.getToken(requestToken)).resolves.toBe("ya29.first-token");
+
+    expect(requestToken).toHaveBeenCalledTimes(1);
+    expect(requestToken).toHaveBeenCalledWith("consent");
+  });
+
+  it("retains a valid token across source chooser unmount/remount and Change source", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const tm = new PickerTokenManager();
+    const requestToken = vi.fn(async () => ({
+      accessToken: "ya29.session-token",
+      expiresIn: 3600,
+    }));
+
+    // The chooser can unmount after a selection and remount after Change source.
+    await tm.getToken(requestToken);
+    const remountedChooserToken = await tm.getToken(requestToken);
+
+    expect(remountedChooserToken).toBe("ya29.session-token");
+    expect(requestToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not clear the token when Picker is cancelled", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const tm = new PickerTokenManager();
+    const requestToken = vi.fn(async () => ({
+      accessToken: "ya29.cancel-token",
+      expiresIn: 3600,
+    }));
+
+    await tm.getToken(requestToken);
+    // Picker cancellation changes UI state only; it does not touch the manager.
+    await expect(tm.getToken(requestToken)).resolves.toBe("ya29.cancel-token");
+
+    expect(requestToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("requests exactly one replacement after expiry and uses an empty prompt", async () => {
+    vi.useFakeTimers();
+    const startedAt = 1_000_000;
+    vi.setSystemTime(startedAt);
+    const tm = new PickerTokenManager();
+    const requestToken = vi
+      .fn()
+      .mockResolvedValueOnce({ accessToken: "ya29.first-token", expiresIn: 3600 })
+      .mockResolvedValueOnce({ accessToken: "ya29.refreshed-token", expiresIn: 3600 });
+
+    await tm.getToken(requestToken);
+    vi.setSystemTime(startedAt + 3600 * 1000 - EXPIRY_SKEW_MS);
+
+    await expect(Promise.all([
+      tm.getToken(requestToken),
+      tm.getToken(requestToken),
+    ])).resolves.toEqual(["ya29.refreshed-token", "ya29.refreshed-token"]);
+
+    expect(requestToken).toHaveBeenCalledTimes(2);
+    expect(requestToken.mock.calls.map(([prompt]) => prompt)).toEqual(["consent", ""]);
+  });
+
+  it("source chooser uses the app-session manager rather than a component ref", async () => {
     const fs = await import("fs");
     const source = fs.readFileSync(
-      new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
+      new URL("../app/components/source-chooser.tsx", import.meta.url),
       "utf-8",
     );
-    const codeOnly = source
+
+    expect(source).toContain("browserPickerTokenManager");
+    expect(source).not.toContain("new PickerTokenManager");
+    expect(source).toContain(".setOAuthToken(token)");
+  });
+
+  it("component source never calls revoke during normal Picker use", async () => {
+    const fs = await import("fs");
+    const sources = ["../app/components/source-chooser.tsx", "../app/google-drive/google-drive-panel.tsx"]
+      .map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8"));
+    const codeOnly = sources.join("\n")
       .replace(/\/\/.*$/gm, "")
       .replace(/\/\*[\s\S]*?\*\//g, "");
 
@@ -328,10 +415,11 @@ describe("PickerTokenManager — browser token lifecycle", () => {
 
   it("browser token is never persisted to storage", async () => {
     const fs = await import("fs");
-    const source = fs.readFileSync(
-      new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
-      "utf-8",
-    );
+    const source = [
+      "../app/google-drive/picker-token.ts",
+      "../app/components/source-chooser.tsx",
+      "../app/google-drive/google-drive-panel.tsx",
+    ].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8")).join("\n");
 
     expect(source).not.toContain("localStorage");
     expect(source).not.toContain("sessionStorage");
@@ -339,18 +427,18 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     expect(source).not.toContain("document.cookie");
   });
 
-  it("component uses PickerTokenManager and response.expires_in — no hardcoded 3600", async () => {
+  it("Picker integrations use the shared manager and response.expires_in — no hardcoded 3600", async () => {
     const fs = await import("fs");
-    const source = fs.readFileSync(
-      new URL("../app/google-drive/google-drive-panel.tsx", import.meta.url),
-      "utf-8",
-    );
+    const source = [
+      "../app/components/source-chooser.tsx",
+      "../app/google-drive/google-drive-panel.tsx",
+    ].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8")).join("\n");
     const codeOnly = source
       .replace(/\/\/.*$/gm, "")
       .replace(/\/\*[\s\S]*?\*\//g, "");
 
-    expect(codeOnly).toContain("PickerTokenManager");
-    expect(codeOnly).toContain("handleTokenResponse");
+    expect(codeOnly).toContain("browserPickerTokenManager");
+    expect(codeOnly).toContain("getToken");
     expect(codeOnly).toContain("response.expires_in");
     expect(codeOnly).not.toMatch(/3600\s*\*\s*1000/);
   });

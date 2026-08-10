@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Cloud, FileText, Loader2 } from "lucide-react";
 import type { GoogleConnection, SourceRegistration } from "../lib/api";
 import { getAuthorizeUrl, getConnections, registerSource } from "../lib/api";
-import { PickerTokenManager } from "../google-drive/picker-token";
+import { browserPickerTokenManager } from "../google-drive/picker-token";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
@@ -64,7 +64,6 @@ export function SourceChooser({
   const [loading, setLoading] = useState(true);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const tokenManagerRef = useRef(new PickerTokenManager());
 
   useEffect(() => {
     const controller = new AbortController();
@@ -106,11 +105,8 @@ export function SourceChooser({
       await Promise.all([loadGapiScript(), loadGisScript()]);
       await loadPickerLibrary();
 
-      const tm = tokenManagerRef.current;
-      let token = tm.hasValidToken() ? tm.currentToken! : null;
-
-      if (!token) {
-        const gisResult = await new Promise<{ accessToken: string; expiresIn: number }>(
+      const token = await browserPickerTokenManager.getToken(
+        (prompt) => new Promise<{ accessToken: string; expiresIn: number }>(
           (resolve, reject) => {
             const client = window.google!.accounts!.oauth2!.initTokenClient({
               client_id: GOOGLE_CLIENT_ID,
@@ -126,12 +122,10 @@ export function SourceChooser({
                 reject(new Error(err.message || "OAuth popup was closed or denied"));
               },
             });
-            client.requestAccessToken({ prompt: tm.promptHint });
+            client.requestAccessToken({ prompt });
           },
-        );
-        tm.handleTokenResponse(gisResult.accessToken, gisResult.expiresIn);
-        token = gisResult.accessToken;
-      }
+        ),
+      );
 
       const docsView = new window.google!.picker!.DocsView();
       docsView.setMimeTypes("application/vnd.google-apps.document");

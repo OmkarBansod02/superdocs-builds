@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PickerTokenManager } from "./picker-token";
+import { browserPickerTokenManager } from "./picker-token";
 
 // ---------------------------------------------------------------------------
 // Configuration from public environment variables
@@ -144,7 +144,6 @@ export function GoogleDrivePanel() {
   const [panelState, setPanelState] = useState<PanelState>({ kind: "loading" });
   const [pickerState, setPickerState] = useState<PickerState>({ kind: "idle" });
 
-  const tokenManagerRef = useRef(new PickerTokenManager());
   const panelStateRef = useRef(panelState);
   useEffect(() => {
     panelStateRef.current = panelState;
@@ -271,39 +270,35 @@ export function GoogleDrivePanel() {
       await Promise.all([loadGapiScript(), loadGisScript()]);
       await loadPickerLibrary();
 
-      const tm = tokenManagerRef.current;
-      let token = tm.hasValidToken() ? tm.currentToken! : null;
+      const token = await browserPickerTokenManager.getToken(
+        (prompt) => {
+          setPickerState({ kind: "authorizing" });
 
-      if (!token) {
-        setPickerState({ kind: "authorizing" });
-
-        const gisResult = await new Promise<{
-          accessToken: string;
-          expiresIn: number;
-        }>((resolve, reject) => {
-          const tokenClient = window.google!.accounts!.oauth2!.initTokenClient({
-            client_id: GOOGLE_CLIENT_ID,
-            scope: DRIVE_FILE_SCOPE,
-            callback: (response) => {
-              if (response.error) {
-                reject(new Error(response.error_description || response.error));
-                return;
-              }
-              resolve({
-                accessToken: response.access_token,
-                expiresIn: response.expires_in,
-              });
-            },
-            error_callback: (error) => {
-              reject(new Error(error.message || "OAuth popup was closed or denied"));
-            },
+          return new Promise<{
+            accessToken: string;
+            expiresIn: number;
+          }>((resolve, reject) => {
+            const tokenClient = window.google!.accounts!.oauth2!.initTokenClient({
+              client_id: GOOGLE_CLIENT_ID,
+              scope: DRIVE_FILE_SCOPE,
+              callback: (response) => {
+                if (response.error) {
+                  reject(new Error(response.error_description || response.error));
+                  return;
+                }
+                resolve({
+                  accessToken: response.access_token,
+                  expiresIn: response.expires_in,
+                });
+              },
+              error_callback: (error) => {
+                reject(new Error(error.message || "OAuth popup was closed or denied"));
+              },
+            });
+            tokenClient.requestAccessToken({ prompt });
           });
-          tokenClient.requestAccessToken({ prompt: tm.promptHint });
-        });
-
-        tm.handleTokenResponse(gisResult.accessToken, gisResult.expiresIn);
-        token = gisResult.accessToken;
-      }
+        },
+      );
 
       setPickerState({ kind: "open" });
 
