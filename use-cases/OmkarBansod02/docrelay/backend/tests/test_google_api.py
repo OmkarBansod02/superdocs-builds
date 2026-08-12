@@ -40,6 +40,11 @@ async def test_unconfigured_status_and_error_contracts_are_safe() -> None:
             "openid",
             "https://www.googleapis.com/auth/drive.file",
         ],
+        "watch_scopes": [
+            "openid",
+            "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/drive.readonly",
+        ],
         "connections": [],
     }
     assert authorize_response.status_code == 503

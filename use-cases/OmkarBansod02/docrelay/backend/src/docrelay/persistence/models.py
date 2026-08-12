@@ -41,6 +41,11 @@ from docrelay.domain.enums import (
     SyncMode,
     SyncRunState,
     VerificationStatus,
+    WatchItemOutcome,
+    WatchScanStatus,
+    WatchScanTrigger,
+    WatchVersionStatus,
+    WriteAuthorizationState,
 )
 from docrelay.persistence.base import Base
 
@@ -167,18 +172,71 @@ class WatchConfig(IdMixin, TimestampMixin, Base):
     __tablename__ = "watch_configs"
     __table_args__ = (
         UniqueConstraint("connection_id", "parent_folder_id", name="uq_watch_connection_parent"),
+        CheckConstraint(
+            "interval_seconds >= 60 AND interval_seconds <= 86400",
+            name="watch_interval_bounds",
+        ),
     )
 
     connection_id: Mapped[UUID] = mapped_column(
         ForeignKey("cloud_connections.id", ondelete="CASCADE"), nullable=False, index=True
     )
     parent_folder_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    root_name: Mapped[str] = mapped_column(
+        String(512), nullable=False, default="Google Drive folder"
+    )
     schedule: Mapped[str] = mapped_column(String(255), nullable=False)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
+    interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
     default_mode: Mapped[SyncMode] = mapped_column(
         enum_type(SyncMode, "sync_mode"), nullable=False, default=SyncMode.PREVIEW
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_successful_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    last_scan_status: Mapped[WatchScanStatus | None] = mapped_column(
+        enum_type(WatchScanStatus, "watch_scan_status")
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(128))
+
+
+class WatchScan(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "watch_scans"
+    __table_args__ = (
+        UniqueConstraint("watch_config_id", "active_key", name="uq_watch_scan_active"),
+        CheckConstraint("active_key IS NULL OR active_key = 'ACTIVE'", name="active_key_valid"),
+        CheckConstraint("claim_generation >= 1", name="watch_claim_generation_positive"),
+    )
+
+    watch_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_configs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    trigger: Mapped[WatchScanTrigger] = mapped_column(
+        enum_type(WatchScanTrigger, "watch_scan_trigger"), nullable=False
+    )
+    status: Mapped[WatchScanStatus] = mapped_column(
+        enum_type(WatchScanStatus, "watch_scan_status"),
+        nullable=False,
+        default=WatchScanStatus.RUNNING,
+        index=True,
+    )
+    active_key: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    lease_token: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    claim_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    discovered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    changed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    unchanged_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    enqueued_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    failure_detail: Mapped[JsonObject | None] = mapped_column(JSON_TYPE)
 
 
 class FolderRule(IdMixin, TimestampMixin, Base):
@@ -221,6 +279,148 @@ class WatchCursor(IdMixin, TimestampMixin, Base):
         JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
     )
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class WatchedItem(IdMixin, TimestampMixin, Base):
+    __tablename__ = "watched_items"
+    __table_args__ = (
+        UniqueConstraint("watch_config_id", "provider_file_id", name="uq_watched_item_watch_file"),
+    )
+
+    watch_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_configs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    cloud_document_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cloud_documents.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    parent_folder_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    ancestor_folder_ids: Mapped[list[str]] = mapped_column(JSON_TYPE, nullable=False)
+    current_in_scope: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    last_seen_scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_scans.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_enqueued_provider_version: Mapped[str | None] = mapped_column(String(128))
+    last_enqueued_revision_id: Mapped[str | None] = mapped_column(Text)
+    last_enqueued_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    write_authorization_state: Mapped[WriteAuthorizationState] = mapped_column(
+        enum_type(WriteAuthorizationState, "write_authorization_state"),
+        nullable=False,
+        default=WriteAuthorizationState.REQUIRED,
+    )
+    write_authorization_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class WatchDocumentVersion(IdMixin, TimestampMixin, Base):
+    __tablename__ = "watch_document_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "watched_item_id", "provider_version", name="uq_watch_document_item_version"
+        ),
+        UniqueConstraint("sync_run_id", name="uq_watch_document_version_run"),
+    )
+
+    watched_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watched_items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    first_seen_scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_scans.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    provider_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[WatchVersionStatus] = mapped_column(
+        enum_type(WatchVersionStatus, "watch_version_status"), nullable=False
+    )
+    provider_revision_id: Mapped[str | None] = mapped_column(Text)
+    folder_rule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("folder_rules.id", ondelete="RESTRICT"), nullable=True
+    )
+    folder_rule_version: Mapped[int | None] = mapped_column(Integer)
+    rule_snapshot: Mapped[JsonObject | None] = mapped_column(JSON_TYPE)
+    sync_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="RESTRICT"), nullable=True
+    )
+    failure_code: Mapped[str | None] = mapped_column(String(128))
+    failure_detail: Mapped[JsonObject | None] = mapped_column(JSON_TYPE)
+
+
+class WatchScanItem(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "watch_scan_items"
+    __table_args__ = (
+        UniqueConstraint("watch_scan_id", "provider_file_id", name="uq_watch_scan_item_file"),
+    )
+
+    watch_scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_scans.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    watched_item_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("watched_items.id", ondelete="SET NULL"), nullable=True
+    )
+    watch_document_version_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("watch_document_versions.id", ondelete="SET NULL"), nullable=True
+    )
+    sync_run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    provider_file_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_version: Mapped[str | None] = mapped_column(String(128))
+    display_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    ancestor_folder_ids: Mapped[list[str]] = mapped_column(JSON_TYPE, nullable=False)
+    discovery_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[WatchItemOutcome] = mapped_column(
+        enum_type(WatchItemOutcome, "watch_item_outcome"), nullable=False
+    )
+    reason_code: Mapped[str | None] = mapped_column(String(128))
+    matched_rule_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("folder_rules.id", ondelete="RESTRICT"), nullable=True
+    )
+    matched_rule_version: Mapped[int | None] = mapped_column(Integer)
+
+
+class WatchRunLink(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "watch_run_links"
+    __table_args__ = (
+        UniqueConstraint("watch_document_version_id", name="uq_watch_run_link_version"),
+        UniqueConstraint("sync_run_id", name="uq_watch_run_link_run"),
+    )
+
+    watch_config_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_configs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    watch_scan_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_scans.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    watched_item_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watched_items.id", ondelete="RESTRICT"), nullable=False
+    )
+    watch_document_version_id: Mapped[UUID] = mapped_column(
+        ForeignKey("watch_document_versions.id", ondelete="RESTRICT"), nullable=False
+    )
+    sync_run_id: Mapped[UUID] = mapped_column(
+        ForeignKey("sync_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    folder_rule_id: Mapped[UUID] = mapped_column(
+        ForeignKey("folder_rules.id", ondelete="RESTRICT"), nullable=False
+    )
+    folder_rule_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    rule_snapshot: Mapped[JsonObject] = mapped_column(JSON_TYPE, nullable=False)
+    write_authorization_state: Mapped[WriteAuthorizationState] = mapped_column(
+        enum_type(WriteAuthorizationState, "write_authorization_state"), nullable=False
+    )
+    write_authorization_checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    write_authorization_evidence: Mapped[JsonObject] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
 
 
 class SyncRun(IdMixin, TimestampMixin, Base):
@@ -727,6 +927,13 @@ Index(
     SyncRun.cloud_document_id,
     SyncRun.state,
 )
+Index("ix_watch_configs_due", WatchConfig.enabled, WatchConfig.next_scan_at)
+Index("ix_watched_items_scope", WatchedItem.watch_config_id, WatchedItem.current_in_scope)
+Index(
+    "ix_watch_document_versions_status",
+    WatchDocumentVersion.watched_item_id,
+    WatchDocumentVersion.status,
+)
 Index("ix_audit_events_type_created", AuditEvent.event_type, AuditEvent.created_at)
 Index("ix_run_operations_run_stage", RunOperation.sync_run_id, RunOperation.stage)
 Index(
@@ -761,6 +968,11 @@ __all__ = [
     "VerificationResult",
     "WatchConfig",
     "WatchCursor",
+    "WatchDocumentVersion",
+    "WatchRunLink",
+    "WatchScan",
+    "WatchScanItem",
+    "WatchedItem",
     "WriteConflict",
     "WritePlan",
     "WritePlanLineage",

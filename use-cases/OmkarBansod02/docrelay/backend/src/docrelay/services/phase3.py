@@ -23,6 +23,7 @@ from docrelay.domain.enums import (
     SyncMode,
     SyncRunState,
     VerificationStatus,
+    WriteAuthorizationState,
 )
 from docrelay.domain.state_machine import require_transition
 from docrelay.integrations.superdocs.client import SuperDocsRequestError
@@ -50,6 +51,7 @@ from docrelay.persistence.models import (
     SuperDocsSession,
     SyncRun,
     VerificationResult,
+    WatchRunLink,
     WriteConflict,
     WritePlan,
 )
@@ -119,6 +121,13 @@ class Phase3Baseline(Phase3Contract):
     filename: str = Field(min_length=1)
 
 
+class Phase3RuleContext(Phase3Contract):
+    folder_rule_id: UUID
+    folder_rule_version: int = Field(ge=1)
+    intent_discriminator: str = Field(min_length=1)
+    rule_snapshot: dict[str, JsonValue]
+
+
 class DecisionInput(Phase3Contract):
     proposal_id: UUID
     approve: bool
@@ -169,6 +178,7 @@ class RunView(Phase3Contract):
     pending_proposals: tuple[ProposalView, ...]
     export: ExportView | None
     write_back: "WriteBackRunSummary | None"
+    write_authorization: WriteAuthorizationState | None
 
 
 class WriteBackRunSummary(Phase3Contract):
@@ -267,27 +277,43 @@ class Phase3Orchestrator:
         instruction: str,
         model_tier: str | None = None,
         thinking_depth: str | None = None,
+        rule_context: Phase3RuleContext | None = None,
     ) -> RunView:
         if not instruction or not instruction.strip():
             raise ValueError("instruction must not be empty")
         if hashlib.sha256(baseline.docx_bytes).hexdigest() != baseline.exported_docx_sha256:
             raise ValueError("baseline DOCX bytes do not match their immutable hash")
+        instruction_hash = _sha256_text(instruction)
+        if rule_context is not None and (
+            rule_context.rule_snapshot.get("instruction") != instruction
+            or rule_context.rule_snapshot.get("instruction_sha256") != instruction_hash
+        ):
+            raise ValueError("watch rule snapshot does not match the requested instruction")
         async with self._sessions() as session:
             document = await self._owned_document(session, baseline.cloud_document_id)
-            intent_key = _hash_json(
-                {
-                    "schema": "docrelay.superdocs-edit-intent.v1",
-                    "connection_id": str(document.connection_id),
-                    "provider_file_id": document.provider_file_id,
-                    "provider_revision_id": baseline.provider_revision_id,
-                    "native_canonical_sha256": baseline.native_canonical_sha256,
-                    "instruction": instruction,
-                    "model_tier": model_tier,
-                    "thinking_depth": thinking_depth,
-                }
-            )
+            intent_payload = {
+                "schema": "docrelay.superdocs-edit-intent.v1",
+                "connection_id": str(document.connection_id),
+                "provider_file_id": document.provider_file_id,
+                "provider_revision_id": baseline.provider_revision_id,
+                "native_canonical_sha256": baseline.native_canonical_sha256,
+                "instruction": instruction,
+                "model_tier": model_tier,
+                "thinking_depth": thinking_depth,
+            }
+            if rule_context is not None:
+                intent_payload["origin_intent"] = rule_context.intent_discriminator
+            intent_key = _hash_json(intent_payload)
             existing = await session.scalar(select(SyncRun).where(SyncRun.intent_key == intent_key))
             if existing is not None:
+                if rule_context is not None and (
+                    existing.folder_rule_id != rule_context.folder_rule_id
+                    or existing.folder_rule_version != rule_context.folder_rule_version
+                    or existing.rule_snapshot != rule_context.rule_snapshot
+                ):
+                    raise RecoveryBlocked(
+                        "existing watched run does not match its frozen rule context"
+                    )
                 run_id = existing.id
             else:
                 run_id = uuid4()
@@ -301,15 +327,23 @@ class Phase3Orchestrator:
                 run = SyncRun(
                     id=run_id,
                     cloud_document_id=document.id,
-                    folder_rule_id=None,
-                    folder_rule_version=None,
-                    rule_snapshot={
-                        "schema_version": "docrelay.manual-superdocs-rule.v1",
-                        "instruction": instruction,
-                        "instruction_sha256": _sha256_text(instruction),
-                        "model_tier": model_tier,
-                        "thinking_depth": thinking_depth,
-                    },
+                    folder_rule_id=(
+                        rule_context.folder_rule_id if rule_context is not None else None
+                    ),
+                    folder_rule_version=(
+                        rule_context.folder_rule_version if rule_context is not None else None
+                    ),
+                    rule_snapshot=(
+                        dict(rule_context.rule_snapshot)
+                        if rule_context is not None
+                        else {
+                            "schema_version": "docrelay.manual-superdocs-rule.v1",
+                            "instruction": instruction,
+                            "instruction_sha256": instruction_hash,
+                            "model_tier": model_tier,
+                            "thinking_depth": thinking_depth,
+                        }
+                    ),
                     mode=SyncMode.PREVIEW,
                     state=SyncRunState.BASELINING,
                     state_version=2,
@@ -327,7 +361,11 @@ class Phase3Orchestrator:
                             from_state=None,
                             to_state=SyncRunState.QUEUED,
                             actor_subject=self._owner_subject,
-                            reason="manual Phase 3 run created",
+                            reason=(
+                                "watched Google document version enqueued"
+                                if rule_context is not None
+                                else "manual Phase 3 run created"
+                            ),
                             evidence={},
                         ),
                         RunTransition(
@@ -460,6 +498,9 @@ class Phase3Orchestrator:
                 select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
             )
             write_back = await _write_back_summary(session, run)
+            watch_link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run.id)
+            )
             return RunView(
                 run_id=run.id,
                 source_id=run.cloud_document_id,
@@ -477,6 +518,9 @@ class Phase3Orchestrator:
                 pending_proposals=proposals,
                 export=_export_view(export),
                 write_back=write_back,
+                write_authorization=(
+                    watch_link.write_authorization_state if watch_link is not None else None
+                ),
             )
 
     async def list_proposals(self, run_id: UUID) -> tuple[ProposalView, ...]:

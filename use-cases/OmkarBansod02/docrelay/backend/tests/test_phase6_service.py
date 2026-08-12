@@ -22,6 +22,10 @@ from docrelay.domain.enums import (
     SuperDocsJobStatus,
     SyncMode,
     SyncRunState,
+    WatchScanStatus,
+    WatchScanTrigger,
+    WatchVersionStatus,
+    WriteAuthorizationState,
 )
 from docrelay.integrations.google.canonical import sha256_json
 from docrelay.integrations.google.contracts import (
@@ -41,6 +45,7 @@ from docrelay.persistence.models import (
     CloudConnection,
     CloudDocument,
     ExternalEffect,
+    FolderRule,
     GoogleBaselineCapture,
     MappingProof,
     ProposedChange,
@@ -53,13 +58,20 @@ from docrelay.persistence.models import (
     SuperDocsSession,
     SyncRun,
     VerificationResult,
+    WatchConfig,
+    WatchDocumentVersion,
+    WatchedItem,
+    WatchRunLink,
+    WatchScan,
     WriteConflict,
     WritePlan,
 )
 from docrelay.services.phase4 import DryRunStatus, Phase4PlanningService
 from docrelay.services.phase6 import (
     ConflictChoice,
+    ExactFileWriteAuthorizationRequired,
     Phase6ExecutionService,
+    WatchedFileOutOfScope,
     WriteBackNotEligible,
     WriteBackStatus,
 )
@@ -163,6 +175,7 @@ class FakeGoogleWriteProvider:
         self.verify_error: GoogleIntegrationError | None = None
         self.commit_calls = 0
         self.operations: list[object] = []
+        self.is_app_authorized = True
 
     async def inspect_current(
         self, *, file_id: str, destination_parent_id: str
@@ -187,7 +200,10 @@ class FakeGoogleWriteProvider:
                 can_copy=True,
                 destination_can_add_children=True,
             ),
-            safe_provider_metadata={"trashed": False},
+            safe_provider_metadata={
+                "trashed": False,
+                "is_app_authorized": self.is_app_authorized,
+            },
         )
 
     async def create_backup(
@@ -247,7 +263,9 @@ class FakeGoogleWriteProvider:
 
 
 @asynccontextmanager
-async def _environment() -> AsyncIterator[
+async def _environment(
+    *, watched: bool = False
+) -> AsyncIterator[
     tuple[
         async_sessionmaker[Any],
         Phase6ExecutionService,
@@ -292,6 +310,34 @@ async def _environment() -> AsyncIterator[
         )
         session.add(document)
         await session.flush()
+        rule = None
+        watch = None
+        if watched:
+            watch = WatchConfig(
+                connection_id=connection.id,
+                parent_folder_id="parent-a",
+                root_name="Parent A",
+                schedule="interval",
+                timezone="UTC",
+                interval_seconds=300,
+                default_mode=SyncMode.PREVIEW,
+                enabled=True,
+                next_scan_at=now,
+            )
+            session.add(watch)
+            await session.flush()
+            rule = FolderRule(
+                watch_config_id=watch.id,
+                provider_folder_id="parent-a",
+                version=1,
+                instruction="Change 45 days to 30 days.",
+                instruction_sha256="3" * 64,
+                configuration={"precedence": "nearest_enabled_ancestor"},
+                supported_formats={"mime_types": [GOOGLE_DOC_MIME]},
+                active=True,
+            )
+            session.add(rule)
+            await session.flush()
         capture = GoogleBaselineCapture(
             cloud_document_id=document.id,
             provider_revision_id="revision-A",
@@ -312,6 +358,8 @@ async def _environment() -> AsyncIterator[
         await session.flush()
         run = SyncRun(
             cloud_document_id=document.id,
+            folder_rule_id=rule.id if rule is not None else None,
+            folder_rule_version=rule.version if rule is not None else None,
             rule_snapshot={
                 "instruction": "Change 45 days to 30 days.",
                 "instruction_sha256": "3" * 64,
@@ -325,6 +373,73 @@ async def _environment() -> AsyncIterator[
         )
         session.add(run)
         await session.flush()
+        if watch is not None and rule is not None:
+            watch_scan = WatchScan(
+                watch_config_id=watch.id,
+                trigger=WatchScanTrigger.SCHEDULED,
+                status=WatchScanStatus.SUCCEEDED,
+                active_key=None,
+                lease_token=run.id,
+                lease_expires_at=now,
+                claim_generation=1,
+                started_at=now,
+                completed_at=now,
+                discovered_count=1,
+                enqueued_count=1,
+            )
+            session.add(watch_scan)
+            await session.flush()
+            watched_item = WatchedItem(
+                watch_config_id=watch.id,
+                provider_file_id=document.provider_file_id,
+                cloud_document_id=document.id,
+                display_name="Synthetic contract",
+                mime_type=GOOGLE_DOC_MIME,
+                provider_version="1",
+                parent_folder_id="parent-a",
+                ancestor_folder_ids=["parent-a"],
+                current_in_scope=True,
+                last_seen_scan_id=watch_scan.id,
+                last_seen_at=now,
+                last_enqueued_provider_version="1",
+                last_enqueued_revision_id="revision-A",
+                last_enqueued_run_id=run.id,
+                write_authorization_state=WriteAuthorizationState.REQUIRED,
+                write_authorization_checked_at=now,
+            )
+            session.add(watched_item)
+            await session.flush()
+            watched_version = WatchDocumentVersion(
+                watched_item_id=watched_item.id,
+                first_seen_scan_id=watch_scan.id,
+                provider_version="1",
+                status=WatchVersionStatus.ENQUEUED,
+                provider_revision_id="revision-A",
+                folder_rule_id=rule.id,
+                folder_rule_version=rule.version,
+                rule_snapshot=dict(run.rule_snapshot),
+                sync_run_id=run.id,
+            )
+            session.add(watched_version)
+            await session.flush()
+            session.add(
+                WatchRunLink(
+                    watch_config_id=watch.id,
+                    watch_scan_id=watch_scan.id,
+                    watched_item_id=watched_item.id,
+                    watch_document_version_id=watched_version.id,
+                    sync_run_id=run.id,
+                    folder_rule_id=rule.id,
+                    folder_rule_version=rule.version,
+                    rule_snapshot=dict(run.rule_snapshot),
+                    write_authorization_state=WriteAuthorizationState.REQUIRED,
+                    write_authorization_checked_at=now,
+                    write_authorization_evidence={
+                        "is_app_authorized": False,
+                        "read_scope_is_not_write_authority": True,
+                    },
+                )
+            )
         snapshot = SourceSnapshot(
             sync_run_id=run.id,
             cloud_document_id=document.id,
@@ -484,6 +599,70 @@ async def test_non_ready_or_inconsistent_plan_never_reaches_provider() -> None:
         assert provider.events == []
 
 
+async def test_watched_run_requires_exact_file_authorization_then_reuses_phase6() -> None:
+    async with _environment(watched=True) as (sessions, service, provider, run_id, _, _):
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            item = await session.scalar(
+                select(WatchedItem).where(WatchedItem.last_enqueued_run_id == run_id)
+            )
+            assert link is not None and item is not None
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            item.current_in_scope = False
+            await session.commit()
+
+        with pytest.raises(WatchedFileOutOfScope):
+            await service.execute(run_id)
+        assert provider.events == []
+
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            item = await session.scalar(
+                select(WatchedItem).where(WatchedItem.last_enqueued_run_id == run_id)
+            )
+            assert link is not None and item is not None
+            link.write_authorization_state = WriteAuthorizationState.REQUIRED
+            item.current_in_scope = True
+            await session.commit()
+
+        with pytest.raises(ExactFileWriteAuthorizationRequired):
+            await service.execute(run_id)
+        assert provider.events == []
+        assert provider.copy_calls == provider.commit_calls == 0
+
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            assert link is not None
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            await session.commit()
+
+        provider.is_app_authorized = False
+        with pytest.raises(ExactFileWriteAuthorizationRequired):
+            await service.execute(run_id)
+        assert provider.events == ["read"]
+        assert provider.copy_calls == provider.commit_calls == 0
+
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            assert link is not None
+            assert link.write_authorization_state is WriteAuthorizationState.REQUIRED
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            await session.commit()
+        provider.is_app_authorized = True
+        result = await service.execute(run_id)
+
+        assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert provider.copy_calls == provider.commit_calls == 1
+
+
 @pytest.mark.parametrize("tamper", ["mapping", "operation_mirror", "approval"])
 async def test_immutable_plan_and_mapping_mirrors_are_revalidated_before_effects(
     tamper: str,
@@ -538,9 +717,11 @@ async def test_backup_must_be_content_and_permission_verified_before_write(
         assert result.attention_code == "GOOGLE_BACKUP_VERIFICATION_FAILED"
         assert provider.events[:3] == ["read", "copy", "verify-backup"]
         assert provider.commit_calls == 0
-        assert provider.backup_verification.canonical_sha256 != sha256_json(baseline) or (
-            not provider.backup_verification.acl_not_broader
-        ) or not provider.backup_verification.expected_location
+        assert (
+            provider.backup_verification.canonical_sha256 != sha256_json(baseline)
+            or (not provider.backup_verification.acl_not_broader)
+            or not provider.backup_verification.expected_location
+        )
 
 
 async def test_backup_unknown_is_never_retried_and_never_writes() -> None:

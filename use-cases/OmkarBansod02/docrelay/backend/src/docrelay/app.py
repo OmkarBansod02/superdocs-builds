@@ -11,6 +11,7 @@ from docrelay.api.google import router as google_router
 from docrelay.api.health import router as health_router
 from docrelay.api.middleware import RequestIdMiddleware
 from docrelay.api.runs import router as runs_router
+from docrelay.api.watch import router as watch_router
 from docrelay.core.config import Settings, get_settings
 from docrelay.core.logging import configure_logging
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
@@ -36,6 +37,7 @@ from docrelay.services.phase3 import (
     SuperDocsNotConfigured,
 )
 from docrelay.services.phase6 import Phase6Error
+from docrelay.services.watch import WatchError, WatchNotFound
 
 
 def create_app(
@@ -89,6 +91,7 @@ def create_app(
     app.include_router(health_router)
     app.include_router(google_router)
     app.include_router(runs_router)
+    app.include_router(watch_router)
 
     @app.exception_handler(GoogleIntegrationError)
     async def handle_google_error(request: Request, exc: GoogleIntegrationError) -> Response:
@@ -97,6 +100,7 @@ def create_app(
             GoogleErrorCode.INVALID_OAUTH_STATE: 400,
             GoogleErrorCode.OAUTH_ACCESS_DENIED: 403,
             GoogleErrorCode.REAUTH_REQUIRED: 401,
+            GoogleErrorCode.WATCH_AUTHORIZATION_REQUIRED: 403,
             GoogleErrorCode.PERMISSION_DENIED: 403,
             GoogleErrorCode.CONNECTION_NOT_FOUND: 404,
             GoogleErrorCode.FILE_NOT_FOUND: 404,
@@ -188,6 +192,17 @@ def create_app(
                 separators=(",", ":"),
             ),
             status_code=409,
+            media_type="application/json",
+        )
+
+    @app.exception_handler(WatchError)
+    async def handle_watch_error(_: Request, exc: WatchError) -> Response:
+        return Response(
+            content=json.dumps(
+                {"error": {"code": exc.code, "message": exc.safe_message}},
+                separators=(",", ":"),
+            ),
+            status_code=404 if isinstance(exc, WatchNotFound) else 409,
             media_type="application/json",
         )
 

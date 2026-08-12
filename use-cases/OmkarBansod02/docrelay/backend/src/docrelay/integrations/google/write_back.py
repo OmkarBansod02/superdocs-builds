@@ -24,11 +24,11 @@ from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrati
 from docrelay.integrations.google.read_only import (
     DOCS_API_BASE,
     DRIVE_API_BASE,
+    DRIVE_FOLDER_MIME,
     GOOGLE_DOC_MIME,
     GoogleReadHTTPClient,
 )
 
-DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
 COPY_FIELDS = "id,mimeType,parents,driveId,trashed"
 DESTINATION_FIELDS = "id,mimeType,trashed,capabilities(canAddChildren)"
 PERMISSION_FIELDS = (
@@ -192,9 +192,8 @@ class GoogleWriteHTTPClient:
         )
         separate_file = backup_file_id != source_file_id
         expected_mime = backup_metadata.mime_type == GOOGLE_DOC_MIME
-        expected_location = (
-            backup_metadata.drive_id is None
-            and backup_metadata.parent_ids == (expected_parent_id,)
+        expected_location = backup_metadata.drive_id is None and backup_metadata.parent_ids == (
+            expected_parent_id,
         )
         content_matches = canonical_sha256 == expected_baseline_sha256
         return BackupVerification(

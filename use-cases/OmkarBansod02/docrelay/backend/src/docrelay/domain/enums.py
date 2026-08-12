@@ -115,3 +115,36 @@ class ProposalOperation(StrEnum):
     EDIT = "edit"
     CREATE = "create"
     DELETE = "delete"
+
+
+class WatchScanStatus(StrEnum):
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+
+
+class WatchScanTrigger(StrEnum):
+    SCHEDULED = "SCHEDULED"
+    MANUAL = "MANUAL"
+
+
+class WatchItemOutcome(StrEnum):
+    ENQUEUED = "ENQUEUED"
+    UNCHANGED = "UNCHANGED"
+    NO_RULE = "NO_RULE"
+    UNSUPPORTED = "UNSUPPORTED"
+    FAILED = "FAILED"
+    OUT_OF_SCOPE = "OUT_OF_SCOPE"
+
+
+class WatchVersionStatus(StrEnum):
+    DISCOVERED = "DISCOVERED"
+    NO_RULE = "NO_RULE"
+    ENQUEUE_PENDING = "ENQUEUE_PENDING"
+    ENQUEUED = "ENQUEUED"
+    FAILED = "FAILED"
+
+
+class WriteAuthorizationState(StrEnum):
+    REQUIRED = "REQUIRED"
+    AUTHORIZED = "AUTHORIZED"

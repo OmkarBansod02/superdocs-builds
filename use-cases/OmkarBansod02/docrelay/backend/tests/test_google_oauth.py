@@ -7,8 +7,11 @@ from pydantic import SecretStr
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 from docrelay.integrations.google.oauth import (
     GOOGLE_DRIVE_FILE_SCOPE,
+    GOOGLE_DRIVE_READONLY_SCOPE,
     GOOGLE_OAUTH_SCOPES,
     GOOGLE_TOKEN_ENDPOINT,
+    GOOGLE_WATCH_SCOPES,
+    GoogleAuthorizationProfile,
     GoogleOAuthHTTPClient,
     build_authorization_url,
     new_pkce_verifier,
@@ -34,6 +37,23 @@ def test_authorization_url_uses_state_offline_access_least_privilege_and_pkce() 
     assert query["code_challenge_method"] == ["S256"]
     assert query["code_challenge"][0] != verifier
     assert 43 <= len(verifier) <= 128
+
+
+def test_watch_authorization_is_an_explicit_restricted_scope_upgrade() -> None:
+    verifier = new_pkce_verifier()
+    url = build_authorization_url(
+        client_id="client-id",
+        redirect_uri="http://localhost/callback",
+        state="watch-state",
+        code_verifier=verifier,
+        scopes=GOOGLE_WATCH_SCOPES,
+    )
+    query = parse_qs(urlparse(url).query)
+
+    assert query["scope"] == [" ".join(GOOGLE_WATCH_SCOPES)]
+    assert GOOGLE_DRIVE_READONLY_SCOPE in query["scope"][0]
+    assert query["include_granted_scopes"] == ["true"]
+    assert GoogleAuthorizationProfile.WATCH.value == "watch"
 
 
 async def test_refresh_accepts_unchanged_scope_omission() -> None:

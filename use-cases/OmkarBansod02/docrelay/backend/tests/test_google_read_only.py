@@ -308,7 +308,12 @@ async def test_provider_transport_surface_and_actual_requests_are_read_only() ->
         for name, member in inspect.getmembers(GoogleReadHTTPClient, inspect.isfunction)
         if not name.startswith("_")
     }
-    assert public_provider_methods == {"get_file", "get_document", "export_docx"}
+    assert public_provider_methods == {
+        "get_file",
+        "get_document",
+        "export_docx",
+        "list_children",
+    }
     assert {request.method for request in requests} == {"GET"}
     assert all(request.headers["authorization"] == "Bearer access-secret" for request in requests)
     source = inspect.getsource(GoogleReadHTTPClient)
@@ -323,3 +328,48 @@ async def test_provider_transport_surface_and_actual_requests_are_read_only() ->
         "files.delete",
     ):
         assert prohibited not in source
+
+
+async def test_folder_listing_is_parent_bounded_and_parses_pagination_metadata() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "nextPageToken": "next-page",
+                "incompleteSearch": False,
+                "files": [
+                    {
+                        "id": "doc-1",
+                        "name": "Contract",
+                        "mimeType": GOOGLE_DOC_MIME,
+                        "parents": ["selected-root"],
+                        "version": "42",
+                        "modifiedTime": "2026-08-12T12:00:00Z",
+                        "spaces": ["drive"],
+                        "ownedByMe": True,
+                        "trashed": False,
+                        "isAppAuthorized": False,
+                        "capabilities": {"canDownload": True},
+                    }
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        provider = GoogleReadHTTPClient(http=http, access_token=SecretStr("access-secret"))
+        page = await provider.list_children("selected-root")
+
+    assert len(page.items) == 1
+    assert page.items[0].provider_version == "42"
+    assert page.items[0].parent_ids == ("selected-root",)
+    assert page.items[0].owned_by_me is True
+    assert page.next_page_token == "next-page"
+    assert len(requests) == 1
+    query = requests[0].url.params
+    assert query["q"] == "'selected-root' in parents and trashed = false"
+    assert query["spaces"] == "drive"
+    assert query["corpora"] == "user"
+    assert query["includeItemsFromAllDrives"] == "false"

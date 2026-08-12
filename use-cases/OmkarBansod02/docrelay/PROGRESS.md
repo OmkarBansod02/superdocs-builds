@@ -40,6 +40,13 @@ Branch: `docrelay`
   UNKNOWN reconciliation without blind retry, restart/idempotency controls, complete
   structural postimage verification, minimal frontend states, and bounded real success
   and conflict proofs passed.
+- Phase 8A — **PASS**. Provider evidence established Decision C: `drive.file` is
+  per-file/non-transitive and cannot provide unattended descendant discovery.
+- Phase 8B — **CONDITIONAL PASS**. Explicit watch-profile OAuth, selected-root-bounded
+  paginated discovery, persisted interval claims, stable-folder versioned rules,
+  durable Drive-version dedupe, existing Phase 3 workflow handoff, exact-file Phase 6
+  authorization gates, machine APIs, migration, and deterministic safety regressions
+  passed. The bounded live `drive.readonly` consent/provider proof remains manual.
 
 ## Proven assumptions
 
@@ -59,22 +66,36 @@ Branch: `docrelay`
 - Only `WRITE_VERIFIED` is provider-write success. It requires a verified backup, an
   advanced provider revision, and exact equality with the complete baseline-derived
   canonical postimage.
+- Scheduled discovery requires an explicitly upgraded connection with actual persisted
+  `openid + drive.file + drive.readonly`; normal single-document OAuth remains
+  `openid + drive.file` by default.
+- A watched root is an application-enforced allowlist. Discovery starts only at its
+  stable owned My Drive folder ID and uses parent-bounded traversal; Shared Drives and
+  shared-with-me roots fail closed.
+- Read-only discovery never grants write authority. A watched run requires Google
+  `isAppAuthorized` proof for that exact Picker-selected file before Phase 6 can create
+  a backup or write effect.
 
 ## Unresolved assumptions
 
-- `drive.file` access for future manually added watched-folder descendants is not
-  proved; the folder/future-descendant experiment remains **PENDING**. This blocks
-  future watch mode only and does not block Phase 3.
+- The live restricted-scope watch grant and real existing/new descendant acceptance
+  proof remain pending because this environment has no configured Google OAuth client
+  and consent requires a browser.
 - Broader ACL/shared-drive cases and general formatting/mapping coverage remain
   unproved. Phase 6 fails closed on unknown permission forms and excludes shared drives.
+- `drive.readonly` is a Google restricted scope whose token can technically read more
+  than the application-selected root. Production release requires Google's applicable
+  verification/security-assessment and privacy/retention controls in addition to the
+  enforced traversal boundary.
 - A crashed in-flight provider mutation has a 15-minute lease before UNKNOWN
   reconciliation. An UNKNOWN backup copy remains operator-attention-only because the
   proven Google contract has no safe exact-copy discovery mechanism.
 
 ## Next action
 
-Phase 7 is GO under its own scope. Do not infer watch mode, shared-drive support,
-multi-document orchestration, broader mapping, or blind UNKNOWN retries from Phase 6.
+Phase 9 implementation is GO. Production release of watch mode remains gated on the
+bounded live Google proof and restricted-scope compliance; do not infer Shared Drive,
+new-format, broader mapping, or automatic write support from Phase 8B.
 
 ## Checkpoint log
 
@@ -127,3 +148,11 @@ real same-parent Google backup before one exact revision-guarded batch update, t
 verified the complete canonical postimage; a separate real concurrent edit became a
 durable BEFORE_BACKUP conflict with zero DocRelay provider mutations; deterministic
 safety, restart, UNKNOWN, API, and frontend tests passed; no commit created. Phase 7 GO.
+
+2026-08-12 — Phase 8B checkpoint: CONDITIONAL PASS; production folder watch now uses an
+explicit restricted read profile, selected-root-only recursive discovery, persisted
+interval/fenced scan claims, stable-folder versioned rules, durable version/run dedupe,
+the existing SuperDocs and human-review workflow, and exact-file write authorization
+before unchanged Phase 6; deterministic backend validation passed with no automatic
+Google write. Live restricted-scope consent and existing/new descendant proof remain;
+Phase 9 implementation GO; no commit created.

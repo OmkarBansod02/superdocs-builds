@@ -2,6 +2,7 @@ import base64
 import hashlib
 import secrets
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any, Protocol
 from urllib.parse import urlencode
 
@@ -18,8 +19,28 @@ GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
 GOOGLE_REVOCATION_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 GOOGLE_USERINFO_ENDPOINT = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_OPENID_SCOPE = "openid"
 GOOGLE_DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file"
-GOOGLE_OAUTH_SCOPES = ("openid", GOOGLE_DRIVE_FILE_SCOPE)
+GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+GOOGLE_SINGLE_FILE_SCOPES = (GOOGLE_OPENID_SCOPE, GOOGLE_DRIVE_FILE_SCOPE)
+GOOGLE_WATCH_SCOPES = (
+    GOOGLE_OPENID_SCOPE,
+    GOOGLE_DRIVE_FILE_SCOPE,
+    GOOGLE_DRIVE_READONLY_SCOPE,
+)
+# Backward-compatible name for the normal, deliberately narrow connection flow.
+GOOGLE_OAUTH_SCOPES = GOOGLE_SINGLE_FILE_SCOPES
+
+
+class GoogleAuthorizationProfile(StrEnum):
+    SINGLE_FILE = "single_file"
+    WATCH = "watch"
+
+
+def scopes_for_profile(profile: GoogleAuthorizationProfile) -> tuple[str, ...]:
+    if profile is GoogleAuthorizationProfile.WATCH:
+        return GOOGLE_WATCH_SCOPES
+    return GOOGLE_SINGLE_FILE_SCOPES
 
 
 class OAuthContract(BaseModel):

@@ -1,13 +1,15 @@
+from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from docrelay.api.watch import watch_service
 from docrelay.core.config import Settings
-from docrelay.domain.enums import ConflictChoice
+from docrelay.domain.enums import ConflictChoice, WriteAuthorizationState
 from docrelay.integrations.google.contracts import Phase6GooglePort
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import GoogleConnectionService
@@ -78,6 +80,26 @@ class DryRunRequest(RunAPIModel):
 
 class ConflictDecisionRequest(RunAPIModel):
     choice: ConflictChoice
+
+
+class WriteAuthorizationRequest(RunAPIModel):
+    file_id: str = Field(min_length=1, max_length=255)
+
+    @field_validator("file_id")
+    @classmethod
+    def validate_file_id(cls, value: str) -> str:
+        if value != value.strip() or any(ord(character) < 33 for character in value):
+            raise ValueError("file_id must be one opaque Google file identifier")
+        return value
+
+
+class WriteAuthorizationResponse(RunAPIModel):
+    run_id: UUID
+    state: WriteAuthorizationState
+    checked_at: datetime
+    action: Literal["AUTHORIZE_THIS_DOCUMENT_FOR_WRITE_BACK"] = (
+        "AUTHORIZE_THIS_DOCUMENT_FOR_WRITE_BACK"
+    )
 
 
 def _orchestrator(request: Request) -> Phase3Orchestrator:
@@ -282,6 +304,26 @@ async def create_dry_run(
 @router.post("/{run_id}/write-back", response_model=WriteBackView)
 async def write_back(run_id: UUID, request: Request) -> WriteBackView:
     return await _phase6(request).execute(run_id)
+
+
+@router.post(
+    "/{run_id}/write-authorization",
+    response_model=WriteAuthorizationResponse,
+)
+async def verify_write_authorization(
+    run_id: UUID,
+    request: Request,
+    payload: Annotated[WriteAuthorizationRequest, Body()],
+) -> WriteAuthorizationResponse:
+    link = await watch_service(request).verify_run_write_authorization(
+        run_id,
+        picker_file_id=payload.file_id,
+    )
+    return WriteAuthorizationResponse(
+        run_id=run_id,
+        state=link.write_authorization_state,
+        checked_at=link.write_authorization_checked_at,
+    )
 
 
 @router.post("/{run_id}/conflict-decision", response_model=WriteBackView)

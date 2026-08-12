@@ -26,6 +26,7 @@ from docrelay.domain.enums import (
     SuperDocsJobStatus,
     SyncRunState,
     VerificationStatus,
+    WriteAuthorizationState,
 )
 from docrelay.domain.state_machine import require_transition
 from docrelay.domain.write_plan import GoogleDocsBatchUpdate, SealedWritePlan
@@ -56,6 +57,8 @@ from docrelay.persistence.models import (
     SuperDocsSession,
     SyncRun,
     VerificationResult,
+    WatchedItem,
+    WatchRunLink,
     WriteConflict,
     WritePlan,
     WritePlanLineage,
@@ -75,6 +78,14 @@ class Phase6Error(RuntimeError):
 
 class WriteBackNotEligible(Phase6Error):
     code = "WRITE_BACK_NOT_ELIGIBLE"
+
+
+class ExactFileWriteAuthorizationRequired(Phase6Error):
+    code = "EXACT_FILE_WRITE_AUTHORIZATION_REQUIRED"
+
+
+class WatchedFileOutOfScope(Phase6Error):
+    code = "WATCHED_FILE_OUT_OF_SCOPE"
 
 
 class ConflictDecisionInvalid(Phase6Error):
@@ -135,6 +146,7 @@ class _Context:
     plan_row_id: UUID
     plan: SealedWritePlan
     snapshot_id: UUID
+    requires_exact_file_authorization: bool
 
 
 class Phase6ExecutionService:
@@ -244,6 +256,7 @@ class Phase6ExecutionService:
                 resumable_attention
             ):
                 return None, existing
+            await self._require_exact_file_authorization(session, run, context)
 
             backup, backup_effect, write_effect = await self._effect_state(
                 session, run_id, context.plan_row_id
@@ -264,6 +277,7 @@ class Phase6ExecutionService:
                 run.state is SyncRunState.COMMITTING
                 and backup_effect is not None
                 and backup_effect.outcome is EffectOutcome.NOT_STARTED
+                and run.failure_code != ExactFileWriteAuthorizationRequired.code
                 and not _lease_expired(run.updated_at)
             ):
                 return None, existing
@@ -361,6 +375,14 @@ class Phase6ExecutionService:
                 {"provider_code": exc.code.value, "stage": stage},
             )
             return None
+        if (
+            context.requires_exact_file_authorization
+            and current.safe_provider_metadata.get("is_app_authorized") is not True
+        ):
+            await self._mark_exact_file_authorization_required(context.run_id)
+            raise ExactFileWriteAuthorizationRequired(
+                "Authorize this exact Google document with Picker before write-back"
+            )
         plan = context.plan.payload
         baseline_payload = await self._baseline_payload(context.snapshot_id)
         if current.revision_id != plan.source.baseline_revision_id:
@@ -874,7 +896,60 @@ class Phase6ExecutionService:
             plan_row_id=plan_row.id,
             plan=plan,
             snapshot_id=snapshot.id,
+            requires_exact_file_authorization=run.folder_rule_id is not None,
         )
+
+    async def _require_exact_file_authorization(
+        self,
+        session: AsyncSession,
+        run: SyncRun,
+        context: _Context,
+    ) -> None:
+        if not context.requires_exact_file_authorization:
+            return
+        row = (
+            await session.execute(
+                select(WatchRunLink, WatchedItem)
+                .join(WatchedItem, WatchedItem.id == WatchRunLink.watched_item_id)
+                .where(WatchRunLink.sync_run_id == run.id)
+                .with_for_update()
+            )
+        ).one_or_none()
+        link: WatchRunLink | None = None
+        if row is not None:
+            link, watched_item = row._tuple()
+            if not watched_item.current_in_scope:
+                raise WatchedFileOutOfScope(
+                    "The watched document is no longer inside its configured root"
+                )
+        if (
+            link is None
+            or link.write_authorization_state is not WriteAuthorizationState.AUTHORIZED
+            or link.folder_rule_id != run.folder_rule_id
+            or link.folder_rule_version != run.folder_rule_version
+        ):
+            raise ExactFileWriteAuthorizationRequired(
+                "Authorize this exact Google document with Picker before write-back"
+            )
+
+    async def _mark_exact_file_authorization_required(self, run_id: UUID) -> None:
+        async with self._sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id).with_for_update()
+            )
+            if link is not None:
+                link.write_authorization_state = WriteAuthorizationState.REQUIRED
+                link.write_authorization_checked_at = datetime.now(UTC)
+                link.write_authorization_evidence = {
+                    "is_app_authorized": False,
+                    "verified_via": "phase6.drive.files.get.isAppAuthorized",
+                    "read_scope_is_not_write_authority": True,
+                }
+            run = await session.get(SyncRun, run_id, with_for_update=True)
+            if run is not None:
+                run.failure_code = ExactFileWriteAuthorizationRequired.code
+                run.failure_detail = {"provider_is_app_authorized": False}
+            await session.commit()
 
     def _validate_eligibility(
         self,

@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 from docrelay.domain.enums import ConnectionStatus
 from docrelay.integrations.google.credentials import CredentialCipher
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
-from docrelay.integrations.google.oauth import GOOGLE_OAUTH_SCOPES, OAuthTokenGrant
+from docrelay.integrations.google.oauth import (
+    GOOGLE_OAUTH_SCOPES,
+    GOOGLE_WATCH_SCOPES,
+    GoogleAuthorizationProfile,
+    OAuthTokenGrant,
+)
 from docrelay.integrations.google.read_only import (
     GOOGLE_DOC_MIME,
     GoogleFileMetadata,
@@ -311,3 +316,37 @@ async def test_disconnect_revokes_then_removes_local_credentials() -> None:
         assert disconnected.disconnected_at is not None
         assert disconnected.credential_reference is None
         assert await session.scalar(select(OAuthCredential)) is None
+
+
+async def test_normal_connection_remains_narrow_and_cannot_silently_enable_watch() -> None:
+    async with _service_environment() as (_, service, _, _):
+        connection = await _authorize(service)
+
+        with pytest.raises(GoogleIntegrationError) as raised:
+            await service.watch_read_client(connection.id)
+
+        assert raised.value.code is GoogleErrorCode.WATCH_AUTHORIZATION_REQUIRED
+        assert tuple(connection.granted_scopes["scopes"]) == GOOGLE_OAUTH_SCOPES
+
+
+async def test_explicit_watch_profile_persists_verified_combined_scope_grant() -> None:
+    async with _service_environment() as (_, service, oauth, read_tokens):
+        oauth.exchange_grant = oauth.exchange_grant.model_copy(
+            update={"scopes": GOOGLE_WATCH_SCOPES}
+        )
+        started = await service.start_authorization(GoogleAuthorizationProfile.WATCH)
+        query = parse_qs(urlparse(started.authorization_url).query)
+        state = query["state"][0]
+
+        connection = await service.complete_authorization(
+            state=state,
+            browser_nonce=started.browser_nonce,
+            code="authorization-code",
+            oauth_error=None,
+        )
+        provider = await service.watch_read_client(connection.id)
+
+        assert provider is not None
+        assert set(connection.granted_scopes["scopes"]) == set(GOOGLE_WATCH_SCOPES)
+        assert query["scope"] == [" ".join(GOOGLE_WATCH_SCOPES)]
+        assert read_tokens == ["initial-access-secret"]

@@ -64,3 +64,34 @@ async def test_phase6_routes_accept_no_browser_provider_operations() -> None:
     serialized = write.text.lower()
     for forbidden in ("authorization", "access_token", "refresh_token", "raw_payload"):
         assert forbidden not in serialized
+
+
+async def test_watch_machine_routes_are_exposed_without_a_demo_execution_path() -> None:
+    app = create_app(settings=_settings(), database=StubDatabase())  # type: ignore[arg-type]
+    watch_id = uuid4()
+    run_id = uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        unavailable = await client.get("/api/v1/watches")
+        write_authorization = await client.post(
+            f"/api/v1/runs/{run_id}/write-authorization",
+            json={"file_id": "picker-file-id"},
+        )
+        openapi = (await client.get("/api/openapi.json")).json()
+
+    expected_paths = {
+        "/api/v1/watches",
+        "/api/v1/watches/{watch_id}",
+        "/api/v1/watches/{watch_id}/schedule",
+        "/api/v1/watches/{watch_id}/rules",
+        "/api/v1/watches/{watch_id}/scans",
+        "/api/v1/watches/{watch_id}/scans/{scan_id}/items",
+        "/api/v1/watches/{watch_id}/items",
+        "/api/v1/runs/{run_id}/write-authorization",
+    }
+    assert expected_paths.issubset(openapi["paths"])
+    assert unavailable.status_code == 503
+    assert write_authorization.status_code == 503
+    assert unavailable.json()["error"]["code"] == "GOOGLE_OAUTH_NOT_CONFIGURED"
+    serialized = unavailable.text + write_authorization.text + str(watch_id)
+    for forbidden in ("access_token", "refresh_token", "client_secret"):
+        assert forbidden not in serialized.lower()

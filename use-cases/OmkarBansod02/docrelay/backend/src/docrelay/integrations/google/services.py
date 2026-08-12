@@ -20,12 +20,17 @@ from docrelay.integrations.google.credentials import (
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 from docrelay.integrations.google.oauth import (
     GOOGLE_OAUTH_SCOPES,
+    GOOGLE_WATCH_SCOPES,
+    GoogleAuthorizationProfile,
     build_authorization_url,
     new_pkce_verifier,
+    scopes_for_profile,
 )
 from docrelay.integrations.google.read_only import (
     BaselineCaptureResult,
     GoogleBaselineCaptureService,
+    GoogleFileMetadata,
+    GoogleReadPort,
 )
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.persistence.models import (
@@ -71,7 +76,11 @@ class GoogleConnectionService:
         self._refresh_skew_seconds = refresh_skew_seconds
         self._baseline_max_attempts = baseline_max_attempts
 
-    async def start_authorization(self) -> OAuthStartResult:
+    async def start_authorization(
+        self,
+        profile: GoogleAuthorizationProfile = GoogleAuthorizationProfile.SINGLE_FILE,
+    ) -> OAuthStartResult:
+        requested_scopes = scopes_for_profile(profile)
         state = secrets.token_urlsafe(32)
         browser_nonce = secrets.token_urlsafe(32)
         state_digest = _sha256(state)
@@ -88,7 +97,7 @@ class GoogleConnectionService:
                 browser_nonce_sha256=_sha256(browser_nonce),
                 code_verifier_ciphertext=encrypted_verifier.ciphertext,
                 encryption_key_version=encrypted_verifier.key_version,
-                requested_scopes=list(GOOGLE_OAUTH_SCOPES),
+                requested_scopes=list(requested_scopes),
                 expires_at=now + timedelta(seconds=self._state_ttl_seconds),
             )
         )
@@ -99,6 +108,7 @@ class GoogleConnectionService:
                 redirect_uri=self._runtime.redirect_uri,
                 state=state,
                 code_verifier=verifier,
+                scopes=requested_scopes,
             ),
             browser_nonce=browser_nonce,
             max_age_seconds=self._state_ttl_seconds,
@@ -237,10 +247,14 @@ class GoogleConnectionService:
         return connection
 
     async def register_and_capture(
-        self, *, connection_id: UUID, file_id: str
+        self,
+        *,
+        connection_id: UUID,
+        file_id: str,
+        required_scopes: tuple[str, ...] = GOOGLE_OAUTH_SCOPES,
     ) -> RegisteredBaseline:
         connection = await self._owned_connection(connection_id)
-        token = await self._valid_access_token(connection)
+        token = await self._valid_access_token(connection, required_scopes=required_scopes)
         capture_service = GoogleBaselineCaptureService(
             self._runtime.read_client_factory(token),
             max_attempts=self._baseline_max_attempts,
@@ -250,7 +264,11 @@ class GoogleConnectionService:
         except GoogleIntegrationError as exc:
             if exc.code is not GoogleErrorCode.REAUTH_REQUIRED:
                 raise
-            token = await self._valid_access_token(connection, force_refresh=True)
+            token = await self._valid_access_token(
+                connection,
+                force_refresh=True,
+                required_scopes=required_scopes,
+            )
             capture_service = GoogleBaselineCaptureService(
                 self._runtime.read_client_factory(token),
                 max_attempts=self._baseline_max_attempts,
@@ -337,6 +355,33 @@ class GoogleConnectionService:
             file_id=document.provider_file_id,
         )
 
+    async def watch_read_client(self, connection_id: UUID) -> GoogleReadPort:
+        connection = await self._owned_connection(connection_id)
+        token = await self._valid_access_token(
+            connection,
+            required_scopes=GOOGLE_WATCH_SCOPES,
+        )
+        return self._runtime.read_client_factory(token)
+
+    async def require_watch_authorization(self, connection_id: UUID) -> None:
+        connection = await self._owned_connection(connection_id)
+        await self._valid_access_token(
+            connection,
+            required_scopes=GOOGLE_WATCH_SCOPES,
+        )
+
+    async def verify_exact_file_write_authorization(
+        self, *, connection_id: UUID, file_id: str
+    ) -> GoogleFileMetadata:
+        provider = await self.watch_read_client(connection_id)
+        metadata = await provider.get_file(file_id)
+        if metadata.file_id != file_id:
+            raise GoogleIntegrationError(
+                GoogleErrorCode.INVALID_RESPONSE,
+                "Google Drive returned an unexpected file identity",
+            )
+        return metadata
+
     async def write_client(self, connection_id: UUID) -> Phase6GooglePort:
         connection = await self._owned_connection(connection_id)
         token = await self._valid_access_token(connection)
@@ -383,7 +428,11 @@ class GoogleConnectionService:
         return oauth_state
 
     async def _valid_access_token(
-        self, connection: CloudConnection, *, force_refresh: bool = False
+        self,
+        connection: CloudConnection,
+        *,
+        force_refresh: bool = False,
+        required_scopes: tuple[str, ...] = GOOGLE_OAUTH_SCOPES,
     ) -> SecretStr:
         if connection.status is not ConnectionStatus.CONNECTED:
             raise GoogleIntegrationError(
@@ -398,6 +447,7 @@ class GoogleConnectionService:
                 "The Google connection has no usable credentials",
             )
         credentials = self._decrypt_credential(connection.id, credential)
+        self._require_scopes(credentials.scopes, required_scopes)
         refresh_at = datetime.now(UTC) + timedelta(seconds=self._refresh_skew_seconds)
         if not force_refresh and _as_utc(credentials.access_token_expires_at) > refresh_at:
             return credentials.access_token
@@ -412,7 +462,7 @@ class GoogleConnectionService:
                 await self._mark_reauth_required(connection)
             raise
         scopes = grant.scopes or credentials.scopes
-        self._require_scopes(scopes)
+        self._require_scopes(scopes, required_scopes)
         refreshed = GoogleCredentialSet(
             access_token=grant.access_token,
             refresh_token=grant.refresh_token or credentials.refresh_token,
@@ -432,6 +482,7 @@ class GoogleConnectionService:
             refreshed=True,
         )
         connection.last_validated_at = datetime.now(UTC)
+        connection.granted_scopes = {"scopes": list(refreshed.scopes)}
         await self._session.commit()
         return refreshed.access_token
 
@@ -515,9 +566,18 @@ class GoogleConnectionService:
         scopes: tuple[str, ...], required_scopes: tuple[str, ...] = GOOGLE_OAUTH_SCOPES
     ) -> None:
         if not set(required_scopes).issubset(scopes):
+            watch_profile = set(GOOGLE_WATCH_SCOPES).issubset(required_scopes)
             raise GoogleIntegrationError(
-                GoogleErrorCode.PERMISSION_DENIED,
-                "Google did not grant the required per-file Drive authorization",
+                (
+                    GoogleErrorCode.WATCH_AUTHORIZATION_REQUIRED
+                    if watch_profile
+                    else GoogleErrorCode.PERMISSION_DENIED
+                ),
+                (
+                    "This Google connection must be explicitly upgraded for folder watch access"
+                    if watch_profile
+                    else "Google did not grant the required per-file Drive authorization"
+                ),
             )
 
 

@@ -17,15 +17,18 @@ from docrelay.integrations.google.canonical import (
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+DRIVE_FOLDER_MIME = "application/vnd.google-apps.folder"
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DRIVE_API_BASE = "https://www.googleapis.com/drive/v3"
 DOCS_API_BASE = "https://docs.googleapis.com/v1"
 MAX_GOOGLE_EXPORT_BYTES = 10 * 1024 * 1024
 DRIVE_FILE_FIELDS = (
     "id,name,mimeType,parents,driveId,trashed,isAppAuthorized,"
+    "version,modifiedTime,spaces,ownedByMe,"
     "copyRequiresWriterPermission,contentRestrictions,downloadRestrictions,"
     "capabilities(canEdit,canModifyContent,canDownload,canCopy)"
 )
+DRIVE_LIST_FIELDS = f"nextPageToken,incompleteSearch,files({DRIVE_FILE_FIELDS})"
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +52,10 @@ class GoogleFileMetadata(GoogleReadContract):
     drive_id: str | None = None
     trashed: bool = False
     is_app_authorized: bool | None = None
+    provider_version: str | None = None
+    modified_time: datetime | None = None
+    spaces: tuple[str, ...] = ()
+    owned_by_me: bool | None = None
     capabilities: GoogleReadCapabilities
     content_restrictions: tuple[dict[str, Any], ...] = ()
     download_restrictions: dict[str, Any] = Field(default_factory=dict)
@@ -59,6 +66,12 @@ class NativeGoogleDocument(GoogleReadContract):
     file_id: str = Field(min_length=1)
     revision_id: str = Field(min_length=1)
     raw_payload: dict[str, Any]
+
+
+class GoogleDrivePage(GoogleReadContract):
+    items: tuple[GoogleFileMetadata, ...]
+    next_page_token: str | None = None
+    incomplete_search: bool = False
 
 
 class BaselineCaptureResult(GoogleReadContract):
@@ -84,6 +97,10 @@ class GoogleReadPort(Protocol):
 
     async def export_docx(self, file_id: str) -> bytes: ...
 
+    async def list_children(
+        self, folder_id: str, *, page_token: str | None = None
+    ) -> GoogleDrivePage: ...
+
 
 class GoogleReadHTTPClient:
     """Read-only transport: its public provider surface exposes GET operations only."""
@@ -98,26 +115,52 @@ class GoogleReadHTTPClient:
             params={"fields": DRIVE_FILE_FIELDS, "supportsAllDrives": "true"},
         )
         payload = _json_object(response)
-        capabilities = payload.get("capabilities") or {}
-        return GoogleFileMetadata(
-            file_id=str(payload.get("id") or ""),
-            name=str(payload.get("name") or ""),
-            mime_type=str(payload.get("mimeType") or ""),
-            parent_ids=tuple(str(value) for value in payload.get("parents") or []),
-            drive_id=payload.get("driveId"),
-            trashed=bool(payload.get("trashed", False)),
-            is_app_authorized=payload.get("isAppAuthorized"),
-            capabilities=GoogleReadCapabilities(
-                can_edit=bool(capabilities.get("canEdit", False)),
-                can_modify_content=bool(capabilities.get("canModifyContent", False)),
-                can_download=bool(capabilities.get("canDownload", False)),
-                can_copy=bool(capabilities.get("canCopy", False)),
-            ),
-            content_restrictions=tuple(payload.get("contentRestrictions") or []),
-            download_restrictions=payload.get("downloadRestrictions") or {},
-            copy_requires_writer_permission=bool(
-                payload.get("copyRequiresWriterPermission", False)
-            ),
+        return _file_metadata(payload)
+
+    async def list_children(
+        self, folder_id: str, *, page_token: str | None = None
+    ) -> GoogleDrivePage:
+        escaped_folder_id = folder_id.replace("\\", "\\\\").replace("'", "\\'")
+        params = {
+            "q": f"'{escaped_folder_id}' in parents and trashed = false",
+            "spaces": "drive",
+            "corpora": "user",
+            "pageSize": "1000",
+            "fields": DRIVE_LIST_FIELDS,
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "false",
+        }
+        if page_token is not None:
+            params["pageToken"] = page_token
+        payload = _json_object(await self._get(f"{DRIVE_API_BASE}/files", params=params))
+        files = payload.get("files")
+        if not isinstance(files, list):
+            raise GoogleIntegrationError(
+                GoogleErrorCode.INVALID_RESPONSE,
+                "Google Drive returned an invalid folder listing",
+            )
+        token = payload.get("nextPageToken")
+        if token is not None and (not isinstance(token, str) or not token):
+            raise GoogleIntegrationError(
+                GoogleErrorCode.INVALID_RESPONSE,
+                "Google Drive returned an invalid pagination cursor",
+            )
+        try:
+            items = tuple(_file_metadata(item) for item in files if isinstance(item, dict))
+        except ValueError as exc:
+            raise GoogleIntegrationError(
+                GoogleErrorCode.INVALID_RESPONSE,
+                "Google Drive returned invalid file metadata",
+            ) from exc
+        if len(items) != len(files):
+            raise GoogleIntegrationError(
+                GoogleErrorCode.INVALID_RESPONSE,
+                "Google Drive returned an invalid folder listing",
+            )
+        return GoogleDrivePage(
+            items=items,
+            next_page_token=token,
+            incomplete_search=bool(payload.get("incompleteSearch", False)),
         )
 
     async def get_document(self, file_id: str) -> NativeGoogleDocument:
@@ -325,6 +368,39 @@ def _json_object(response: httpx.Response) -> dict[str, Any]:
             "Google API returned an invalid response shape",
         )
     return payload
+
+
+def _file_metadata(payload: dict[str, Any]) -> GoogleFileMetadata:
+    capabilities = payload.get("capabilities") or {}
+    version = payload.get("version")
+    is_app_authorized = payload.get("isAppAuthorized")
+    owned_by_me = payload.get("ownedByMe")
+    if isinstance(version, bool) or not isinstance(version, (int, str)):
+        provider_version = None
+    else:
+        provider_version = str(version)
+    return GoogleFileMetadata(
+        file_id=str(payload.get("id") or ""),
+        name=str(payload.get("name") or ""),
+        mime_type=str(payload.get("mimeType") or ""),
+        parent_ids=tuple(str(value) for value in payload.get("parents") or []),
+        drive_id=payload.get("driveId"),
+        trashed=bool(payload.get("trashed", False)),
+        is_app_authorized=(is_app_authorized if isinstance(is_app_authorized, bool) else None),
+        provider_version=provider_version,
+        modified_time=payload.get("modifiedTime"),
+        spaces=tuple(str(value) for value in payload.get("spaces") or []),
+        owned_by_me=owned_by_me if isinstance(owned_by_me, bool) else None,
+        capabilities=GoogleReadCapabilities(
+            can_edit=bool(capabilities.get("canEdit", False)),
+            can_modify_content=bool(capabilities.get("canModifyContent", False)),
+            can_download=bool(capabilities.get("canDownload", False)),
+            can_copy=bool(capabilities.get("canCopy", False)),
+        ),
+        content_restrictions=tuple(payload.get("contentRestrictions") or []),
+        download_restrictions=payload.get("downloadRestrictions") or {},
+        copy_requires_writer_permission=bool(payload.get("copyRequiresWriterPermission", False)),
+    )
 
 
 def _map_google_response(response: httpx.Response) -> GoogleIntegrationError:

@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from docrelay.core.config import Settings
 from docrelay.domain.enums import ConnectionStatus
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
-from docrelay.integrations.google.oauth import GOOGLE_OAUTH_SCOPES
+from docrelay.integrations.google.oauth import (
+    GOOGLE_OAUTH_SCOPES,
+    GOOGLE_WATCH_SCOPES,
+    GoogleAuthorizationProfile,
+)
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import (
     OAUTH_BROWSER_COOKIE,
@@ -43,6 +47,7 @@ class GoogleConnectionResponse(SafeAPIModel):
     provider: Literal["GOOGLE"] = "GOOGLE"
     status: ConnectionStatus
     granted_scopes: tuple[str, ...] = ()
+    watch_authorized: bool = False
     last_validated_at: datetime | None = None
     disconnected_at: datetime | None = None
 
@@ -50,6 +55,7 @@ class GoogleConnectionResponse(SafeAPIModel):
 class GoogleConnectionsResponse(SafeAPIModel):
     oauth_configured: bool
     selected_scopes: tuple[str, ...] = GOOGLE_OAUTH_SCOPES
+    watch_scopes: tuple[str, ...] = GOOGLE_WATCH_SCOPES
     connections: tuple[GoogleConnectionResponse, ...]
 
 
@@ -114,6 +120,7 @@ def _connection_response(connection: CloudConnection) -> GoogleConnectionRespons
         connection_id=connection.id,
         status=connection.status,
         granted_scopes=tuple(str(scope) for scope in scopes),
+        watch_authorized=set(GOOGLE_WATCH_SCOPES).issubset(str(scope) for scope in scopes),
         last_validated_at=connection.last_validated_at,
         disconnected_at=connection.disconnected_at,
     )
@@ -161,13 +168,18 @@ async def list_google_connections(request: Request) -> GoogleConnectionsResponse
 
 
 @router.get("/oauth/authorize", response_class=RedirectResponse)
-async def authorize_google(request: Request) -> RedirectResponse:
+async def authorize_google(
+    request: Request,
+    profile: Annotated[GoogleAuthorizationProfile, Query()] = (
+        GoogleAuthorizationProfile.SINGLE_FILE
+    ),
+) -> RedirectResponse:
     runtime = _runtime(request)
     database: Database = request.app.state.database
     async with database.sessions() as session:
         started = await _service(
             request=request, session=session, runtime=runtime
-        ).start_authorization()
+        ).start_authorization(profile)
     response = RedirectResponse(started.authorization_url, status_code=status.HTTP_302_FOUND)
     settings: Settings = request.app.state.settings
     response.set_cookie(
