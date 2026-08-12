@@ -49,7 +49,12 @@ class GoogleWriteHTTPClient:
         self._read = GoogleReadHTTPClient(http=http, access_token=access_token)
 
     async def inspect_current(
-        self, *, file_id: str, destination_parent_id: str
+        self,
+        *,
+        file_id: str,
+        destination_parent_id: str,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
     ) -> CurrentGoogleDocument:
         metadata = await self._read.get_file(file_id)
         if metadata.drive_id is not None:
@@ -92,6 +97,14 @@ class GoogleWriteHTTPClient:
                 and not bool(destination.get("trashed", False))
                 and bool((destination.get("capabilities") or {}).get("canAddChildren", False))
             )
+        watched_path_verified: bool | None = None
+        if watched_root_id is not None:
+            watched_path_verified = await self._watched_path_matches(
+                source_parent_ids=metadata.parent_ids,
+                destination_parent_id=destination_parent_id,
+                root_id=watched_root_id,
+                ancestor_folder_ids=watched_ancestor_folder_ids,
+            )
         native = await self._read.get_document(file_id)
         canonical = canonicalize_google_document(native.raw_payload)
         return CurrentGoogleDocument(
@@ -123,8 +136,40 @@ class GoogleWriteHTTPClient:
                 "drive_id_present": metadata.drive_id is not None,
                 "is_app_authorized": metadata.is_app_authorized,
                 "backup_destination_proof": destination_proof,
+                "watched_path_verified": watched_path_verified,
             },
         )
+
+    async def _watched_path_matches(
+        self,
+        *,
+        source_parent_ids: tuple[str, ...],
+        destination_parent_id: str,
+        root_id: str,
+        ancestor_folder_ids: tuple[str, ...],
+    ) -> bool:
+        if (
+            not ancestor_folder_ids
+            or ancestor_folder_ids[0] != root_id
+            or ancestor_folder_ids[-1] != destination_parent_id
+            or source_parent_ids != (destination_parent_id,)
+        ):
+            return False
+        previous: str | None = None
+        for folder_id in ancestor_folder_ids:
+            folder = await self._read.get_file(folder_id)
+            if (
+                folder.file_id != folder_id
+                or folder.mime_type != DRIVE_FOLDER_MIME
+                or folder.trashed
+                or folder.drive_id is not None
+                or "drive" not in folder.spaces
+                or (folder_id == root_id and folder.owned_by_me is not True)
+                or (previous is not None and folder.parent_ids != (previous,))
+            ):
+                return False
+            previous = folder_id
+        return True
 
     async def create_backup(
         self,
@@ -218,8 +263,39 @@ class GoogleWriteHTTPClient:
         )
 
     async def commit_guarded(
-        self, *, file_id: str, operation: GoogleDocsBatchUpdate
+        self,
+        *,
+        file_id: str,
+        operation: GoogleDocsBatchUpdate,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
     ) -> GuardedCommitResult:
+        if watched_root_id is not None:
+            metadata = await self._read.get_file(file_id)
+            destination_parent_id = (
+                watched_ancestor_folder_ids[-1] if watched_ancestor_folder_ids else ""
+            )
+            path_matches = (
+                metadata.mime_type == GOOGLE_DOC_MIME
+                and not metadata.trashed
+                and metadata.drive_id is None
+                and metadata.is_app_authorized is True
+                and await self._watched_path_matches(
+                    source_parent_ids=metadata.parent_ids,
+                    destination_parent_id=destination_parent_id,
+                    root_id=watched_root_id,
+                    ancestor_folder_ids=watched_ancestor_folder_ids,
+                )
+            )
+            if not path_matches:
+                return GuardedCommitResult(
+                    classification=CommitClassification.DEFINITELY_NOT_APPLIED,
+                    safe_provider_evidence={
+                        "preflight": "watched_root_path",
+                        "watched_path_verified": False,
+                        "batch_update_sent": False,
+                    },
+                )
         try:
             response = await self._http.post(
                 f"{DOCS_API_BASE}/documents/{quote(file_id, safe='')}:batchUpdate",

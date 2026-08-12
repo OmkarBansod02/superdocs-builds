@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -47,12 +48,14 @@ from docrelay.persistence.models import (
     ReviewRound,
     SuperDocsExport,
     SuperDocsJob,
+    SyncRun,
 )
-from docrelay.services.artifacts import InMemoryArtifactStore
+from docrelay.services.artifacts import ArtifactStore, InMemoryArtifactStore
 from docrelay.services.superdocs_workflow import (
     DecisionInput,
     IncompleteDecisionSet,
     RecoveryBlocked,
+    ReviewOperationInvalid,
     ReviewPayloadInvalid,
     SuperDocsBaseline,
     SuperDocsWorkflow,
@@ -75,11 +78,19 @@ class FakeSuperDocs:
         self.job_id = "job-existing-1"
         self.start_loses_response = False
         self.upload_loses_response = False
+        self.hide_upload_from_roster = False
+        self.hide_job_from_roster = False
         self.upload_rejects = False
         self.decision_loses_response = False
         self.continue_loses_response = False
         self.export_times_out_once = False
         self._export_timed_out = False
+        self.block_upload: asyncio.Event | None = None
+        self.upload_entered = asyncio.Event()
+        self.block_start: asyncio.Event | None = None
+        self.start_entered = asyncio.Event()
+        self.block_job_read: asyncio.Event | None = None
+        self.job_read_entered = asyncio.Event()
         self.job = self.processing_job()
 
     def processing_job(self) -> JobSnapshot:
@@ -133,6 +144,9 @@ class FakeSuperDocs:
     async def upload_docx(
         self, *, docx_bytes: bytes, filename: str, session_id: str, open_mode: str = "replace"
     ) -> IngestedDocument:
+        self.upload_entered.set()
+        if self.block_upload is not None:
+            await self.block_upload.wait()
         self.upload_calls += 1
         self.session_id = session_id
         self.job = self.processing_job()
@@ -158,7 +172,7 @@ class FakeSuperDocs:
     async def list_session_documents(
         self, session_id: str, *, include_html: bool = False
     ) -> tuple[SessionDocument, ...]:
-        if self.upload_calls == 0:
+        if self.upload_calls == 0 or self.hide_upload_from_roster:
             return ()
         return (
             SessionDocument(
@@ -187,6 +201,9 @@ class FakeSuperDocs:
         model_tier: str | None = None,
         thinking_depth: str | None = None,
     ) -> JobReference:
+        self.start_entered.set()
+        if self.block_start is not None:
+            await self.block_start.wait()
         self.start_calls += 1
         self.session_id = target.session_id
         self.job = self.processing_job()
@@ -197,10 +214,14 @@ class FakeSuperDocs:
 
     async def get_job(self, job_id: str) -> JobSnapshot:
         assert job_id == self.job_id
-        return self.job
+        observed = self.job
+        self.job_read_entered.set()
+        if self.block_job_read is not None:
+            await self.block_job_read.wait()
+        return observed
 
     async def recover_session_jobs(self, session_id: str) -> tuple[JobSnapshot, ...]:
-        if self.start_calls == 0:
+        if self.start_calls == 0 or self.hide_job_from_roster:
             return ()
         assert session_id == self.session_id
         return (self.job,)
@@ -337,6 +358,84 @@ def proposal(
     )
 
 
+class CorruptingArtifactStore(ArtifactStore):
+    def __init__(self) -> None:
+        self._stored: dict[str, bytes] = {}
+
+    async def put(self, reference: str, content: bytes, expected_sha256: str) -> None:
+        assert hashlib.sha256(content).hexdigest() == expected_sha256
+        self._stored[reference] = content
+
+    async def read(self, reference: str) -> bytes:
+        assert reference in self._stored
+        return b"tampered artifact bytes"
+
+
+async def test_in_flight_upload_and_job_start_are_not_retried_by_concurrent_resume(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    provider.block_upload = asyncio.Event()
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=InMemoryArtifactStore(),
+        owner_subject="owner-1",
+    )
+
+    first = asyncio.create_task(
+        service.start_run(
+            baseline=baseline(document_id), instruction="Change 45 days to 30 days only."
+        )
+    )
+    await asyncio.wait_for(provider.upload_entered.wait(), timeout=5)
+    async with sessions() as session:
+        run_id = await session.scalar(select(SyncRun.id))
+    assert run_id is not None
+
+    during_upload = await asyncio.wait_for(service.resume(run_id), timeout=5)
+    assert during_upload.state is SyncRunState.EDITING
+    assert provider.upload_calls == 0
+
+    provider.block_upload.set()
+    provider.block_start = asyncio.Event()
+    await asyncio.wait_for(provider.start_entered.wait(), timeout=5)
+    during_start = await asyncio.wait_for(service.resume(run_id), timeout=5)
+    assert during_start.provider_job_id is None
+    assert provider.start_calls == 0
+
+    provider.block_start.set()
+    completed_start = await asyncio.wait_for(first, timeout=5)
+    assert completed_start.provider_job_id == provider.job_id
+    assert provider.upload_calls == 1
+    assert provider.start_calls == 1
+
+
+async def test_baseline_artifact_is_rehashed_before_superdocs_upload(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=CorruptingArtifactStore(),
+        owner_subject="owner-1",
+    )
+
+    with pytest.raises(RecoveryBlocked, match="immutable identity"):
+        await service.start_run(
+            baseline=baseline(document_id), instruction="Change 45 days to 30 days only."
+        )
+
+    assert provider.upload_calls == 0
+    async with sessions() as session:
+        run = await session.scalar(select(SyncRun))
+    assert run is not None
+    assert run.failure_code == "SUPERDOCS_BASELINE_ARTIFACT_INTEGRITY_FAILED"
+
+
 async def test_lost_start_response_recovers_same_job_without_duplicate_paid_start(
     workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
@@ -403,6 +502,54 @@ async def test_lost_upload_response_recovers_fresh_session_without_second_upload
     assert recovered.provider_job_id == provider.job_id
     assert provider.upload_calls == 1
     assert provider.start_calls == 1
+
+
+@pytest.mark.parametrize("stage", ["upload", "job_start"])
+async def test_unknown_superdocs_effect_is_not_retried_when_recovery_state_is_absent(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    stage: str,
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    if stage == "upload":
+        provider.upload_loses_response = True
+        provider.hide_upload_from_roster = True
+    else:
+        provider.start_loses_response = True
+        provider.hide_job_from_roster = True
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=InMemoryArtifactStore(),
+        owner_subject="owner-1",
+    )
+
+    first = await service.start_run(
+        baseline=baseline(document_id), instruction=f"Bounded {stage} recovery test."
+    )
+    first_call_count = provider.upload_calls if stage == "upload" else provider.start_calls
+    assert first_call_count == 1
+
+    await service.resume(first.run_id)
+    await service.resume(first.run_id)
+
+    assert (provider.upload_calls if stage == "upload" else provider.start_calls) == 1
+    assert first.attention_code == f"SUPERDOCS_{stage.upper()}_OUTCOME_UNKNOWN"
+    async with sessions() as session:
+        effect = await session.scalar(
+            select(ExternalEffect).where(
+                ExternalEffect.sync_run_id == first.run_id,
+                ExternalEffect.effect_type
+                == (
+                    EffectType.SUPERDOCS_UPLOAD
+                    if stage == "upload"
+                    else EffectType.SUPERDOCS_JOB_START
+                ),
+            )
+        )
+    assert effect is not None
+    assert effect.outcome is EffectOutcome.UNKNOWN
+    assert effect.reconciliation_evidence["absence_treated_as_definitive_non_occurrence"] is False
 
 
 async def test_definitive_upload_rejection_is_not_retried_without_explicit_override(
@@ -667,6 +814,68 @@ async def test_lost_stop_response_reconciles_explicit_continue_prompt_decision(
     assert round_row is not None
     assert round_row.resolution is ReviewRoundResolution.STOP
     assert round_row.resolved_by_subject == "reviewer-1"
+
+
+async def test_conflicting_continue_choice_cannot_replace_unknown_persisted_choice(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    provider.continue_loses_response = True
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=InMemoryArtifactStore(),
+        owner_subject="owner-1",
+    )
+    started = await service.start_run(
+        baseline=baseline(document_id), instruction="Make one bounded edit."
+    )
+    provider.job = provider.review_job(awaiting_kind="continue_prompt")
+    await service.resume(started.run_id)
+    await service.submit_continue(
+        started.run_id, should_continue=False, reviewer_subject="reviewer-1"
+    )
+
+    with pytest.raises(ReviewOperationInvalid, match="immutable persisted choice"):
+        await service.submit_continue(
+            started.run_id, should_continue=True, reviewer_subject="reviewer-2"
+        )
+
+    assert provider.continue_calls == [False]
+
+
+async def test_stale_concurrent_poll_cannot_regress_completed_job(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    artifacts = InMemoryArtifactStore()
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=artifacts,
+        owner_subject="owner-1",
+    )
+    started = await service.start_run(
+        baseline=baseline(document_id), instruction="Change 45 days to 30 days only."
+    )
+    provider.block_job_read = asyncio.Event()
+    stale_poll = asyncio.create_task(service.resume(started.run_id))
+    await provider.job_read_entered.wait()
+
+    completed_snapshot = provider.completed_job()
+    await service._update_job(started.run_id, completed_snapshot)
+    provider.job = completed_snapshot
+    provider.block_job_read.set()
+    recovered = await stale_poll
+
+    assert recovered.state is SyncRunState.REVIEWED_EXPORT_READY
+    async with sessions() as session:
+        job = await session.scalar(
+            select(SuperDocsJob).where(SuperDocsJob.sync_run_id == started.run_id)
+        )
+    assert job is not None and job.status is SuperDocsJobStatus.COMPLETED
 
 
 async def test_completed_job_recovery_refocuses_and_exports_without_second_edit_job(

@@ -68,6 +68,21 @@ def _source_metadata(*, drive_id: str | None = None) -> dict[str, Any]:
     return payload
 
 
+def _folder_metadata(
+    folder_id: str, *, parent: str | None = None, owned_by_me: bool = False
+) -> dict[str, Any]:
+    return {
+        "id": folder_id,
+        "name": f"Folder {folder_id}",
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [parent] if parent is not None else [],
+        "trashed": False,
+        "spaces": ["drive"],
+        "ownedByMe": owned_by_me,
+        "capabilities": {"canAddChildren": True},
+    }
+
+
 def _operation() -> GoogleDocsBatchUpdate:
     return GoogleDocsBatchUpdate(
         required_revision_id="revision-A",
@@ -172,6 +187,66 @@ async def test_picker_authorized_my_drive_source_can_use_unreadable_discoverable
         "/drive/v3/files/parent-a",
         "/v1/documents/source-a",
     ]
+
+
+async def test_watched_write_inspection_rechecks_entire_frozen_root_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/drive/v3/files/source-a":
+            return httpx.Response(
+                200,
+                json=_source_metadata() | {"parents": ["nested-a"]},
+            )
+        if request.url.path == "/drive/v3/files/nested-a":
+            return httpx.Response(
+                200,
+                json=_folder_metadata("nested-a", parent="outside-a"),
+            )
+        if request.url.path == "/drive/v3/files/root-a":
+            return httpx.Response(200, json=_folder_metadata("root-a", owned_by_me=True))
+        if request.url.path == "/v1/documents/source-a":
+            return httpx.Response(200, json=_document("source-a"))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        current = await GoogleWriteHTTPClient(
+            http=http, access_token=SecretStr("secret-token")
+        ).inspect_current(
+            file_id="source-a",
+            destination_parent_id="nested-a",
+            watched_root_id="root-a",
+            watched_ancestor_folder_ids=("root-a", "nested-a"),
+        )
+
+    assert current.identity.parent_ids == ("nested-a",)
+    assert current.safe_provider_metadata["watched_path_verified"] is False
+
+
+async def test_watched_commit_preflight_blocks_batch_after_path_move() -> None:
+    methods_and_paths: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        methods_and_paths.append((request.method, request.url.path))
+        if request.url.path == "/drive/v3/files/source-a":
+            return httpx.Response(200, json=_source_metadata() | {"parents": ["nested-a"]})
+        if request.url.path == "/drive/v3/files/root-a":
+            return httpx.Response(200, json=_folder_metadata("root-a", owned_by_me=True))
+        if request.url.path == "/drive/v3/files/nested-a":
+            return httpx.Response(200, json=_folder_metadata("nested-a", parent="outside-a"))
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        result = await GoogleWriteHTTPClient(
+            http=http, access_token=SecretStr("secret-token")
+        ).commit_guarded(
+            file_id="source-a",
+            operation=_operation(),
+            watched_root_id="root-a",
+            watched_ancestor_folder_ids=("root-a", "nested-a"),
+        )
+
+    assert result.classification is CommitClassification.DEFINITELY_NOT_APPLIED
+    assert result.safe_provider_evidence["batch_update_sent"] is False
+    assert all(method == "GET" for method, _ in methods_and_paths)
 
 
 @pytest.mark.parametrize(

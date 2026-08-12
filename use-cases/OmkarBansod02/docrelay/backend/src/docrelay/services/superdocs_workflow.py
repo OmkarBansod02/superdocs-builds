@@ -1,7 +1,7 @@
 import hashlib
 import json
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
@@ -56,6 +56,15 @@ from docrelay.persistence.models import (
     WritePlan,
 )
 from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
+
+SUPERDOCS_EFFECT_LEASE = timedelta(minutes=15)
+_TERMINAL_SUPERDOCS_JOB_STATUSES = frozenset(
+    {
+        SuperDocsJobStatus.COMPLETED,
+        SuperDocsJobStatus.FAILED,
+        SuperDocsJobStatus.CANCELLED,
+    }
+)
 
 
 class SuperDocsWorkflowError(RuntimeError):
@@ -571,6 +580,20 @@ class SuperDocsWorkflow:
         if limit < 1 or limit > 100:
             raise ValueError("worker claim limit must be between 1 and 100")
         async with self._sessions() as session:
+            unresolved_review_effect = (
+                select(ExternalEffect.id)
+                .where(
+                    ExternalEffect.sync_run_id == SyncRun.id,
+                    ExternalEffect.effect_type.in_(
+                        (
+                            EffectType.SUPERDOCS_REVIEW_SUBMISSION,
+                            EffectType.SUPERDOCS_CONTINUE,
+                        )
+                    ),
+                    ExternalEffect.outcome.in_((EffectOutcome.STARTED, EffectOutcome.UNKNOWN)),
+                )
+                .exists()
+            )
             rows = await session.scalars(
                 select(SyncRun.id)
                 .join(CloudDocument, CloudDocument.id == SyncRun.cloud_document_id)
@@ -587,11 +610,14 @@ class SuperDocsWorkflow:
                         )
                         | (
                             (SyncRun.state == SyncRunState.AWAITING_REVIEW)
-                            & SyncRun.failure_code.in_(
-                                (
-                                    "SUPERDOCS_REVIEW_SUBMISSION_OUTCOME_UNKNOWN",
-                                    "SUPERDOCS_CONTINUE_OUTCOME_UNKNOWN",
+                            & (
+                                SyncRun.failure_code.in_(
+                                    (
+                                        "SUPERDOCS_REVIEW_SUBMISSION_OUTCOME_UNKNOWN",
+                                        "SUPERDOCS_CONTINUE_OUTCOME_UNKNOWN",
+                                    )
                                 )
+                                | unresolved_review_effect
                             )
                         )
                     ),
@@ -735,7 +761,12 @@ class SuperDocsWorkflow:
                 session, run.id, f"review-round:{round_row.id}", for_update=True
             )
             assert stored_round is not None
-            self._succeed_effect(stored_effect)
+            if (
+                stored_round.resolution is not None
+                and stored_round.resolution is not ReviewRoundResolution.SUBMIT_CHANGES
+            ):
+                raise RecoveryBlocked("review round resolved with a contradictory decision")
+            self._complete_effect_success(stored_effect)
             stored_round.resolution = ReviewRoundResolution.SUBMIT_CHANGES
             stored_round.resolved_by_subject = reviewer_subject
             stored_round.resolved_at = datetime.now(UTC)
@@ -775,7 +806,18 @@ class SuperDocsWorkflow:
             )
             return_existing = False
             if effect.outcome in {EffectOutcome.STARTED, EffectOutcome.UNKNOWN}:
+                persisted_choice = effect.request_metadata.get("continue")
+                if persisted_choice is not should_continue:
+                    raise ReviewOperationInvalid(
+                        "submitted continue decision differs from the immutable persisted choice"
+                    )
                 return_existing = True
+            elif effect.attempt_count > 0:
+                persisted_choice = effect.request_metadata.get("continue")
+                if persisted_choice is not should_continue:
+                    raise ReviewOperationInvalid(
+                        "submitted continue decision differs from the immutable persisted choice"
+                    )
             if not return_existing:
                 effect.request_fingerprint = _hash_json(
                     {"job_id": job.provider_job_id, "continue": should_continue}
@@ -815,10 +857,13 @@ class SuperDocsWorkflow:
                 session, run.id, f"review-round:{round_row.id}", for_update=True
             )
             assert stored_round is not None
-            self._succeed_effect(stored_effect)
-            stored_round.resolution = (
+            resolution = (
                 ReviewRoundResolution.CONTINUE if should_continue else ReviewRoundResolution.STOP
             )
+            if stored_round.resolution is not None and stored_round.resolution is not resolution:
+                raise RecoveryBlocked("continue round resolved with a contradictory decision")
+            self._complete_effect_success(stored_effect)
+            stored_round.resolution = resolution
             stored_round.resolved_by_subject = reviewer_subject
             stored_round.resolved_at = datetime.now(UTC)
             stored_round.receipt_evidence = receipt.safe_evidence | {"status": receipt.status}
@@ -876,6 +921,21 @@ class SuperDocsWorkflow:
                     stored_effect = await self._effect_by_key(
                         session, run.id, "superdocs-upload", for_update=True
                     )
+                    existing = await session.scalar(
+                        select(SuperDocsDocument).where(
+                            SuperDocsDocument.superdocs_session_id == stored_session.id
+                        )
+                    )
+                    if existing is not None:
+                        if existing.session_document_id != recovered.identity.session_document_id:
+                            raise RecoveryBlocked(
+                                "concurrent upload recovery found a different session document"
+                            )
+                        self._complete_effect_success(stored_effect)
+                        run.failure_code = None
+                        run.failure_detail = None
+                        await session.commit()
+                        return existing
                     document = SuperDocsDocument(
                         superdocs_session_id=stored_session.id,
                         source_snapshot_id=stored_snapshot.id,
@@ -890,38 +950,62 @@ class SuperDocsWorkflow:
                         },
                     )
                     session.add(document)
-                    self._reconcile_effect_success(stored_effect)
+                    self._complete_effect_success(stored_effect)
                     run.failure_code = None
                     run.failure_detail = None
                     await session.commit()
                     return document
-            async with self._sessions() as session:
-                run = await self._owned_run(session, run_id, for_update=True)
-                stored_effect = await self._effect_by_key(
-                    session, run.id, "superdocs-upload", for_update=True
-                )
-                self._reconcile_effect_not_started(stored_effect)
-                await session.commit()
+            if effect.outcome is EffectOutcome.STARTED and not _effect_lease_expired(effect):
+                return None
+            await self._quarantine_unresolved_effect(
+                run_id,
+                effect_key="superdocs-upload",
+                attention_code="SUPERDOCS_UPLOAD_OUTCOME_UNKNOWN",
+            )
+            return None
 
+        async with self._sessions() as session:
+            run = await self._owned_run(session, run_id)
+            stored_session = await self._session_for_run(session, run.id)
+            stored_snapshot = await self._snapshot_for_run(session, run.id)
+            artifact_reference = stored_snapshot.artifact_reference
+            if artifact_reference is None:
+                raise RecoveryBlocked("baseline artifact identity is missing")
+            filename = f"docrelay-{run.id}.docx"
+            artifact_sha256 = stored_snapshot.exported_artifact_sha256
+            stored_session_id = stored_session.id
+            provider_session_id = stored_session.session_id
+            stored_snapshot_id = stored_snapshot.id
+        try:
+            docx_bytes = await self._artifacts.read(artifact_reference)
+        except ArtifactStoreError as exc:
+            await self._set_attention(run_id, "SUPERDOCS_BASELINE_ARTIFACT_UNAVAILABLE")
+            raise RecoveryBlocked("baseline artifact is unavailable") from exc
+        if hashlib.sha256(docx_bytes).hexdigest() != artifact_sha256:
+            await self._set_attention(run_id, "SUPERDOCS_BASELINE_ARTIFACT_INTEGRITY_FAILED")
+            raise RecoveryBlocked("baseline artifact failed immutable identity verification")
         async with self._sessions() as session:
             run = await self._owned_run(session, run_id, for_update=True)
             stored_effect = await self._effect_by_key(
                 session, run.id, "superdocs-upload", for_update=True
             )
-            stored_session = await self._session_for_run(session, run.id)
-            stored_snapshot = await self._snapshot_for_run(session, run.id)
+            if stored_effect.outcome is not EffectOutcome.NOT_STARTED:
+                return None
+            current_session = await self._session_for_run(session, run.id)
+            current_snapshot = await self._snapshot_for_run(session, run.id)
+            if (
+                current_session.id != stored_session_id
+                or current_snapshot.artifact_reference != artifact_reference
+                or current_snapshot.exported_artifact_sha256 != artifact_sha256
+            ):
+                raise RecoveryBlocked("baseline upload identity changed before effect claim")
             self._start_effect(stored_effect)
-            artifact_reference = stored_snapshot.artifact_reference
-            if artifact_reference is None:
-                raise RecoveryBlocked("baseline artifact identity is missing")
-            filename = f"docrelay-{run.id}.docx"
             await session.commit()
-        docx_bytes = await self._artifacts.read(artifact_reference)
         try:
             uploaded = await self._superdocs.upload_docx(
                 docx_bytes=docx_bytes,
                 filename=filename,
-                session_id=stored_session.session_id,
+                session_id=provider_session_id,
                 open_mode="replace",
             )
         except SuperDocsRequestError as exc:
@@ -943,21 +1027,32 @@ class SuperDocsWorkflow:
             stored_effect = await self._effect_by_key(
                 session, run.id, "superdocs-upload", for_update=True
             )
-            if uploaded.identity.session_id != stored_session.session_id:
+            if uploaded.identity.session_id != provider_session_id:
                 raise RecoveryBlocked("upload returned an unexpected session identity")
-            document = SuperDocsDocument(
-                superdocs_session_id=stored_session.id,
-                source_snapshot_id=stored_snapshot.id,
-                role=SuperDocsDocumentRole.TARGET,
-                session_document_id=uploaded.identity.session_document_id,
-                durable_document_id=uploaded.identity.durable_document_id,
-                upload_version_id=uploaded.upload_version_id,
-                baseline_html_sha256=uploaded.baseline_html_sha256,
-                baseline_evidence=uploaded.safe_evidence
-                | {"chunks_count": uploaded.chunks_count, "target_resolved": False},
+            document = await session.scalar(
+                select(SuperDocsDocument).where(
+                    SuperDocsDocument.superdocs_session_id == stored_session_id
+                )
             )
-            session.add(document)
-            self._succeed_effect(stored_effect)
+            if document is not None:
+                if document.session_document_id != uploaded.identity.session_document_id:
+                    raise RecoveryBlocked(
+                        "concurrent upload completion found a different session document"
+                    )
+            else:
+                document = SuperDocsDocument(
+                    superdocs_session_id=stored_session_id,
+                    source_snapshot_id=stored_snapshot_id,
+                    role=SuperDocsDocumentRole.TARGET,
+                    session_document_id=uploaded.identity.session_document_id,
+                    durable_document_id=uploaded.identity.durable_document_id,
+                    upload_version_id=uploaded.upload_version_id,
+                    baseline_html_sha256=uploaded.baseline_html_sha256,
+                    baseline_evidence=uploaded.safe_evidence
+                    | {"chunks_count": uploaded.chunks_count, "target_resolved": False},
+                )
+                session.add(document)
+            self._complete_effect_success(stored_effect)
             run.failure_code = None
             run.failure_detail = None
             await session.commit()
@@ -1000,7 +1095,7 @@ class SuperDocsWorkflow:
 
     async def _ensure_job_started(self, run_id: UUID) -> SuperDocsJob | None:
         async with self._sessions() as session:
-            run = await self._owned_run(session, run_id)
+            run = await self._owned_run(session, run_id, for_update=True)
             existing = await session.scalar(
                 select(SuperDocsJob).where(SuperDocsJob.sync_run_id == run.id)
             )
@@ -1044,13 +1139,14 @@ class SuperDocsWorkflow:
                 raise RecoveryBlocked("multiple jobs exist in a single-run SuperDocs session")
             if len(jobs) == 1:
                 return await self._persist_recovered_job(run_id, jobs[0])
-            async with self._sessions() as session:
-                run = await self._owned_run(session, run_id, for_update=True)
-                stored_effect = await self._effect_by_key(
-                    session, run.id, "superdocs-job-start", for_update=True
-                )
-                self._reconcile_effect_not_started(stored_effect)
-                await session.commit()
+            if effect.outcome is EffectOutcome.STARTED and not _effect_lease_expired(effect):
+                return None
+            await self._quarantine_unresolved_effect(
+                run_id,
+                effect_key="superdocs-job-start",
+                attention_code="SUPERDOCS_JOB_START_OUTCOME_UNKNOWN",
+            )
+            return None
 
         async with self._sessions() as session:
             run = await self._owned_run(session, run_id, for_update=True)
@@ -1064,6 +1160,8 @@ class SuperDocsWorkflow:
             effect = await self._effect_by_key(
                 session, run.id, "superdocs-job-start", for_update=True
             )
+            if effect.outcome is not EffectOutcome.NOT_STARTED:
+                return None
             instruction = run.rule_snapshot.get("instruction")
             if not isinstance(instruction, str) or not instruction:
                 raise RecoveryBlocked("persisted edit instruction is missing")
@@ -1109,6 +1207,25 @@ class SuperDocsWorkflow:
             effect = await self._effect_by_key(
                 session, run.id, "superdocs-job-start", for_update=True
             )
+            existing = await session.scalar(
+                select(SuperDocsJob).where(SuperDocsJob.sync_run_id == run.id)
+            )
+            if existing is not None:
+                if existing.provider_job_id != reference.job_id:
+                    run.failure_code = "SUPERDOCS_JOB_RECONCILIATION_AMBIGUOUS"
+                    run.failure_detail = {
+                        "persisted_job_id": existing.provider_job_id,
+                        "observed_job_id": reference.job_id,
+                    }
+                    await session.commit()
+                    raise RecoveryBlocked(
+                        "concurrent job completion found a different provider job"
+                    )
+                self._complete_effect_success(effect)
+                run.failure_code = None
+                run.failure_detail = None
+                await session.commit()
+                return existing
             job = SuperDocsJob(
                 sync_run_id=run.id,
                 superdocs_session_id=superdocs_session.id,
@@ -1121,10 +1238,7 @@ class SuperDocsWorkflow:
                 started_at=datetime.now(UTC),
             )
             session.add(job)
-            if effect.outcome is EffectOutcome.UNKNOWN:
-                self._reconcile_effect_success(effect)
-            else:
-                self._succeed_effect(effect)
+            self._complete_effect_success(effect)
             run.failure_code = None
             run.failure_detail = None
             await session.commit()
@@ -1140,7 +1254,7 @@ class SuperDocsWorkflow:
 
     async def _handle_job_snapshot(self, run_id: UUID, snapshot: JobSnapshot) -> None:
         job = await self._update_job(run_id, snapshot)
-        status = snapshot.reference.status
+        status = job.status
         if status in {SuperDocsJobStatus.PENDING, SuperDocsJobStatus.IN_PROGRESS}:
             await self._reconcile_resolved_review(run_id, snapshot)
             return
@@ -1220,6 +1334,13 @@ class SuperDocsWorkflow:
                 or snapshot.reference.session_id != superdocs_session.session_id
             ):
                 raise RecoveryBlocked("job observation did not match persisted identity")
+            if (
+                job.status in _TERMINAL_SUPERDOCS_JOB_STATUSES
+                and snapshot.reference.status is not job.status
+            ):
+                if snapshot.reference.status in _TERMINAL_SUPERDOCS_JOB_STATUSES:
+                    raise RecoveryBlocked("SuperDocs returned contradictory terminal job states")
+                return job
             job.status = snapshot.reference.status
             job.raw_state = {
                 "status": snapshot.reference.status.value,
@@ -1748,15 +1869,27 @@ class SuperDocsWorkflow:
         async with self._sessions() as session:
             run = await self._owned_run(session, run_id, for_update=True)
             effect = await self._effect_by_key(session, run.id, effect_key, for_update=True)
+            if effect.outcome is EffectOutcome.SUCCEEDED:
+                return
             if exc.outcome_unknown:
-                require_effect_transition(effect.outcome, EffectOutcome.UNKNOWN)
-                effect.outcome = EffectOutcome.UNKNOWN
+                if effect.outcome is EffectOutcome.STARTED:
+                    require_effect_transition(effect.outcome, EffectOutcome.UNKNOWN)
+                    effect.outcome = EffectOutcome.UNKNOWN
+                elif effect.outcome is not EffectOutcome.UNKNOWN:
+                    raise RecoveryBlocked("provider error did not match the effect checkpoint")
             else:
-                require_effect_transition(
-                    effect.outcome,
-                    EffectOutcome.NOT_STARTED,
-                    definitive_non_occurrence=True,
-                )
+                if effect.outcome is EffectOutcome.UNKNOWN:
+                    require_effect_transition(
+                        effect.outcome,
+                        EffectOutcome.NOT_STARTED,
+                        reconciliation_evidence=True,
+                    )
+                else:
+                    require_effect_transition(
+                        effect.outcome,
+                        EffectOutcome.NOT_STARTED,
+                        definitive_non_occurrence=True,
+                    )
                 effect.outcome = EffectOutcome.NOT_STARTED
             effect.last_error = {
                 "status_code": exc.status_code,
@@ -1766,6 +1899,36 @@ class SuperDocsWorkflow:
             }
             run.failure_code = attention_code
             run.failure_detail = {"effect_key": effect_key, "outcome": effect.outcome.value}
+            await session.commit()
+
+    async def _quarantine_unresolved_effect(
+        self,
+        run_id: UUID,
+        *,
+        effect_key: str,
+        attention_code: str,
+    ) -> None:
+        async with self._sessions() as session:
+            run = await self._owned_run(session, run_id, for_update=True)
+            effect = await self._effect_by_key(session, run.id, effect_key, for_update=True)
+            if effect.outcome is EffectOutcome.STARTED:
+                if not _effect_lease_expired(effect):
+                    return
+                require_effect_transition(effect.outcome, EffectOutcome.UNKNOWN)
+                effect.outcome = EffectOutcome.UNKNOWN
+            elif effect.outcome is not EffectOutcome.UNKNOWN:
+                return
+            effect.reconciliation_evidence = {
+                "same_session_external_state_found": False,
+                "absence_treated_as_definitive_non_occurrence": False,
+                "checked_at": datetime.now(UTC).isoformat(),
+            }
+            run.failure_code = attention_code
+            run.failure_detail = {
+                "effect_key": effect_key,
+                "outcome": EffectOutcome.UNKNOWN.value,
+                "automatic_retry_blocked": True,
+            }
             await session.commit()
 
     async def _set_attention(self, run_id: UUID, code: str) -> None:
@@ -1872,6 +2035,8 @@ class SuperDocsWorkflow:
         effect.outcome = EffectOutcome.STARTED
         effect.attempt_count += 1
         effect.started_at = datetime.now(UTC)
+        effect.resolved_at = None
+        effect.reconciliation_evidence = {}
         effect.last_error = None
 
     @staticmethod
@@ -1880,6 +2045,15 @@ class SuperDocsWorkflow:
         effect.outcome = EffectOutcome.SUCCEEDED
         effect.resolved_at = datetime.now(UTC)
         effect.last_error = None
+
+    @classmethod
+    def _complete_effect_success(cls, effect: ExternalEffect) -> None:
+        if effect.outcome is EffectOutcome.SUCCEEDED:
+            return
+        if effect.outcome is EffectOutcome.UNKNOWN:
+            cls._reconcile_effect_success(effect)
+            return
+        cls._succeed_effect(effect)
 
     @staticmethod
     def _reconcile_effect_success(effect: ExternalEffect) -> None:
@@ -1898,26 +2072,6 @@ class SuperDocsWorkflow:
         effect.reconciliation_evidence = {"same_session_external_state_found": True}
         effect.last_error = None
 
-    @staticmethod
-    def _reconcile_effect_not_started(effect: ExternalEffect) -> None:
-        if effect.outcome is EffectOutcome.UNKNOWN:
-            require_effect_transition(
-                effect.outcome,
-                EffectOutcome.NOT_STARTED,
-                reconciliation_evidence=True,
-            )
-        elif effect.outcome is EffectOutcome.STARTED:
-            require_effect_transition(
-                effect.outcome,
-                EffectOutcome.NOT_STARTED,
-                definitive_non_occurrence=True,
-            )
-        else:
-            raise RecoveryBlocked("effect was not awaiting reconciliation")
-        effect.outcome = EffectOutcome.NOT_STARTED
-        effect.reconciliation_evidence = {"same_session_external_state_absent": True}
-        effect.last_error = None
-
 
 def _target_identity(
     superdocs_session: SuperDocsSession, document: SuperDocsDocument
@@ -1927,6 +2081,16 @@ def _target_identity(
         session_document_id=document.session_document_id,
         durable_document_id=document.durable_document_id,
     )
+
+
+def _effect_lease_expired(effect: ExternalEffect) -> bool:
+    return effect.started_at is None or (
+        _as_utc(effect.started_at) + SUPERDOCS_EFFECT_LEASE <= datetime.now(UTC)
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
 
 
 def _job_start_fingerprint(

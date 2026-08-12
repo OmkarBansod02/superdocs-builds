@@ -57,12 +57,14 @@ from docrelay.persistence.models import (
     SuperDocsSession,
     SyncRun,
     VerificationResult,
+    WatchConfig,
     WatchedItem,
     WatchRunLink,
     WriteConflict,
     WritePlan,
     WritePlanLineage,
 )
+from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
 from docrelay.services.superdocs_workflow import RunNotFound
 
 EFFECT_LEASE = timedelta(minutes=15)
@@ -149,6 +151,8 @@ class _Context:
     plan: SealedWritePlan
     snapshot_id: UUID
     requires_exact_file_authorization: bool
+    watched_root_id: str | None
+    watched_ancestor_folder_ids: tuple[str, ...]
 
 
 class WriteBackService:
@@ -158,10 +162,12 @@ class WriteBackService:
         sessions: async_sessionmaker[AsyncSession],
         owner_subject: str,
         provider_factory: ProviderFactory,
+        artifacts: ArtifactStore | None = None,
     ) -> None:
         self._sessions = sessions
         self._owner_subject = owner_subject
         self._provider_factory = provider_factory
+        self._artifacts = artifacts
 
     async def execute(self, run_id: UUID) -> WriteBackView:
         claimed, existing = await self._claim(run_id)
@@ -358,6 +364,17 @@ class WriteBackService:
             value = self._provider_factory(session, connection_id)
             return await value if inspect.isawaitable(value) else value
 
+    @staticmethod
+    async def _inspect_current(
+        context: _Context, provider: GoogleWriteBackPort
+    ) -> CurrentGoogleDocument:
+        return await provider.inspect_current(
+            file_id=context.provider_file_id,
+            destination_parent_id=context.parent_id,
+            watched_root_id=context.watched_root_id,
+            watched_ancestor_folder_ids=context.watched_ancestor_folder_ids,
+        )
+
     async def _read_precheck(
         self,
         context: _Context,
@@ -366,10 +383,7 @@ class WriteBackService:
         stage: str,
     ) -> CurrentGoogleDocument | None:
         try:
-            current = await provider.inspect_current(
-                file_id=context.provider_file_id,
-                destination_parent_id=context.parent_id,
-            )
+            current = await self._inspect_current(context, provider)
         except GoogleIntegrationError as exc:
             await self._set_attention(
                 context.run_id,
@@ -385,6 +399,12 @@ class WriteBackService:
             raise ExactFileWriteAuthorizationRequired(
                 "Authorize this exact Google document with Picker before write-back"
             )
+        if (
+            context.requires_exact_file_authorization
+            and current.safe_provider_metadata.get("watched_path_verified") is not True
+        ):
+            await self._fail_watched_out_of_scope(context, stage=stage)
+            return None
         plan = context.plan.payload
         baseline_payload = await self._baseline_payload(context.snapshot_id)
         if current.revision_id != plan.source.baseline_revision_id:
@@ -395,12 +415,7 @@ class WriteBackService:
                 evidence={"reason": "provider_revision_changed"},
             )
             return None
-        identity_ok = (
-            current.identity.file_id == context.provider_file_id
-            and current.identity.mime_type == GOOGLE_DOC_MIME
-            and current.identity.parent_ids == plan.source.parent_ids
-            and current.identity.drive_id is None
-        )
+        identity_ok = _current_identity_matches(context, current)
         snapshot_ok = (
             current.native_raw_sha256 == plan.source.native_raw_sha256
             and current.canonical_sha256 == plan.source.native_canonical_sha256
@@ -577,29 +592,41 @@ class WriteBackService:
                 .with_for_update()
             )
             if existing is not None:
-                return await self._view(session, context)
-            effect = ExternalEffect(
-                sync_run_id=context.run_id,
-                effect_key=f"google-batch-update:{context.plan_row_id}",
-                effect_type=EffectType.GOOGLE_BATCH_UPDATE,
-                outcome=EffectOutcome.STARTED,
-                request_fingerprint=_hash_json(operation.provider_payload()),
-                request_metadata={
-                    "write_plan_sha256": context.plan.integrity_sha256,
-                    "required_revision_id": operation.required_revision_id,
-                    "request_count": len(operation.requests),
-                    "request_types": ["deleteContentRange", "insertText"],
-                },
-                attempt_count=1,
-                started_at=datetime.now(UTC),
-            )
-            session.add(effect)
+                if existing.outcome is not EffectOutcome.NOT_STARTED:
+                    return await self._view(session, context)
+                require_effect_transition(existing.outcome, EffectOutcome.STARTED)
+                existing.outcome = EffectOutcome.STARTED
+                existing.attempt_count += 1
+                existing.started_at = datetime.now(UTC)
+                existing.resolved_at = None
+                existing.reconciliation_evidence = {}
+                existing.last_error = None
+                effect = existing
+            else:
+                effect = ExternalEffect(
+                    sync_run_id=context.run_id,
+                    effect_key=f"google-batch-update:{context.plan_row_id}",
+                    effect_type=EffectType.GOOGLE_BATCH_UPDATE,
+                    outcome=EffectOutcome.STARTED,
+                    request_fingerprint=_hash_json(operation.provider_payload()),
+                    request_metadata={
+                        "write_plan_sha256": context.plan.integrity_sha256,
+                        "required_revision_id": operation.required_revision_id,
+                        "request_count": len(operation.requests),
+                        "request_types": ["deleteContentRange", "insertText"],
+                    },
+                    attempt_count=1,
+                    started_at=datetime.now(UTC),
+                )
+                session.add(effect)
             await session.commit()
             effect_key = effect.effect_key
         try:
             result = await provider.commit_guarded(
                 file_id=context.provider_file_id,
                 operation=operation,
+                watched_root_id=context.watched_root_id,
+                watched_ancestor_folder_ids=context.watched_ancestor_folder_ids,
             )
         except GoogleEffectOutcomeUnknown:
             await self._mark_effect_unknown(
@@ -608,6 +635,22 @@ class WriteBackService:
                 attention_code="GOOGLE_BATCH_UPDATE_OUTCOME_UNKNOWN",
             )
             return await self._reconcile_unknown_write(context, provider)
+        except GoogleIntegrationError as exc:
+            await self._resolve_effect_not_applied(
+                context.run_id,
+                effect_key,
+                {
+                    "provider_code": exc.code.value,
+                    "batch_update_sent": False,
+                    "stage": "BATCH_UPDATE_PREFLIGHT",
+                },
+            )
+            await self._set_attention(
+                context.run_id,
+                "GOOGLE_BATCH_UPDATE_PREFLIGHT_UNAVAILABLE",
+                {"provider_code": exc.code.value},
+            )
+            return await self.get_status(context.run_id)
 
         if result.classification is CommitClassification.CONFLICT:
             await self._resolve_effect_not_applied(
@@ -625,6 +668,9 @@ class WriteBackService:
             await self._resolve_effect_not_applied(
                 context.run_id, effect_key, result.safe_provider_evidence
             )
+            if result.safe_provider_evidence.get("watched_path_verified") is False:
+                await self._fail_watched_out_of_scope(context, stage="BATCH_UPDATE_PREFLIGHT")
+                return await self.get_status(context.run_id)
             await self._fail_run(
                 context.run_id,
                 "GOOGLE_BATCH_UPDATE_REJECTED",
@@ -657,10 +703,7 @@ class WriteBackService:
         self, context: _Context, provider: GoogleWriteBackPort
     ) -> WriteBackView:
         try:
-            current = await provider.inspect_current(
-                file_id=context.provider_file_id,
-                destination_parent_id=context.parent_id,
-            )
+            current = await self._inspect_current(context, provider)
         except GoogleIntegrationError as exc:
             await self._set_attention(
                 context.run_id,
@@ -668,6 +711,12 @@ class WriteBackService:
                 {"provider_code": exc.code.value},
             )
             return await self.get_status(context.run_id)
+
+        if (
+            context.requires_exact_file_authorization
+            and current.safe_provider_metadata.get("watched_path_verified") is not True
+        ):
+            await self._invalidate_watched_scope(context, stage="WRITE_RECONCILIATION")
 
         expected = context.plan.payload.expected_postimage
         source = context.plan.payload.source
@@ -741,10 +790,7 @@ class WriteBackService:
         self, context: _Context, provider: GoogleWriteBackPort
     ) -> WriteBackView:
         try:
-            current = await provider.inspect_current(
-                file_id=context.provider_file_id,
-                destination_parent_id=context.parent_id,
-            )
+            current = await self._inspect_current(context, provider)
         except GoogleIntegrationError as exc:
             await self._set_attention(
                 context.run_id,
@@ -762,11 +808,18 @@ class WriteBackService:
         replacement = context.plan.payload.expected_replacement
         operation = context.plan.payload.provider_operations[0]
         expected_payload = await self._expected_payload(context)
+        watched_path_matches = (
+            not context.requires_exact_file_authorization
+            or current.safe_provider_metadata.get("watched_path_verified") is True
+        )
+        if not watched_path_matches:
+            await self._invalidate_watched_scope(context, stage="POSTWRITE_VERIFICATION")
         intended_text = _text_at_operation_range(
             current.canonical_payload, operation, postimage=True
         )
         report: dict[str, JsonValue] = {
-            "identity_matches": current.identity.file_id == context.provider_file_id,
+            "identity_matches": _current_identity_matches(context, current),
+            "watched_root_path_matches": watched_path_matches,
             "revision_advanced": current.revision_id != source.baseline_revision_id,
             "schema_matches": current.canonical_schema_version == _payload_schema(expected_payload),
             "canonical_hash_matches": current.canonical_sha256 == expected.canonical_sha256,
@@ -891,6 +944,40 @@ class WriteBackService:
             )
         if len(plan.payload.source.parent_ids) != 1:
             raise WriteBackNotEligible("WritePlan does not have one proven backup destination")
+        watched_root_id: str | None = None
+        watched_ancestor_folder_ids: tuple[str, ...] = ()
+        if run.folder_rule_id is not None:
+            watched_row = (
+                await session.execute(
+                    select(WatchRunLink, WatchedItem, WatchConfig)
+                    .join(WatchedItem, WatchedItem.id == WatchRunLink.watched_item_id)
+                    .join(WatchConfig, WatchConfig.id == WatchRunLink.watch_config_id)
+                    .where(WatchRunLink.sync_run_id == run.id)
+                )
+            ).one_or_none()
+            if watched_row is None:
+                raise WriteBackNotEligible("watched WritePlan has no immutable scope lineage")
+            watch_link, watched_item, watch = watched_row._tuple()
+            raw_root = run.rule_snapshot.get("root_folder_id")
+            raw_ancestors = run.rule_snapshot.get("document_ancestor_folder_ids")
+            if not isinstance(raw_root, str) or not raw_root or not isinstance(raw_ancestors, list):
+                raise WriteBackNotEligible("watched WritePlan scope snapshot is incomplete")
+            if not all(isinstance(value, str) and value for value in raw_ancestors):
+                raise WriteBackNotEligible("watched WritePlan folder path is malformed")
+            watched_root_id = raw_root
+            watched_ancestor_folder_ids = tuple(cast(list[str], raw_ancestors))
+            if (
+                not watched_ancestor_folder_ids
+                or watched_ancestor_folder_ids[0] != watched_root_id
+                or watched_ancestor_folder_ids[-1] != plan.payload.source.parent_ids[0]
+                or watch.parent_folder_id != watched_root_id
+                or watched_item.watch_config_id != watch.id
+                or watched_item.provider_file_id != document.provider_file_id
+                or watch_link.rule_snapshot != run.rule_snapshot
+                or watch_link.folder_rule_id != run.folder_rule_id
+                or watch_link.folder_rule_version != run.folder_rule_version
+            ):
+                raise WriteBackNotEligible("watched WritePlan scope lineage is inconsistent")
         return _Context(
             run_id=run.id,
             connection_id=connection.id,
@@ -901,6 +988,8 @@ class WriteBackService:
             plan=plan,
             snapshot_id=snapshot.id,
             requires_exact_file_authorization=run.folder_rule_id is not None,
+            watched_root_id=watched_root_id,
+            watched_ancestor_folder_ids=watched_ancestor_folder_ids,
         )
 
     async def _require_exact_file_authorization(
@@ -954,6 +1043,44 @@ class WriteBackService:
                 run.failure_code = ExactFileWriteAuthorizationRequired.code
                 run.failure_detail = {"provider_is_app_authorized": False}
             await session.commit()
+
+    async def _invalidate_watched_scope(self, context: _Context, *, stage: str) -> None:
+        if not context.requires_exact_file_authorization:
+            return
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    select(WatchRunLink, WatchedItem)
+                    .join(WatchedItem, WatchedItem.id == WatchRunLink.watched_item_id)
+                    .where(WatchRunLink.sync_run_id == context.run_id)
+                    .with_for_update()
+                )
+            ).one_or_none()
+            if row is None:
+                return
+            link, item = row._tuple()
+            now = datetime.now(UTC)
+            item.current_in_scope = False
+            item.write_authorization_state = WriteAuthorizationState.REQUIRED
+            item.write_authorization_checked_at = now
+            link.write_authorization_state = WriteAuthorizationState.REQUIRED
+            link.write_authorization_checked_at = now
+            link.write_authorization_evidence = {
+                "is_app_authorized": False,
+                "watched_path_verified": False,
+                "verified_via": "phase6.live-root-path-recheck",
+                "stage": stage,
+                "read_scope_is_not_write_authority": True,
+            }
+            await session.commit()
+
+    async def _fail_watched_out_of_scope(self, context: _Context, *, stage: str) -> None:
+        await self._invalidate_watched_scope(context, stage=stage)
+        await self._fail_run(
+            context.run_id,
+            WatchedFileOutOfScope.code,
+            {"stage": stage, "watched_path_verified": False},
+        )
 
     def _validate_eligibility(
         self,
@@ -1037,6 +1164,8 @@ class WriteBackService:
             proposal = await session.get(ProposedChange, stored.proposed_change_id)
             decision = await session.get(ReviewDecision, stored.review_decision_id)
             export = await session.get(SuperDocsExport, sealed.superdocs_export_id)
+            if export is not None:
+                await self._require_export_artifact(export)
             review_round = (
                 await session.get(ReviewRound, proposal.review_round_id)
                 if proposal is not None
@@ -1132,6 +1261,21 @@ class WriteBackService:
                 "WritePlan expected postimage does not derive from the persisted baseline"
             )
 
+    async def _require_export_artifact(self, export: SuperDocsExport) -> None:
+        if self._artifacts is None:
+            return
+        try:
+            content = await self._artifacts.read(export.artifact_reference)
+        except ArtifactStoreError as exc:
+            raise WriteBackNotEligible("reviewed export artifact is unavailable") from exc
+        if (
+            len(content) != export.size_bytes
+            or hashlib.sha256(content).hexdigest() != export.sha256
+        ):
+            raise WriteBackNotEligible(
+                "reviewed export artifact failed immutable identity verification"
+            )
+
     async def _effect_state(
         self,
         session: AsyncSession,
@@ -1190,6 +1334,7 @@ class WriteBackService:
         elif run.failure_code in {
             "GOOGLE_PREWRITE_CHECK_UNAVAILABLE",
             "GOOGLE_BACKUP_VERIFICATION_UNAVAILABLE",
+            "GOOGLE_BATCH_UPDATE_PREFLIGHT_UNAVAILABLE",
             "GOOGLE_POSTWRITE_READ_UNAVAILABLE",
             "GOOGLE_WRITE_RECONCILIATION_UNAVAILABLE",
         }:
@@ -1289,10 +1434,7 @@ class WriteBackService:
         self, context: _Context, provider: GoogleWriteBackPort
     ) -> str | None:
         try:
-            current = await provider.inspect_current(
-                file_id=context.provider_file_id,
-                destination_parent_id=context.parent_id,
-            )
+            current = await self._inspect_current(context, provider)
         except GoogleIntegrationError:
             return None
         return current.revision_id
@@ -1512,6 +1654,20 @@ def _canonical_equal(
         current.canonical_schema_version == schema
         and current.canonical_sha256 == sha256
         and current.canonical_payload == payload
+    )
+
+
+def _current_identity_matches(context: _Context, current: CurrentGoogleDocument) -> bool:
+    watched_path_matches = (
+        not context.requires_exact_file_authorization
+        or current.safe_provider_metadata.get("watched_path_verified") is True
+    )
+    return (
+        current.identity.file_id == context.provider_file_id
+        and current.identity.mime_type == GOOGLE_DOC_MIME
+        and current.identity.parent_ids == context.plan.payload.source.parent_ids
+        and current.identity.drive_id is None
+        and watched_path_matches
     )
 
 

@@ -160,9 +160,7 @@ def create_app(
         return response
 
     @app.exception_handler(SuperDocsWorkflowError)
-    async def handle_superdocs_workflow_error(
-        _: Request, exc: SuperDocsWorkflowError
-    ) -> Response:
+    async def handle_superdocs_workflow_error(_: Request, exc: SuperDocsWorkflowError) -> Response:
         if isinstance(exc, (RunNotFound, SourceNotFound)):
             status_code = 404
         elif isinstance(exc, SuperDocsNotConfigured):

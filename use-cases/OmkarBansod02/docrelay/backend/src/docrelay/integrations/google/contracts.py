@@ -136,7 +136,12 @@ class CanonicalRead(Protocol):
 
 class GoogleWriteBackPort(Protocol):
     async def inspect_current(
-        self, *, file_id: str, destination_parent_id: str
+        self,
+        *,
+        file_id: str,
+        destination_parent_id: str,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
     ) -> CurrentGoogleDocument: ...
 
     async def create_backup(
@@ -158,5 +163,10 @@ class GoogleWriteBackPort(Protocol):
     ) -> BackupVerification: ...
 
     async def commit_guarded(
-        self, *, file_id: str, operation: GoogleDocsBatchUpdate
+        self,
+        *,
+        file_id: str,
+        operation: GoogleDocsBatchUpdate,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
     ) -> GuardedCommitResult: ...

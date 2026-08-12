@@ -190,3 +190,11 @@ independent multi-document runs, and compact run history; memory-only Picker own
 and workflow safety semantics remain unchanged; frontend tests/type/lint/webpack build,
 targeted run/watch backend tests, and Playwright desktop/laptop/mobile visual QA passed;
 no commit created.
+
+2026-08-12 — Phase 10 checkpoint: CONDITIONAL PASS; hardened SuperDocs effect claims and
+UNKNOWN recovery against duplicate upload/paid starts and stale terminal polls, revalidated
+watched-root ancestry through the Google commit boundary, and rehashed baseline/reviewed
+artifacts before external effects. Critical focused tests passed (59), adjacent safety sweep
+passed (44), and planning/API tranche passed (35); Ruff lint, mypy, and diff checks passed.
+Remaining work is bounded live provider proof plus the documented trusted-deployment/auth
+boundary; final packaging/demo is GO with those production conditions explicit. No commit.

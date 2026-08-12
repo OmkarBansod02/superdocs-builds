@@ -45,6 +45,7 @@ from docrelay.persistence.models import (
     WritePlan,
     WritePlanLineage,
 )
+from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
 from docrelay.services.superdocs_workflow import RunNotFound
 
 
@@ -97,9 +98,11 @@ class WritePlanningService:
         *,
         sessions: async_sessionmaker[AsyncSession],
         owner_subject: str,
+        artifacts: ArtifactStore | None = None,
     ) -> None:
         self._sessions = sessions
         self._owner_subject = owner_subject
+        self._artifacts = artifacts
 
     async def dry_run(self, run_id: UUID, *, proposal_id: UUID | None = None) -> DryRunView:
         async with self._sessions() as session:
@@ -133,6 +136,7 @@ class WritePlanningService:
                     superdocs_document,
                     export,
                 ) = lineage
+                await self._require_export_artifact(export)
                 capture = await self._baseline_capture(session, snapshot)
                 superseded = (
                     await session.scalar(
@@ -276,6 +280,25 @@ class WritePlanningService:
             reason=None,
             candidate_count=1,
         )
+
+    async def _require_export_artifact(self, export: SuperDocsExport) -> None:
+        if self._artifacts is None:
+            return
+        try:
+            content = await self._artifacts.read(export.artifact_reference)
+        except ArtifactStoreError as exc:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "reviewed export artifact is unavailable",
+            ) from exc
+        if (
+            len(content) != export.size_bytes
+            or hashlib.sha256(content).hexdigest() != export.sha256
+        ):
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "reviewed export artifact failed immutable identity verification",
+            )
 
     async def _owned_run(
         self, session: AsyncSession, run_id: UUID

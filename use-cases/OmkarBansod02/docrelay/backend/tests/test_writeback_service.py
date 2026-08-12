@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -66,6 +67,7 @@ from docrelay.persistence.models import (
     WriteConflict,
     WritePlan,
 )
+from docrelay.services.artifacts import InMemoryArtifactStore
 from docrelay.services.write_planning import DryRunStatus, WritePlanningService
 from docrelay.services.writeback import (
     ConflictChoice,
@@ -77,6 +79,14 @@ from docrelay.services.writeback import (
 )
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
+
+
+class MutableArtifactStore(InMemoryArtifactStore):
+    corrupt_reads = False
+
+    async def read(self, reference: str) -> bytes:
+        content = await super().read(reference)
+        return b"tampered reviewed export" if self.corrupt_reads else content
 
 
 def _canonical(token: str, *, neighbor: str = "Unchanged neighbor.\n") -> dict[str, Any]:
@@ -196,14 +206,27 @@ class FakeGoogleWriteProvider:
         self.copy_calls = 0
         self.verify_calls = 0
         self.verify_error: GoogleIntegrationError | None = None
+        self.commit_error: GoogleIntegrationError | None = None
         self.commit_calls = 0
         self.operations: list[object] = []
         self.is_app_authorized = True
+        self.watched_path_verified = True
+        self.move_outside_before_commit = False
+        self.move_outside_after_commit = False
 
     async def inspect_current(
-        self, *, file_id: str, destination_parent_id: str
+        self,
+        *,
+        file_id: str,
+        destination_parent_id: str,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
     ) -> CurrentGoogleDocument:
         self.events.append("read")
+        if watched_root_id is not None:
+            assert watched_ancestor_folder_ids
+            assert watched_ancestor_folder_ids[0] == watched_root_id
+            assert watched_ancestor_folder_ids[-1] == destination_parent_id
         return CurrentGoogleDocument(
             identity=GoogleFileIdentity(
                 file_id=file_id,
@@ -226,6 +249,9 @@ class FakeGoogleWriteProvider:
             safe_provider_metadata={
                 "trashed": False,
                 "is_app_authorized": self.is_app_authorized,
+                "watched_path_verified": (
+                    self.watched_path_verified if watched_root_id is not None else None
+                ),
             },
         )
 
@@ -271,10 +297,33 @@ class FakeGoogleWriteProvider:
         assert expected_baseline_sha256 == sha256_json(self.baseline)
         return self.backup_verification
 
-    async def commit_guarded(self, *, file_id: str, operation: object) -> GuardedCommitResult:
+    async def commit_guarded(
+        self,
+        *,
+        file_id: str,
+        operation: object,
+        watched_root_id: str | None = None,
+        watched_ancestor_folder_ids: tuple[str, ...] = (),
+    ) -> GuardedCommitResult:
         self.events.append("batch-update")
         self.commit_calls += 1
         self.operations.append(operation)
+        if watched_root_id is not None:
+            assert watched_ancestor_folder_ids
+            assert watched_ancestor_folder_ids[0] == watched_root_id
+        if self.move_outside_before_commit:
+            self.watched_path_verified = False
+            return GuardedCommitResult(
+                classification=CommitClassification.DEFINITELY_NOT_APPLIED,
+                safe_provider_evidence={
+                    "watched_path_verified": False,
+                    "batch_update_sent": False,
+                },
+            )
+        if self.commit_error is not None:
+            error = self.commit_error
+            self.commit_error = None
+            raise error
         if self.commit_unknown:
             self.current = self.unknown_postimage or self.expected
             self.revision = self.unknown_revision
@@ -282,12 +331,18 @@ class FakeGoogleWriteProvider:
         if self.commit_result.classification is CommitClassification.SUCCEEDED:
             self.current = self.expected
             self.revision = self.commit_result.resulting_revision_id or "revision-B"
+            if self.move_outside_after_commit:
+                self.watched_path_verified = False
         return self.commit_result
 
 
 @asynccontextmanager
 async def _environment(
-    *, watched: bool = False, old_token: str = "45", new_token: str = "30"
+    *,
+    watched: bool = False,
+    old_token: str = "45",
+    new_token: str = "30",
+    tamper_export_after_plan: bool = False,
 ) -> AsyncIterator[
     tuple[
         async_sessionmaker[Any],
@@ -312,6 +367,10 @@ async def _environment(
     now = datetime.now(UTC)
     baseline = _canonical(old_token)
     baseline_hash = sha256_json(baseline)
+    export_content = b"PK\x03\x04reviewed write-back evidence"
+    export_sha256 = hashlib.sha256(export_content).hexdigest()
+    artifacts = MutableArtifactStore()
+    await artifacts.put("exports/run-a.docx", export_content, export_sha256)
 
     async with sessions() as session:
         connection = CloudConnection(
@@ -386,6 +445,14 @@ async def _environment(
             rule_snapshot={
                 "instruction": f"Change {old_token} days to {new_token} days.",
                 "instruction_sha256": "3" * 64,
+                **(
+                    {
+                        "root_folder_id": "parent-a",
+                        "document_ancestor_folder_ids": ["parent-a"],
+                    }
+                    if watched
+                    else {}
+                ),
             },
             mode=SyncMode.PREVIEW,
             state=SyncRunState.REVIEWED_EXPORT_READY,
@@ -558,8 +625,8 @@ async def _environment(
                 superdocs_document_id=sd_document.id,
                 superdocs_job_id=job.id,
                 artifact_reference="exports/run-a.docx",
-                sha256="a" * 64,
-                size_bytes=9000,
+                sha256=export_sha256,
+                size_bytes=len(export_content),
                 content_type=(
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 ),
@@ -572,9 +639,11 @@ async def _environment(
         run_id = run.id
         proposal_id = proposal.id
 
-    dry_run = await WritePlanningService(sessions=sessions, owner_subject="owner-a").dry_run(
-        run_id, proposal_id=proposal_id
-    )
+    dry_run = await WritePlanningService(
+        sessions=sessions,
+        owner_subject="owner-a",
+        artifacts=artifacts,
+    ).dry_run(run_id, proposal_id=proposal_id)
     assert dry_run.status is DryRunStatus.READY
     async with sessions() as session:
         from docrelay.persistence.models import WritePlan
@@ -585,10 +654,12 @@ async def _environment(
         assert sha256_json(expected) == plan.expected_postimage_sha256
 
     provider = FakeGoogleWriteProvider(baseline, expected)
+    artifacts.corrupt_reads = tamper_export_after_plan
     service = WriteBackService(
         sessions=sessions,
         owner_subject="owner-a",
         provider_factory=lambda _session, _connection_id: provider,
+        artifacts=artifacts,
     )
     try:
         yield sessions, service, provider, run_id, baseline, expected
@@ -609,6 +680,26 @@ async def test_stale_revision_before_backup_is_conflict_with_zero_mutations() ->
         assert provider.copy_calls == provider.commit_calls == 0
 
 
+async def test_definitive_commit_preflight_failure_reuses_checkpoint_without_second_backup() -> (
+    None
+):
+    async with _environment() as (_, service, provider, run_id, _, _):
+        provider.commit_error = GoogleIntegrationError(
+            GoogleErrorCode.UNAVAILABLE,
+            "preflight unavailable",
+            retryable=True,
+        )
+
+        first = await service.execute(run_id)
+        recovered = await service.execute(run_id)
+
+        assert first.status is WriteBackStatus.ATTENTION
+        assert first.attention_code == "GOOGLE_BATCH_UPDATE_PREFLIGHT_UNAVAILABLE"
+        assert recovered.status is WriteBackStatus.WRITE_VERIFIED
+        assert provider.copy_calls == 1
+        assert provider.commit_calls == 2
+
+
 async def test_non_ready_or_inconsistent_plan_never_reaches_provider() -> None:
     async with _environment() as (sessions, service, provider, run_id, _, _):
         async with sessions() as session:
@@ -618,6 +709,20 @@ async def test_non_ready_or_inconsistent_plan_never_reaches_provider() -> None:
             await session.commit()
 
         with pytest.raises(WriteBackNotEligible):
+            await service.execute(run_id)
+        assert provider.events == []
+
+
+async def test_reviewed_export_artifact_is_rehashed_again_before_external_effects() -> None:
+    async with _environment(tamper_export_after_plan=True) as (
+        _,
+        service,
+        provider,
+        run_id,
+        _,
+        _,
+    ):
+        with pytest.raises(WriteBackNotEligible, match="immutable identity"):
             await service.execute(run_id)
         assert provider.events == []
 
@@ -683,6 +788,58 @@ async def test_watched_run_requires_exact_file_authorization_then_reuses_phase6(
         result = await service.execute(run_id)
 
         assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert provider.copy_calls == provider.commit_calls == 1
+
+
+async def test_watched_root_path_is_rechecked_before_backup_and_after_write() -> None:
+    async with _environment(watched=True) as (sessions, service, provider, run_id, _, _):
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            assert link is not None
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            await session.commit()
+
+        provider.watched_path_verified = False
+        escaped_before_write = await service.execute(run_id)
+
+        assert escaped_before_write.status is WriteBackStatus.FAILED
+        assert escaped_before_write.attention_code == "WATCHED_FILE_OUT_OF_SCOPE"
+        assert provider.copy_calls == provider.commit_calls == 0
+
+    async with _environment(watched=True) as (sessions, service, provider, run_id, _, _):
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            assert link is not None
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            await session.commit()
+        provider.move_outside_before_commit = True
+
+        escaped_at_commit = await service.execute(run_id)
+
+        assert escaped_at_commit.status is WriteBackStatus.FAILED
+        assert escaped_at_commit.attention_code == "WATCHED_FILE_OUT_OF_SCOPE"
+        assert not escaped_at_commit.write_applied
+        assert provider.copy_calls == provider.commit_calls == 1
+
+    async with _environment(watched=True) as (sessions, service, provider, run_id, _, _):
+        async with sessions() as session:
+            link = await session.scalar(
+                select(WatchRunLink).where(WatchRunLink.sync_run_id == run_id)
+            )
+            assert link is not None
+            link.write_authorization_state = WriteAuthorizationState.AUTHORIZED
+            await session.commit()
+        provider.move_outside_after_commit = True
+
+        escaped_after_write = await service.execute(run_id)
+
+        assert escaped_after_write.status is WriteBackStatus.VERIFICATION_FAILED
+        assert escaped_after_write.write_applied
+        assert not escaped_after_write.structurally_verified
         assert provider.copy_calls == provider.commit_calls == 1
 
 

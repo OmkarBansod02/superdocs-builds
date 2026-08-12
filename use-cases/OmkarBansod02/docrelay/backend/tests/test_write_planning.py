@@ -1,3 +1,4 @@
+import hashlib
 from datetime import UTC, datetime
 
 from sqlalchemy import event, func, select
@@ -34,9 +35,16 @@ from docrelay.persistence.models import (
     SyncRun,
     WritePlan,
 )
+from docrelay.services.artifacts import InMemoryArtifactStore
 from docrelay.services.write_planning import DryRunStatus, WritePlanningService
 
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
+
+
+class CorruptingReadArtifactStore(InMemoryArtifactStore):
+    async def read(self, reference: str) -> bytes:
+        await super().read(reference)
+        return b"tampered reviewed export"
 
 
 def _canonical() -> dict[str, object]:
@@ -99,6 +107,10 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     canonical = _canonical()
     canonical_hash = sha256_json(canonical)
+    export_content = b"PK\x03\x04reviewed export identity"
+    export_sha256 = hashlib.sha256(export_content).hexdigest()
+    artifacts = InMemoryArtifactStore()
+    await artifacts.put("exports/run-a.docx", export_content, export_sha256)
 
     async with sessions() as session:
         connection = CloudConnection(
@@ -249,8 +261,8 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
                 superdocs_document_id=superdocs_document.id,
                 superdocs_job_id=job.id,
                 artifact_reference="exports/run-a.docx",
-                sha256="a" * 64,
-                size_bytes=9000,
+                sha256=export_sha256,
+                size_bytes=len(export_content),
                 content_type=(
                     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 ),
@@ -263,7 +275,11 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
         run_id = run.id
         proposal_id = proposal.id
 
-    service = WritePlanningService(sessions=sessions, owner_subject="owner-a")
+    service = WritePlanningService(
+        sessions=sessions,
+        owner_subject="owner-a",
+        artifacts=artifacts,
+    )
     first = await service.dry_run(run_id, proposal_id=proposal_id)
     second = await service.dry_run(run_id, proposal_id=proposal_id)
 
@@ -276,6 +292,16 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
     assert first.cloud_mutation_performed is False
     assert first.provider_operation is not None
     assert first.provider_operation["writeControl"] == {"requiredRevisionId": "revision-A"}
+
+    corrupt_artifacts = CorruptingReadArtifactStore()
+    await corrupt_artifacts.put("exports/run-a.docx", export_content, export_sha256)
+    corrupt = await WritePlanningService(
+        sessions=sessions,
+        owner_subject="owner-a",
+        artifacts=corrupt_artifacts,
+    ).dry_run(run_id, proposal_id=proposal_id)
+    assert corrupt.status is DryRunStatus.STALE
+    assert corrupt.reason is not None and "immutable identity" in corrupt.reason
 
     async with sessions() as session:
         proof_count = await session.scalar(select(func.count()).select_from(MappingProof))

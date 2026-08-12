@@ -511,6 +511,7 @@ class MachineOperations:
         return WritePlanningService(
             sessions=self.database.sessions,
             owner_subject=self.settings.docrelay_owner_subject,
+            artifacts=self.artifacts,
         )
 
     def write_service(self) -> WriteBackService:
@@ -535,6 +536,7 @@ class MachineOperations:
             sessions=self.database.sessions,
             owner_subject=self.settings.docrelay_owner_subject,
             provider_factory=provider_factory,
+            artifacts=self.artifacts,
         )
 
     async def get_run(self, run_id: UUID) -> RunView:
