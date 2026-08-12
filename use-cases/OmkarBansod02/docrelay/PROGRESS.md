@@ -51,6 +51,10 @@ Branch: `docrelay`
   durable Drive-version dedupe, existing Phase 3 workflow handoff, exact-file Phase 6
   authorization gates, machine APIs, migration, and deterministic safety regressions
   passed. The bounded live `drive.readonly` consent/provider proof remains manual.
+- Phase 9 — **PASS**. Existing watch scan/run links now provide deterministic
+  multi-document summaries; REST and a stateless Streamable HTTP MCP facade share one
+  application-service seam for scan, review, dry-run, exact-file authorization,
+  write-back, verification, and reviewed-DOCX export without batch approval/write.
 
 ## Proven assumptions
 
@@ -98,9 +102,10 @@ Branch: `docrelay`
 
 ## Next action
 
-Phase 9 implementation is GO. Production release of watch mode remains gated on the
-bounded live Google proof and restricted-scope compliance; do not infer Shared Drive,
-new-format, broader mapping, or automatic write support from Phase 8B.
+Post-Phase-9 module rename/refactor is GO but has not been performed. Production release
+of watch mode remains gated on the bounded live Google proof and restricted-scope
+compliance; do not infer Shared Drive, new-format, broader mapping, or automatic write
+support from Phase 8B/9.
 
 ## Checkpoint log
 
@@ -169,3 +174,11 @@ trailing-content preservation, guarded Phase 6 verification, and unrelated-diffe
 rejection passed. Live proof was not run because no configured Google/SuperDocs
 environment was available; the bounded manual procedure remains. Phase 9 remains GO;
 no commit created.
+
+2026-08-12 — Phase 9 checkpoint: PASS; scan/root group views derive independent run,
+review, authorization, dry-run, write, verification, conflict, timing, usage, and export
+state from existing durable records; REST and MCP use the same services; reviewed DOCX
+bytes are hash/size verified before download; explicit review and exact-file write gates
+remain mandatory; targeted backend validation passed; no frontend or schema change and
+no commit created. Internal module rename/refactor is GO; the Phase 8 live restricted-scope
+proof and production MCP/auth deployment configuration remain final-hardening work.

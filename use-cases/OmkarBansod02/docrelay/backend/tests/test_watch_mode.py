@@ -58,6 +58,11 @@ from docrelay.persistence.models import (
     WatchScanItem,
 )
 from docrelay.services.artifacts import InMemoryArtifactStore
+from docrelay.services.machine import (
+    MachineWriteBackStatus,
+    MultiDocumentQueryService,
+    ReviewStatus,
+)
 from docrelay.services.phase3 import Phase3Orchestrator
 from docrelay.services.watch import WatchClaimLost, WatchInvalidRoot, WatchService
 
@@ -592,6 +597,64 @@ async def test_recursive_paginated_scan_stays_in_root_reuses_phase3_and_dedupes(
             assert observation.outcome is WatchItemOutcome.OUT_OF_SCOPE
 
 
+async def test_scan_machine_view_groups_only_created_runs_and_keeps_siblings_independent() -> None:
+    async with _environment() as harness:
+        watch_id = await _configured_tree(harness)
+        harness.drive.add(_document_metadata("policy", parent="finance"))
+        rule = await harness.service.configure_rule(
+            watch_id,
+            folder_id="finance",
+            instruction='Replace "45 days" with "30 days".',
+            enabled=True,
+        )
+        first = await harness.service.trigger_manual(watch_id)
+        queries = MultiDocumentQueryService(sessions=harness.sessions, owner_subject="owner-watch")
+
+        first_view = await queries.get_scan(first.id)
+        repeated_read = await queries.get_scan(first.id)
+
+        assert first_view == repeated_read
+        assert {row.provider_file_id for row in first_view.items} == {"contract", "policy"}
+        assert len(first_view.runs) == 2
+        assert all(row.run_created_in_scan for row in first_view.items)
+        assert all(row.matched_rule_id == rule.id for row in first_view.items)
+        assert all(row.matched_rule_version == rule.version for row in first_view.items)
+        assert all(row.review_status is ReviewStatus.NOT_READY for row in first_view.runs)
+        assert all(
+            row.write_authorization_status is WriteAuthorizationState.REQUIRED
+            for row in first_view.runs
+        )
+        assert all(
+            row.write_back_status is MachineWriteBackStatus.NOT_READY for row in first_view.runs
+        )
+
+        conflicted_id = first_view.runs[0].run_id
+        sibling_id = first_view.runs[1].run_id
+        async with harness.sessions() as session:
+            conflicted = await session.get(SyncRun, conflicted_id)
+            sibling = await session.get(SyncRun, sibling_id)
+            assert conflicted is not None and sibling is not None
+            conflicted.state = SyncRunState.CONFLICT
+            conflicted.failure_code = "GOOGLE_SOURCE_REVISION_CONFLICT"
+            await session.commit()
+
+        independent = await queries.list_watch_runs(watch_id)
+        by_id = {row.run_id: row for row in independent}
+        assert by_id[conflicted_id].workflow_state is SyncRunState.CONFLICT
+        assert by_id[conflicted_id].last_error_code == "GOOGLE_SOURCE_REVISION_CONFLICT"
+        assert by_id[sibling_id].workflow_state is SyncRunState.EDITING
+        assert by_id[sibling_id].last_error_code is None
+
+        second = await harness.service.trigger_manual(watch_id)
+        second_view = await queries.get_scan(second.id)
+        assert second_view.runs == ()
+        assert all(row.outcome is WatchItemOutcome.UNCHANGED for row in second_view.items)
+        assert all(row.run_id is not None for row in second_view.items)
+        assert not any(row.run_created_in_scan for row in second_view.items)
+        async with harness.sessions() as session:
+            assert await session.scalar(select(func.count()).select_from(SyncRun)) == 2
+
+
 async def test_missing_rule_is_explicit_and_changed_versions_get_one_frozen_rule_each() -> None:
     async with _environment() as harness:
         watch_id = await _configured_tree(harness)
@@ -644,6 +707,10 @@ async def test_missing_rule_is_explicit_and_changed_versions_get_one_frozen_rule
 
         repeated = await harness.service.trigger_manual(watch_id)
         assert repeated.enqueued_count == 0
+        summaries = await MultiDocumentQueryService(
+            sessions=harness.sessions, owner_subject="owner-watch"
+        ).list_watch_runs(watch_id)
+        assert {row.provider_version for row in summaries} == {"1", "2"}
         async with harness.sessions() as session:
             assert await session.scalar(select(func.count()).select_from(SyncRun)) == 2
 

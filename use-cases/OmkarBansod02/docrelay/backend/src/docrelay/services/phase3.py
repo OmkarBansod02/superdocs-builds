@@ -55,7 +55,7 @@ from docrelay.persistence.models import (
     WriteConflict,
     WritePlan,
 )
-from docrelay.services.artifacts import ArtifactStore
+from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
 
 
 class Phase3Error(RuntimeError):
@@ -161,6 +161,11 @@ class ExportView(Phase3Contract):
     exported_at: datetime
 
 
+class ExportArtifactView(Phase3Contract):
+    metadata: ExportView
+    content: bytes = Field(exclude=True, min_length=1)
+
+
 class RunView(Phase3Contract):
     run_id: UUID
     source_id: UUID
@@ -192,7 +197,7 @@ class WriteBackRunSummary(Phase3Contract):
     conflict_decision: ConflictChoice | None
 
 
-async def _write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBackRunSummary | None:
+async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBackRunSummary | None:
     plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run.id))
     if plan is None:
         return None
@@ -497,7 +502,7 @@ class Phase3Orchestrator:
             export = await session.scalar(
                 select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
             )
-            write_back = await _write_back_summary(session, run)
+            write_back = await get_write_back_summary(session, run)
             watch_link = await session.scalar(
                 select(WatchRunLink).where(WatchRunLink.sync_run_id == run.id)
             )
@@ -539,6 +544,28 @@ class Phase3Orchestrator:
                 )
             ).all()
             return tuple([await self._proposal_view(session, row) for row in rows])
+
+    async def get_export_artifact(self, run_id: UUID) -> ExportArtifactView:
+        """Return the already-reviewed artifact after rechecking its durable identity."""
+        async with self._sessions() as session:
+            await self._owned_run(session, run_id)
+            export = await session.scalar(
+                select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run_id)
+            )
+            if export is None:
+                raise ExportNotReady("reviewed SuperDocs export is not ready")
+            metadata = _export_view(export)
+            assert metadata is not None
+        try:
+            content = await self._artifacts.read(metadata.artifact_reference)
+        except ArtifactStoreError as exc:
+            raise RecoveryBlocked("reviewed SuperDocs export artifact is unavailable") from exc
+        if (
+            len(content) != metadata.size_bytes
+            or hashlib.sha256(content).hexdigest() != metadata.sha256
+        ):
+            raise RecoveryBlocked("reviewed SuperDocs export artifact failed identity verification")
+        return ExportArtifactView(metadata=metadata, content=content)
 
     async def list_resumable_run_ids(self, *, limit: int = 20) -> tuple[UUID, ...]:
         if limit < 1 or limit > 100:

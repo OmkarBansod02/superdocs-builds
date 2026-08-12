@@ -710,6 +710,9 @@ async def test_completed_job_recovery_refocuses_and_exports_without_second_edit_
     assert await artifacts.read(completed.export.artifact_reference) == (
         b"PK\x03\x04reviewed document contains 30 days"
     )
+    machine_export = await restarted_process.get_export_artifact(started.run_id)
+    assert machine_export.metadata == completed.export
+    assert machine_export.content == b"PK\x03\x04reviewed document contains 30 days"
 
 
 async def test_provider_completion_cannot_bypass_an_explicit_proposal_decision(

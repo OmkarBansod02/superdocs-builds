@@ -2,25 +2,22 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Body, Request, status
+from fastapi import APIRouter, Body, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from docrelay.api.watch import watch_service
+from docrelay.api.dependencies import machine_operations
 from docrelay.core.config import Settings
 from docrelay.domain.enums import ConflictChoice, WriteAuthorizationState
-from docrelay.integrations.google.contracts import Phase6GooglePort
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import GoogleConnectionService
-from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
 from docrelay.persistence.database import Database
 from docrelay.persistence.models import (
     CloudConnection,
     CloudDocument,
     GoogleBaselineCapture,
 )
-from docrelay.services.artifacts import ArtifactStore
+from docrelay.services.machine import RunSummary
 from docrelay.services.phase3 import (
     DecisionInput,
     ExportNotReady,
@@ -33,8 +30,8 @@ from docrelay.services.phase3 import (
     SourceNotFound,
     SuperDocsNotConfigured,
 )
-from docrelay.services.phase4 import DryRunView, Phase4PlanningService
-from docrelay.services.phase6 import Phase6ExecutionService, WriteBackView
+from docrelay.services.phase4 import DryRunView
+from docrelay.services.phase6 import WriteBackView
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -103,43 +100,7 @@ class WriteAuthorizationResponse(RunAPIModel):
 
 
 def _orchestrator(request: Request) -> Phase3Orchestrator:
-    runtime: SuperDocsRuntime | None = request.app.state.superdocs_runtime
-    if runtime is None:
-        raise SuperDocsNotConfigured("SuperDocs is not configured on this server")
-    database: Database = request.app.state.database
-    artifacts: ArtifactStore = request.app.state.artifact_store
-    settings: Settings = request.app.state.settings
-    return Phase3Orchestrator(
-        sessions=database.sessions,
-        superdocs=runtime.client,
-        artifacts=artifacts,
-        owner_subject=settings.docrelay_owner_subject,
-    )
-
-
-def _phase6(request: Request) -> Phase6ExecutionService:
-    runtime: GoogleRuntime | None = request.app.state.google_runtime
-    if runtime is None or runtime.write_client_factory is None:
-        raise SuperDocsNotConfigured("Google write-back is not configured on this server")
-    database: Database = request.app.state.database
-    settings: Settings = request.app.state.settings
-
-    async def provider_factory(session: AsyncSession, connection_id: UUID) -> Phase6GooglePort:
-        google = GoogleConnectionService(
-            session=session,
-            runtime=runtime,
-            owner_subject=settings.docrelay_owner_subject,
-            state_ttl_seconds=settings.google_oauth_state_ttl_seconds,
-            refresh_skew_seconds=settings.google_access_token_refresh_skew_seconds,
-            baseline_max_attempts=settings.google_baseline_max_attempts,
-        )
-        return await google.write_client(connection_id)
-
-    return Phase6ExecutionService(
-        sessions=database.sessions,
-        owner_subject=settings.docrelay_owner_subject,
-        provider_factory=provider_factory,
-    )
+    return machine_operations(request).runs()
 
 
 @router.post("", response_model=RunView, status_code=status.HTTP_201_CREATED)
@@ -219,7 +180,12 @@ async def start_run(
 
 @router.get("/{run_id}", response_model=RunView)
 async def get_run(run_id: UUID, request: Request) -> RunView:
-    return await _orchestrator(request).get_run(run_id)
+    return await machine_operations(request).get_run(run_id)
+
+
+@router.get("/{run_id}/summary", response_model=RunSummary)
+async def get_run_summary(run_id: UUID, request: Request) -> RunSummary:
+    return await machine_operations(request).get_run_summary(run_id)
 
 
 @router.post("/{run_id}/resume", response_model=RunView)
@@ -228,15 +194,15 @@ async def resume_run(
     request: Request,
     payload: Annotated[ResumeRequest | None, Body()] = None,
 ) -> RunView:
-    return await _orchestrator(request).resume(
+    return await machine_operations(request).resume_run(
         run_id,
-        allow_definitive_retry=(payload.allow_definitive_retry if payload else False),
+        allow_definitive_retry=payload.allow_definitive_retry if payload else False,
     )
 
 
 @router.get("/{run_id}/proposals", response_model=ProposalsResponse)
 async def list_proposals(run_id: UUID, request: Request) -> ProposalsResponse:
-    proposals = await _orchestrator(request).list_proposals(run_id)
+    proposals = await machine_operations(request).list_proposals(run_id)
     return ProposalsResponse(run_id=run_id, proposals=proposals)
 
 
@@ -246,10 +212,9 @@ async def submit_decisions(
     request: Request,
     payload: Annotated[SubmitDecisionsRequest, Body()],
 ) -> RunView:
-    settings: Settings = request.app.state.settings
-    return await _orchestrator(request).submit_decisions(
+    return await machine_operations(request).submit_review_decisions(
         run_id,
-        decisions=tuple(
+        tuple(
             DecisionInput(
                 proposal_id=item.proposal_id,
                 approve=item.approve,
@@ -257,7 +222,6 @@ async def submit_decisions(
             )
             for item in payload.decisions
         ),
-        reviewer_subject=settings.docrelay_owner_subject,
     )
 
 
@@ -267,11 +231,9 @@ async def submit_continue(
     request: Request,
     payload: Annotated[ContinueRequest, Body()],
 ) -> RunView:
-    settings: Settings = request.app.state.settings
-    return await _orchestrator(request).submit_continue(
+    return await machine_operations(request).submit_continue(
         run_id,
         should_continue=payload.should_continue,
-        reviewer_subject=settings.docrelay_owner_subject,
     )
 
 
@@ -283,19 +245,26 @@ async def get_export(run_id: UUID, request: Request) -> ExportView:
     return view.export
 
 
+@router.get("/{run_id}/export/content")
+async def download_export(run_id: UUID, request: Request) -> Response:
+    artifact = await machine_operations(request).get_export(run_id)
+    return Response(
+        content=artifact.content,
+        media_type=artifact.metadata.content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="docrelay-reviewed-{run_id}.docx"',
+            "X-Content-SHA256": artifact.metadata.sha256,
+        },
+    )
+
+
 @router.post("/{run_id}/dry-run", response_model=DryRunView)
 async def create_dry_run(
     run_id: UUID,
     request: Request,
     payload: Annotated[DryRunRequest | None, Body()] = None,
 ) -> DryRunView:
-    database: Database = request.app.state.database
-    settings: Settings = request.app.state.settings
-    service = Phase4PlanningService(
-        sessions=database.sessions,
-        owner_subject=settings.docrelay_owner_subject,
-    )
-    return await service.dry_run(
+    return await machine_operations(request).create_dry_run(
         run_id,
         proposal_id=payload.proposal_id if payload else None,
     )
@@ -303,7 +272,7 @@ async def create_dry_run(
 
 @router.post("/{run_id}/write-back", response_model=WriteBackView)
 async def write_back(run_id: UUID, request: Request) -> WriteBackView:
-    return await _phase6(request).execute(run_id)
+    return await machine_operations(request).write_back(run_id)
 
 
 @router.post(
@@ -315,9 +284,8 @@ async def verify_write_authorization(
     request: Request,
     payload: Annotated[WriteAuthorizationRequest, Body()],
 ) -> WriteAuthorizationResponse:
-    link = await watch_service(request).verify_run_write_authorization(
-        run_id,
-        picker_file_id=payload.file_id,
+    link = await machine_operations(request).verify_write_authorization(
+        run_id, picker_file_id=payload.file_id
     )
     return WriteAuthorizationResponse(
         run_id=run_id,
@@ -332,4 +300,4 @@ async def decide_write_conflict(
     request: Request,
     payload: Annotated[ConflictDecisionRequest, Body()],
 ) -> WriteBackView:
-    return await _phase6(request).decide_conflict(run_id, payload.choice)
+    return await machine_operations(request).decide_write_conflict(run_id, choice=payload.choice)

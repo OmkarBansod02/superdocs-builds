@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from mcp.server.transport_security import TransportSecuritySettings
 
 from docrelay import __version__
 from docrelay.api.google import GoogleErrorBody, GoogleErrorResponse
@@ -23,8 +24,10 @@ from docrelay.integrations.superdocs.client import (
     SuperDocsRequestError,
 )
 from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
+from docrelay.mcp import create_mcp_server
 from docrelay.persistence.database import Database
 from docrelay.services.artifacts import ArtifactStore, FilesystemArtifactStore
+from docrelay.services.machine import MachineOperations
 from docrelay.services.phase3 import (
     ExportNotReady,
     IncompleteDecisionSet,
@@ -47,6 +50,7 @@ def create_app(
     google_runtime: GoogleRuntime | None = None,
     superdocs_runtime: SuperDocsRuntime | None = None,
     artifact_store: ArtifactStore | None = None,
+    machine_operations: MachineOperations | None = None,
 ) -> FastAPI:
     app_settings = settings or get_settings()
     app_database = database or Database(app_settings.database_url)
@@ -55,11 +59,30 @@ def create_app(
     app_artifact_store = artifact_store or FilesystemArtifactStore(
         app_settings.docrelay_artifact_dir
     )
+    app_machine_operations = machine_operations or MachineOperations(
+        settings=app_settings,
+        database=app_database,
+        artifacts=app_artifact_store,
+        google_runtime=app_google_runtime,
+        superdocs_runtime=app_superdocs_runtime,
+    )
+    mcp_server = create_mcp_server(app_machine_operations)
+    mcp_app = mcp_server.streamable_http_app(
+        streamable_http_path="/",
+        json_response=True,
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=app_settings.mcp_allowed_hosts,
+            allowed_origins=app_settings.mcp_allowed_origins,
+        ),
+    )
     configure_logging(app_settings.log_level)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        yield
+        async with mcp_server.session_manager.run():
+            yield
         if app_google_runtime is not None:
             await app_google_runtime.close()
         if app_superdocs_runtime is not None:
@@ -80,6 +103,7 @@ def create_app(
     app.state.google_runtime = app_google_runtime
     app.state.superdocs_runtime = app_superdocs_runtime
     app.state.artifact_store = app_artifact_store
+    app.state.machine_operations = app_machine_operations
     app.add_middleware(
         CORSMiddleware,
         allow_origins=app_settings.cors_origins,
@@ -92,6 +116,7 @@ def create_app(
     app.include_router(google_router)
     app.include_router(runs_router)
     app.include_router(watch_router)
+    app.mount("/mcp", mcp_app, name="mcp")
 
     @app.exception_handler(GoogleIntegrationError)
     async def handle_google_error(request: Request, exc: GoogleIntegrationError) -> Response:

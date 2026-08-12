@@ -46,6 +46,8 @@ async def test_phase3_machine_routes_exist_and_unconfigured_error_is_safe() -> N
         "/api/v1/runs/{run_id}/decisions",
         "/api/v1/runs/{run_id}/continue",
         "/api/v1/runs/{run_id}/export",
+        "/api/v1/runs/{run_id}/export/content",
+        "/api/v1/runs/{run_id}/summary",
     }
     assert expected_paths.issubset(openapi["paths"])
 
@@ -85,7 +87,10 @@ async def test_watch_machine_routes_are_exposed_without_a_demo_execution_path() 
         "/api/v1/watches/{watch_id}/rules",
         "/api/v1/watches/{watch_id}/scans",
         "/api/v1/watches/{watch_id}/scans/{scan_id}/items",
+        "/api/v1/watches/{watch_id}/scans/{scan_id}",
+        "/api/v1/watches/{watch_id}/scans/{scan_id}/runs",
         "/api/v1/watches/{watch_id}/items",
+        "/api/v1/watches/{watch_id}/runs",
         "/api/v1/runs/{run_id}/write-authorization",
     }
     assert expected_paths.issubset(openapi["paths"])

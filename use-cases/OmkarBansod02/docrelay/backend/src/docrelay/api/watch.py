@@ -5,17 +5,13 @@ from uuid import UUID
 from fastapi import APIRouter, Body, Request, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from docrelay.core.config import Settings
+from docrelay.api.dependencies import machine_operations
 from docrelay.domain.enums import (
     WatchItemOutcome,
     WatchScanStatus,
     WatchScanTrigger,
     WriteAuthorizationState,
 )
-from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
-from docrelay.integrations.google.runtime import GoogleRuntime
-from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
-from docrelay.persistence.database import Database
 from docrelay.persistence.models import (
     FolderRule,
     WatchConfig,
@@ -23,9 +19,8 @@ from docrelay.persistence.models import (
     WatchScan,
     WatchScanItem,
 )
-from docrelay.services.artifacts import ArtifactStore
-from docrelay.services.phase3 import Phase3Orchestrator, SuperDocsNotConfigured
-from docrelay.services.watch import WatchNotFound, WatchService, build_watch_service
+from docrelay.services.machine import RunSummary, ScanView
+from docrelay.services.watch import WatchNotFound, WatchService
 
 router = APIRouter(prefix="/api/v1/watches", tags=["watches"])
 
@@ -155,36 +150,12 @@ class WatchedItemsResponse(WatchAPIModel):
     items: tuple[WatchedItemResponse, ...]
 
 
+class RunSummariesResponse(WatchAPIModel):
+    runs: tuple[RunSummary, ...]
+
+
 def watch_service(request: Request) -> WatchService:
-    google_runtime: GoogleRuntime | None = request.app.state.google_runtime
-    if google_runtime is None:
-        raise GoogleIntegrationError(
-            GoogleErrorCode.OAUTH_NOT_CONFIGURED,
-            "Google OAuth is not configured on this server",
-        )
-    superdocs_runtime: SuperDocsRuntime | None = request.app.state.superdocs_runtime
-    if superdocs_runtime is None:
-        raise SuperDocsNotConfigured("SuperDocs is not configured on this server")
-    database: Database = request.app.state.database
-    artifacts: ArtifactStore = request.app.state.artifact_store
-    settings: Settings = request.app.state.settings
-    runs = Phase3Orchestrator(
-        sessions=database.sessions,
-        superdocs=superdocs_runtime.client,
-        artifacts=artifacts,
-        owner_subject=settings.docrelay_owner_subject,
-    )
-    return build_watch_service(
-        sessions=database.sessions,
-        owner_subject=settings.docrelay_owner_subject,
-        runtime=google_runtime,
-        runs=runs,
-        state_ttl_seconds=settings.google_oauth_state_ttl_seconds,
-        refresh_skew_seconds=settings.google_access_token_refresh_skew_seconds,
-        baseline_max_attempts=settings.google_baseline_max_attempts,
-        scan_lease_seconds=settings.watch_scan_lease_seconds,
-        max_items_per_scan=settings.watch_max_items_per_scan,
-    )
+    return machine_operations(request).watch()
 
 
 @router.post("", response_model=WatchRootResponse, status_code=status.HTTP_201_CREATED)
@@ -257,6 +228,24 @@ async def list_watch_scans(watch_id: UUID, request: Request) -> ScansResponse:
     return ScansResponse(scans=tuple(_scan_response(scan) for scan in scans))
 
 
+@router.get("/{watch_id}/scans/{scan_id}", response_model=ScanView)
+async def get_watch_scan(watch_id: UUID, scan_id: UUID, request: Request) -> ScanView:
+    view = await machine_operations(request).queries.get_scan(scan_id)
+    if view.watch_id != watch_id:
+        raise WatchNotFound("watch scan was not found under this root")
+    return view
+
+
+@router.get("/{watch_id}/scans/{scan_id}/runs", response_model=RunSummariesResponse)
+async def list_watch_scan_runs(
+    watch_id: UUID, scan_id: UUID, request: Request
+) -> RunSummariesResponse:
+    view = await machine_operations(request).queries.get_scan(scan_id)
+    if view.watch_id != watch_id:
+        raise WatchNotFound("watch scan was not found under this root")
+    return RunSummariesResponse(runs=view.runs)
+
+
 @router.get("/{watch_id}/scans/{scan_id}/items", response_model=ScanItemsResponse)
 async def list_watch_scan_items(
     watch_id: UUID, scan_id: UUID, request: Request
@@ -273,6 +262,12 @@ async def list_watch_scan_items(
 async def list_watched_items(watch_id: UUID, request: Request) -> WatchedItemsResponse:
     rows = await watch_service(request).list_items(watch_id)
     return WatchedItemsResponse(items=tuple(_item_response(row) for row in rows))
+
+
+@router.get("/{watch_id}/runs", response_model=RunSummariesResponse)
+async def list_watch_runs(watch_id: UUID, request: Request) -> RunSummariesResponse:
+    runs = await machine_operations(request).queries.list_watch_runs(watch_id)
+    return RunSummariesResponse(runs=runs)
 
 
 def _watch_response(watch: WatchConfig) -> WatchRootResponse:
