@@ -185,6 +185,20 @@ class MultiDocumentQueryService:
             run = await self._owned_run(session, run_id)
             return await self._summary(session, run)
 
+    async def list_runs(self) -> tuple[RunSummary, ...]:
+        """Return every owned run, newest first, without changing workflow state."""
+        async with self._sessions() as session:
+            runs = (
+                await session.scalars(
+                    select(SyncRun)
+                    .join(CloudDocument, CloudDocument.id == SyncRun.cloud_document_id)
+                    .join(CloudConnection, CloudConnection.id == CloudDocument.connection_id)
+                    .where(CloudConnection.owner_subject == self._owner_subject)
+                    .order_by(SyncRun.updated_at.desc(), SyncRun.id.desc())
+                )
+            ).all()
+            return tuple([await self._summary(session, run) for run in runs])
+
     async def list_watch_runs(self, watch_id: UUID) -> tuple[RunSummary, ...]:
         async with self._sessions() as session:
             await self._owned_watch(session, watch_id)
@@ -528,6 +542,12 @@ class MachineOperations:
 
     async def get_run_summary(self, run_id: UUID) -> RunSummary:
         return await self.queries.get_run_summary(run_id)
+
+    async def list_run_summaries(self) -> tuple[RunSummary, ...]:
+        # Keep the REST machine surface unavailable when its workflow runtime is
+        # not configured, matching the existing run endpoints.
+        self.runs()
+        return await self.queries.list_runs()
 
     async def resume_run(self, run_id: UUID, *, allow_definitive_retry: bool = False) -> RunView:
         return await self.runs().resume(run_id, allow_definitive_retry=allow_definitive_retry)

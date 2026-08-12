@@ -42,8 +42,8 @@ describe("Phase 6 write-back state", () => {
       path.resolve(import.meta.dirname, "../app/components/write-back-result.tsx"),
       "utf-8",
     );
-    expect(source).toContain("Document changed in Google Drive");
-    expect(source).toContain("DocRelay did not overwrite it.");
+    expect(source).toContain("Google Drive has a newer version");
+    expect(source).toContain("Nothing was silently overwritten.");
     expect(source.toLowerCase()).not.toContain("overwrite anyway");
   });
 });

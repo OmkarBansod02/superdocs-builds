@@ -71,6 +71,10 @@ class ProposalsResponse(RunAPIModel):
     proposals: tuple[ProposalView, ...]
 
 
+class RunSummariesResponse(RunAPIModel):
+    runs: tuple[RunSummary, ...]
+
+
 class DryRunRequest(RunAPIModel):
     proposal_id: UUID | None = None
 
@@ -176,6 +180,11 @@ async def start_run(
         model_tier=payload.model_tier,
         thinking_depth=payload.thinking_depth,
     )
+
+
+@router.get("", response_model=RunSummariesResponse)
+async def list_runs(request: Request) -> RunSummariesResponse:
+    return RunSummariesResponse(runs=await machine_operations(request).list_run_summaries())
 
 
 @router.get("/{run_id}", response_model=RunView)

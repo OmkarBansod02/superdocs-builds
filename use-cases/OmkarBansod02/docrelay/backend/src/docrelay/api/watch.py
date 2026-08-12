@@ -81,6 +81,7 @@ class RuleResponse(WatchAPIModel):
     rule_id: UUID
     watch_id: UUID
     folder_id: str
+    folder_name: str
     version: int
     instruction: str
     instruction_sha256: str
@@ -289,10 +290,16 @@ def _watch_response(watch: WatchConfig) -> WatchRootResponse:
 
 
 def _rule_response(rule: FolderRule) -> RuleResponse:
+    configured_name = rule.configuration.get("folder_name")
     return RuleResponse(
         rule_id=rule.id,
         watch_id=rule.watch_config_id,
         folder_id=rule.provider_folder_id,
+        folder_name=(
+            configured_name
+            if isinstance(configured_name, str) and configured_name.strip()
+            else rule.provider_folder_id
+        ),
         version=rule.version,
         instruction=rule.instruction,
         instruction_sha256=rule.instruction_sha256,

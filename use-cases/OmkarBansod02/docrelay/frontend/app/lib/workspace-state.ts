@@ -50,6 +50,7 @@ export type WorkspaceState =
       connection: GoogleConnection;
       source: SourceRegistration;
       run: RunView;
+      dryRun: DryRunView;
       result: WriteBackView;
       deciding: boolean;
     }

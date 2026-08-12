@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from docrelay.api.watch import _rule_response
 from docrelay.domain.enums import (
     ConnectionStatus,
     EffectType,
@@ -526,6 +527,7 @@ async def test_recursive_paginated_scan_stays_in_root_reuses_phase3_and_dedupes(
             instruction='Replace "45 days" with "30 days".',
             enabled=True,
         )
+        assert _rule_response(finance_rule).folder_name == "Folder finance"
 
         first = await harness.service.trigger_manual(watch_id)
 
@@ -612,10 +614,12 @@ async def test_scan_machine_view_groups_only_created_runs_and_keeps_siblings_ind
 
         first_view = await queries.get_scan(first.id)
         repeated_read = await queries.get_scan(first.id)
+        all_runs = await queries.list_runs()
 
         assert first_view == repeated_read
         assert {row.provider_file_id for row in first_view.items} == {"contract", "policy"}
         assert len(first_view.runs) == 2
+        assert {row.run_id for row in all_runs} == {row.run_id for row in first_view.runs}
         assert all(row.run_created_in_scan for row in first_view.items)
         assert all(row.matched_rule_id == rule.id for row in first_view.items)
         assert all(row.matched_rule_version == rule.version for row in first_view.items)

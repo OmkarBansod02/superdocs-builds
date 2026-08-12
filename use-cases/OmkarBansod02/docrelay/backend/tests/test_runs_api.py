@@ -24,6 +24,7 @@ async def test_phase3_machine_routes_exist_and_unconfigured_error_is_safe() -> N
     run_id = uuid4()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         responses = [
+            await client.get("/api/v1/runs"),
             await client.get(f"/api/v1/runs/{run_id}"),
             await client.post(f"/api/v1/runs/{run_id}/resume"),
             await client.get(f"/api/v1/runs/{run_id}/proposals"),

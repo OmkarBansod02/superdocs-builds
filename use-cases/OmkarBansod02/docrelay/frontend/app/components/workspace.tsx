@@ -24,8 +24,6 @@ import {
 import { canWriteBack } from "../lib/write-back-state";
 import type { WorkspaceState } from "../lib/workspace-state";
 
-import { TopBar } from "./top-bar";
-import { WorkflowRail } from "./workflow-rail";
 import { SourceChooser } from "./source-chooser";
 import { InstructionComposer } from "./instruction-composer";
 import { ProcessingState } from "./processing-state";
@@ -143,17 +141,10 @@ export function Workspace() {
 
   const handleSourceSelected = useCallback(
     (conn: GoogleConnection, source: SourceRegistration) => {
-      setWorkspaceState({ stage: "source-selected", connection: conn, source });
+      setWorkspaceState({ stage: "edit", connection: conn, source, submitting: false });
     },
     [setWorkspaceState],
   );
-
-  const handleStartEdit = useCallback(() => {
-    setWorkspaceState((s) => {
-      if (s.stage !== "source-selected") return s;
-      return { stage: "edit", connection: s.connection, source: s.source, submitting: false };
-    });
-  }, [setWorkspaceState]);
 
   const handleSubmitInstruction = useCallback(
     async (instruction: string) => {
@@ -239,7 +230,7 @@ export function Workspace() {
   const handleReturnFromUnsupported = useCallback(() => {
     setWorkspaceState((s) => {
       if (s.stage !== "unsupported") return s;
-      return { stage: "source-selected", connection: s.connection, source: s.source };
+      return { stage: "edit", connection: s.connection, source: s.source, submitting: false };
     });
   }, [setWorkspaceState]);
 
@@ -254,7 +245,7 @@ export function Workspace() {
     setWorkspaceState({ stage: "dry-run", connection: conn, source, run, dryRun, writing: true });
     try {
       const result = await writeBackSafely(run.run_id);
-      setWorkspaceState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun, result, deciding: false });
     } catch (err) {
       setWorkspaceState({
         stage: "error",
@@ -275,12 +266,14 @@ export function Workspace() {
     run: RunView,
     choice: ConflictChoice,
   ) => {
+    const current = stateRef.current;
+    if (current.stage !== "write-result") return;
     setWorkspaceState((current) => current.stage === "write-result"
       ? { ...current, deciding: true }
       : current);
     try {
       const result = await decideWriteConflict(run.run_id, choice);
-      setWorkspaceState({ stage: "write-result", connection: conn, source, run, result, deciding: false });
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun: current.dryRun, result, deciding: false });
     } catch (err) {
       setWorkspaceState({
         stage: "error",
@@ -293,57 +286,13 @@ export function Workspace() {
     }
   }, [setWorkspaceState]);
 
-  const currentStage = state.stage === "source-selected" ? "source" : state.stage;
-
   return (
-    <div className="flex flex-col h-screen">
-      <TopBar
-        connection={"connection" in state ? (state as { connection: GoogleConnection | null }).connection : null}
-        onChangeSource={state.stage !== "source" ? handleChangeSource : undefined}
-      />
-
-      <div className="flex flex-1 min-h-0">
-        <aside className="hidden md:block w-52 border-r border-border bg-surface flex-shrink-0 overflow-y-auto">
-          <WorkflowRail currentStage={currentStage} />
-          {currentStage !== "source" && currentStage !== "error" && "source" in state && (
-            <div className="px-3 pb-4 border-t border-border mt-2 pt-3">
-              <p className="text-[11px] text-muted font-medium uppercase tracking-wider mb-1">
-                Source
-              </p>
-              <p className="text-[12px] text-ink truncate">
-                {(state as { source: SourceRegistration }).source?.source.name ?? "—"}
-              </p>
-            </div>
-          )}
-        </aside>
-
-        <main className="flex-1 overflow-y-auto p-5 sm:p-8">
+    <div>
           {state.stage === "source" && (
             <SourceChooser
               onSourceSelected={handleSourceSelected}
               onConnectionChange={handleConnectionChange}
             />
-          )}
-
-          {state.stage === "source-selected" && (
-            <div className="max-w-md mx-auto py-12 text-center">
-              <h2 className="text-lg font-semibold text-ink mb-2">Document selected</h2>
-              <div className="mb-6">
-                <div className="bg-surface border border-border rounded-md p-4 text-left">
-                  <p className="text-sm font-medium text-ink">{state.source.source.name}</p>
-                  <p className="text-xs text-muted mt-1">Google Docs</p>
-                  <p className="text-xs text-muted font-mono mt-1">
-                    Revision {state.source.baseline.revision_id.slice(0, 8)}…
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleStartEdit}
-                className="px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors"
-              >
-                Continue to edit
-              </button>
-            </div>
           )}
 
           {state.stage === "edit" && (
@@ -387,6 +336,7 @@ export function Workspace() {
           {state.stage === "write-result" && (
             <WriteBackResult
               source={state.source}
+              dryRun={state.dryRun}
               result={state.result}
               deciding={state.deciding}
               onDecision={(choice) => handleConflictDecision(
@@ -395,6 +345,7 @@ export function Workspace() {
                 state.run,
                 choice,
               )}
+              onStartAnother={handleReset}
             />
           )}
 
@@ -413,8 +364,6 @@ export function Workspace() {
               onRetry={handleReset}
             />
           )}
-        </main>
-      </div>
     </div>
   );
 }

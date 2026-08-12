@@ -182,3 +182,11 @@ bytes are hash/size verified before download; explicit review and exact-file wri
 remain mandatory; targeted backend validation passed; no frontend or schema change and
 no commit created. Internal module rename/refactor is GO; the Phase 8 live restricted-scope
 proof and production MCP/auth deployment configuration remain final-hardening work.
+
+2026-08-12 — Production UI checkpoint: PASS; accepted quiet technical workbench shipped
+across central Drive selection, instruction, truthful proposal review, hero dry-run and
+verified-success proof, conflict/UNKNOWN/exact-file authorization, Watch rules and
+independent multi-document runs, and compact run history; memory-only Picker ownership
+and workflow safety semantics remain unchanged; frontend tests/type/lint/webpack build,
+targeted run/watch backend tests, and Playwright desktop/laptop/mobile visual QA passed;
+no commit created.

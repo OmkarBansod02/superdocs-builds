@@ -7,6 +7,7 @@ export interface GoogleConnection {
   provider: "GOOGLE";
   status: ConnectionStatus;
   granted_scopes: string[];
+  watch_authorized?: boolean;
   last_validated_at: string | null;
   disconnected_at: string | null;
 }
@@ -32,6 +33,120 @@ export interface SourceRegistration {
     docx_sha256: string;
     docx_size_bytes: number;
   };
+}
+
+export type WriteAuthorizationState = "REQUIRED" | "AUTHORIZED";
+export type MachineWriteBackStatus =
+  | "NOT_READY"
+  | "AWAITING_REVIEW"
+  | "WRITE_AUTHORIZATION_REQUIRED"
+  | "READY"
+  | "IN_PROGRESS"
+  | "WRITE_VERIFIED"
+  | "CONFLICT"
+  | "UNKNOWN"
+  | "ATTENTION"
+  | "VERIFICATION_FAILED"
+  | "FAILED"
+  | "CANCELLED"
+  | "REVIEW_LATEST";
+
+export interface ConflictSummary {
+  detection_stage: string;
+  baseline_revision_id: string;
+  latest_revision_id: string | null;
+  decision: ConflictChoice | null;
+}
+
+export interface RunSummary {
+  run_id: string;
+  watch_id: string | null;
+  originating_scan_id: string | null;
+  source_id: string;
+  provider_file_id: string;
+  document_name: string;
+  provider_version: string | null;
+  source_revision_id: string;
+  matched_rule_id: string | null;
+  matched_rule_version: number | null;
+  workflow_state: SyncRunState;
+  review_status: "NOT_READY" | "AWAITING_DECISIONS" | "AWAITING_CONTINUE" | "DECISIONS_SUBMITTED" | "REVIEWED" | "FAILED";
+  write_authorization_status: WriteAuthorizationState | null;
+  dry_run_status: "NOT_REQUESTED" | "READY";
+  write_back_status: MachineWriteBackStatus;
+  verification_status: "PASSED" | "FAILED" | null;
+  last_error_code: string | null;
+  conflict: ConflictSummary | null;
+  ready_for_dry_run: boolean;
+  ready_for_write_back: boolean;
+  export: ExportView | null;
+  started_at: string | null;
+  updated_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  external_effect_count: number;
+  external_effect_attempt_count: number;
+  external_effects_unknown: number;
+  superdocs_usage: Record<string, unknown>;
+}
+
+export interface WatchRoot {
+  watch_id: string;
+  connection_id: string;
+  root_folder_id: string;
+  root_name: string;
+  enabled: boolean;
+  schedule: string;
+  interval_seconds: number;
+  timezone: string;
+  last_scan_at: string | null;
+  last_successful_scan_at: string | null;
+  next_scan_at: string | null;
+  last_scan_status: "RUNNING" | "SUCCEEDED" | "FAILED" | null;
+  last_error_code: string | null;
+}
+
+export interface WatchRule {
+  rule_id: string;
+  watch_id: string;
+  folder_id: string;
+  folder_name: string;
+  version: number;
+  instruction: string;
+  instruction_sha256: string;
+  enabled: boolean;
+  precedence: "nearest_enabled_ancestor";
+}
+
+export interface WatchScan {
+  scan_id: string;
+  watch_id: string;
+  trigger: "SCHEDULED" | "MANUAL";
+  status: "RUNNING" | "SUCCEEDED" | "FAILED";
+  claim_generation: number;
+  started_at: string;
+  completed_at: string | null;
+  discovered_count: number;
+  changed_count: number;
+  unchanged_count: number;
+  enqueued_count: number;
+  skipped_count: number;
+  failed_count: number;
+  failure_code: string | null;
+}
+
+export interface WatchScanItem {
+  provider_file_id: string;
+  provider_version: string | null;
+  name: string;
+  mime_type: string;
+  ancestor_folder_ids: string[];
+  discovery_kind: string;
+  outcome: "ENQUEUED" | "UNCHANGED" | "NO_RULE" | "UNSUPPORTED" | "FAILED" | "OUT_OF_SCOPE";
+  reason_code: string | null;
+  matched_rule_id: string | null;
+  matched_rule_version: number | null;
+  run_id: string | null;
 }
 
 export type SyncRunState =
@@ -286,6 +401,18 @@ export function getRun(runId: string, signal?: AbortSignal): Promise<RunView> {
   return request<RunView>(`/api/v1/runs/${runId}`, { signal, cache: "no-store" });
 }
 
+export function listRuns(signal?: AbortSignal): Promise<{ runs: RunSummary[] }> {
+  return request<{ runs: RunSummary[] }>("/api/v1/runs", { signal, cache: "no-store" });
+}
+
+export function getRunSummary(runId: string, signal?: AbortSignal): Promise<RunSummary> {
+  return request<RunSummary>(`/api/v1/runs/${runId}/summary`, { signal, cache: "no-store" });
+}
+
+export function listProposals(runId: string, signal?: AbortSignal): Promise<{ run_id: string; proposals: ProposalView[] }> {
+  return request<{ run_id: string; proposals: ProposalView[] }>(`/api/v1/runs/${runId}/proposals`, { signal, cache: "no-store" });
+}
+
 export function resumeRun(runId: string): Promise<RunView> {
   return request<RunView>(`/api/v1/runs/${runId}/resume`, { method: "POST" });
 }
@@ -331,6 +458,79 @@ export function decideWriteConflict(
     method: "POST",
     body: JSON.stringify({ choice }),
   });
+}
+
+export function verifyWriteAuthorization(runId: string, fileId: string): Promise<{
+  run_id: string;
+  state: WriteAuthorizationState;
+  checked_at: string;
+  action: "AUTHORIZE_THIS_DOCUMENT_FOR_WRITE_BACK";
+}> {
+  return request(`/api/v1/runs/${runId}/write-authorization`, {
+    method: "POST",
+    body: JSON.stringify({ file_id: fileId }),
+  });
+}
+
+export function listWatches(signal?: AbortSignal): Promise<{ watches: WatchRoot[] }> {
+  return request<{ watches: WatchRoot[] }>("/api/v1/watches", { signal, cache: "no-store" });
+}
+
+export function configureWatch(payload: {
+  connection_id: string;
+  root_folder_id: string;
+  interval_seconds: number;
+  enabled: boolean;
+}): Promise<WatchRoot> {
+  return request<WatchRoot>("/api/v1/watches", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function updateWatchSchedule(
+  watchId: string,
+  payload: { enabled: boolean; interval_seconds: number },
+): Promise<WatchRoot> {
+  return request<WatchRoot>(`/api/v1/watches/${watchId}/schedule`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listWatchRules(watchId: string, signal?: AbortSignal): Promise<{ rules: WatchRule[] }> {
+  return request<{ rules: WatchRule[] }>(`/api/v1/watches/${watchId}/rules`, { signal, cache: "no-store" });
+}
+
+export function configureWatchRule(
+  watchId: string,
+  payload: { folder_id: string; instruction: string; enabled: boolean },
+): Promise<WatchRule> {
+  return request<WatchRule>(`/api/v1/watches/${watchId}/rules`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function listWatchScans(watchId: string, signal?: AbortSignal): Promise<{ scans: WatchScan[] }> {
+  return request<{ scans: WatchScan[] }>(`/api/v1/watches/${watchId}/scans`, { signal, cache: "no-store" });
+}
+
+export function triggerWatchScan(watchId: string): Promise<WatchScan> {
+  return request<WatchScan>(`/api/v1/watches/${watchId}/scans`, { method: "POST" });
+}
+
+export function listWatchScanItems(
+  watchId: string,
+  scanId: string,
+  signal?: AbortSignal,
+): Promise<{ items: WatchScanItem[] }> {
+  return request<{ items: WatchScanItem[] }>(`/api/v1/watches/${watchId}/scans/${scanId}/items`, { signal, cache: "no-store" });
+}
+
+export function listWatchScanRuns(
+  watchId: string,
+  scanId: string,
+  signal?: AbortSignal,
+): Promise<{ runs: RunSummary[] }> {
+  return request<{ runs: RunSummary[] }>(`/api/v1/watches/${watchId}/scans/${scanId}/runs`, { signal, cache: "no-store" });
 }
 
 export { ApiError };

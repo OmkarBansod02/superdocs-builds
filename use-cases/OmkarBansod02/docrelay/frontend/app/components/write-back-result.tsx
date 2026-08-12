@@ -1,136 +1,175 @@
-import { AlertTriangle, Check, ShieldCheck } from "lucide-react";
-import type { ConflictChoice, SourceRegistration, WriteBackView } from "../lib/api";
+import { ExternalLink } from "lucide-react";
+import type { ConflictChoice, DryRunView, SourceRegistration, WriteBackView } from "../lib/api";
 import { conflictActions, isVerifiedWriteSuccess } from "../lib/write-back-state";
-import { SourceSummary } from "./source-summary";
+import { DiffView } from "./diff-view";
+import { DocumentIdentity, type DocumentIdentityData, shortId } from "./document-identity";
+import { WorkflowProgress } from "./workflow-progress";
+import { Button, InlineNotice, StateMark } from "./ui";
 
 export function WriteBackResult({
   source,
+  document,
+  fileId,
+  change,
+  dryRun,
   result,
   deciding,
   onDecision,
+  onStartAnother,
 }: {
-  source: SourceRegistration;
+  source?: SourceRegistration;
+  document?: DocumentIdentityData;
+  fileId?: string | null;
+  change?: { oldText: string | null; newText: string | null };
+  dryRun?: DryRunView | null;
   result: WriteBackView;
   deciding: boolean;
   onDecision: (choice: ConflictChoice) => void;
+  onStartAnother?: () => void;
 }) {
+  const identity = document ?? (source ? { name: source.source.name, revision: source.baseline.revision_id } : { name: "Google document", revision: result.baseline_revision_id });
   if (isVerifiedWriteSuccess(result.status, result.structurally_verified)) {
-    return <VerifiedSuccess source={source} result={result} />;
+    return <VerifiedSuccess identity={identity} fileId={fileId ?? source?.source.provider_file_id ?? null} dryRun={dryRun} change={change} result={result} onStartAnother={onStartAnother} />;
   }
   if (result.status === "CONFLICT" && result.conflict) {
-    return (
-      <ConflictState
-        source={source}
-        deciding={deciding}
-        onDecision={onDecision}
-      />
-    );
+    return <ConflictState identity={identity} result={result} deciding={deciding} onDecision={onDecision} />;
   }
-  return <AttentionState source={source} result={result} />;
+  return <AttentionState identity={identity} result={result} />;
 }
 
-function VerifiedSuccess({
-  source,
-  result,
-}: {
-  source: SourceRegistration;
-  result: WriteBackView;
-}) {
+function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnother }: { identity: DocumentIdentityData; fileId: string | null; dryRun?: DryRunView | null; change?: { oldText: string | null; newText: string | null }; result: WriteBackView; onStartAnother?: () => void }) {
   const checks = [
-    "Backup created",
-    "Source revision verified",
-    "Exact planned change applied",
-    "Result structurally verified",
-  ];
+    result.backup_created ? "Versioned backup created" : null,
+    result.backup_verified ? "Backup verified" : null,
+    result.write_applied ? "Approved change applied" : null,
+    result.resulting_revision_id ? "Google revision advanced" : null,
+    result.structurally_verified ? "Resulting structure verified" : null,
+  ].filter((item): item is string => item !== null);
   return (
-    <div className="space-y-5">
-      <SourceSummary source={source} compact />
-      <div className="max-w-xl mx-auto rounded-lg border border-success/25 bg-success-soft p-7">
-        <ShieldCheck className="h-9 w-9 text-success mb-4" />
-        <h2 className="text-lg font-semibold text-ink">Written back safely</h2>
-        <div className="mt-5 space-y-2">
-          {checks.map((label) => (
-            <p key={label} className="flex items-center gap-2 text-sm text-ink/80">
-              <Check className="h-4 w-4 text-success" /> {label}
-            </p>
-          ))}
-        </div>
-        {result.resulting_revision_id && (
-          <p className="mt-5 text-xs text-muted font-mono">
-            Resulting revision {truncate(result.resulting_revision_id, 16)}
-          </p>
-        )}
+    <div>
+      <DocumentIdentity document={identity} />
+      <WorkflowProgress current="Write-back" />
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
+        <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
+          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Change written and verified</h2>
+          <p className="mt-2 text-[15px] text-muted">The approved change is now in Google Drive.</p>
+          <p className="mt-5 text-[17px] font-semibold text-success">Write-back verified</p>
+
+          {dryRun?.old_text || dryRun?.new_text || change?.oldText || change?.newText ? (
+            <div className="mt-9">
+              <h3 className="text-[18px] font-semibold text-ink">What changed</h3>
+              <div className="mt-5"><DiffView oldText={dryRun?.old_text ?? change?.oldText ?? null} newText={dryRun?.new_text ?? change?.newText ?? null} /></div>
+            </div>
+          ) : null}
+
+          <dl className="mt-7 divide-y divide-border border-y border-border text-[14px]">
+            <RevisionRow label="Previous revision" value={result.baseline_revision_id} />
+            <RevisionRow label="Resulting revision" value={result.resulting_revision_id} />
+          </dl>
+
+          <div className="mt-6 grid gap-3">
+            {fileId ? (
+              <a href={`https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 text-[14px] font-semibold text-white transition-colors hover:bg-accent-strong">
+                Open in Google Drive <ExternalLink className="size-4" aria-hidden="true" />
+              </a>
+            ) : null}
+            {onStartAnother ? <Button variant="secondary" onClick={onStartAnother}>Start another document</Button> : null}
+          </div>
+          <p className="mt-4 border-t border-border pt-4 text-[12px] text-muted">Run complete</p>
+        </section>
+
+        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
+          <h2 className="text-[19px] font-semibold text-ink">Verification record</h2>
+          <div className="mt-8">
+            {checks.map((label, index) => (
+              <div key={label} className="relative flex gap-3 pb-9 last:pb-0">
+                {index < checks.length - 1 ? <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" /> : null}
+                <StateMark state="complete" /><span className="text-[14px] text-ink">{label}</span>
+              </div>
+            ))}
+          </div>
+          {result.structurally_verified ? <p className="mt-7 border-t border-border pt-6 text-[14px] leading-6 text-ink">Unrelated content remained unchanged.</p> : null}
+        </aside>
       </div>
     </div>
   );
 }
 
-function ConflictState({
-  source,
-  deciding,
-  onDecision,
-}: {
-  source: SourceRegistration;
-  deciding: boolean;
-  onDecision: (choice: ConflictChoice) => void;
-}) {
+function ConflictState({ identity, result, deciding, onDecision }: { identity: DocumentIdentityData; result: WriteBackView; deciding: boolean; onDecision: (choice: ConflictChoice) => void }) {
+  const conflict = result.conflict!;
   return (
-    <div className="space-y-5">
-      <SourceSummary source={source} compact />
-      <div className="max-w-2xl mx-auto rounded-lg border border-warning/30 bg-warning-soft p-7">
-        <AlertTriangle className="h-9 w-9 text-warning mb-4" />
-        <h2 className="text-xl font-semibold text-ink">Document changed in Google Drive</h2>
-        <p className="mt-3 text-sm text-ink/75">
-          Someone changed this document after DocRelay prepared the write.
-        </p>
-        <p className="mt-1 text-sm font-medium text-ink">DocRelay did not overwrite it.</p>
-        <div className="mt-6 flex flex-wrap gap-3">
-          {conflictActions.map((action) => (
-            <button
-              key={action.choice}
-              disabled={deciding}
-              onClick={() => onDecision(action.choice)}
-              className="rounded border border-border bg-surface px-4 py-2 text-sm font-medium text-ink hover:bg-surface-muted disabled:opacity-50"
-            >
-              {action.label}
-            </button>
-          ))}
-        </div>
+    <div>
+      <DocumentIdentity document={identity} />
+      <WorkflowProgress current="Write-back" warning />
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+        <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
+          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Google Drive has a newer version</h2>
+          <p className="mt-2 text-[15px] text-muted">DocRelay stopped before applying the approved change.</p>
+          <div className="mt-5"><InlineNotice tone="warning"><strong>Nothing was silently overwritten.</strong></InlineNotice></div>
+
+          <h3 className="mt-9 text-[18px] font-semibold text-ink">What DocRelay found</h3>
+          <dl className="mt-4 max-w-[560px] divide-y divide-border border-y border-border text-[14px]">
+            <RevisionRow label="Prepared from" value={conflict.baseline_revision_id} />
+            <RevisionRow label="Latest in Drive" value={conflict.latest_revision_id} />
+          </dl>
+          <p className="mt-6 text-[14px] text-ink">The source changed after this write plan was prepared.</p>
+          <p className="mt-2 text-[12px] text-muted">Detected {humanDetectionStage(conflict.detection_stage)}</p>
+
+          <div className="mt-7 grid max-w-[650px] gap-3">
+            {[...conflictActions].reverse().map((action) => (
+              <Button key={action.choice} variant={action.choice === "REVIEW_LATEST" ? "primary" : "secondary"} busy={deciding} onClick={() => onDecision(action.choice)}>{action.label}</Button>
+            ))}
+          </div>
+          <p className="mt-7 border-t border-border pt-5 text-[13px] text-muted">The existing write plan remains stale and cannot be reused.</p>
+        </section>
+
+        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
+          <h2 className="text-[19px] font-semibold text-ink">Safe stop</h2>
+          <div className="mt-8">
+            {["Review preserved", "Revision mismatch detected", "Google write not applied"].map((label) => (
+              <div key={label} className="relative flex gap-3 pb-10">
+                <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" />
+                <StateMark state="complete" /><span className="text-[14px] text-ink">{label}</span>
+              </div>
+            ))}
+            <div className="flex gap-3"><StateMark /><span className="text-[14px] text-ink">New review required</span></div>
+          </div>
+        </aside>
       </div>
     </div>
   );
 }
 
-function AttentionState({
-  source,
-  result,
-}: {
-  source: SourceRegistration;
-  result: WriteBackView;
-}) {
+function AttentionState({ identity, result }: { identity: DocumentIdentityData; result: WriteBackView }) {
+  const unknown = result.status === "ATTENTION";
   const inProgress = result.status === "IN_PROGRESS";
-  const message = inProgress
-    ? "The server has already claimed this workflow. No second write was started."
-    : result.status === "CANCELLED"
-    ? "Write-back cancelled. No DocRelay change was applied."
-    : result.status === "REVIEW_LATEST"
-      ? "The old plan is stale. Refresh the source before preparing a new review."
-      : "Write-back needs attention. DocRelay will not retry an uncertain provider effect automatically.";
+  const title = unknown ? "External effect needs verification" : inProgress ? "Write-back in progress" : "Safe write-back stopped";
+  const message = unknown
+    ? "DocRelay cannot prove the external outcome yet. It will not start another write automatically."
+    : inProgress
+      ? "The server has already claimed this workflow. No second write was started."
+      : result.status === "CANCELLED"
+        ? "Write-back was cancelled. No DocRelay change was applied."
+        : result.status === "REVIEW_LATEST"
+          ? "The previous plan is stale. Review the latest Google version before preparing another write."
+          : "The safety pipeline stopped before a verified result was available.";
   return (
-    <div className="space-y-5">
-      <SourceSummary source={source} compact />
-      <div className="max-w-xl mx-auto rounded-lg border border-warning/30 bg-warning-soft p-7">
-        <AlertTriangle className="h-8 w-8 text-warning mb-3" />
-        <h2 className="text-lg font-semibold text-ink">
-          {inProgress ? "Write-back in progress" : "Safe write-back stopped"}
-        </h2>
-        <p className="mt-2 text-sm text-ink/75">{message}</p>
-      </div>
+    <div>
+      <DocumentIdentity document={identity} />
+      <WorkflowProgress current="Write-back" warning />
+      <section className="mx-auto max-w-[780px] px-5 py-14 sm:px-8 lg:py-20">
+        <h2 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">{title}</h2>
+        <div className="mt-6"><InlineNotice tone={unknown ? "info" : "warning"}>{message}</InlineNotice></div>
+        {result.attention_code ? <p className="mt-5 font-mono text-[11px] text-muted">{result.attention_code}</p> : null}
+      </section>
     </div>
   );
 }
 
-function truncate(value: string, length: number): string {
-  if (value.length <= length) return value;
-  return `${value.slice(0, 8)}…${value.slice(-7)}`;
+function RevisionRow({ label, value }: { label: string; value: string | null }) {
+  return <div className="grid grid-cols-[160px_1fr] gap-4 py-3"><dt className="text-muted">{label}</dt><dd className="font-mono text-[12px] text-ink">{value ? shortId(value) : "—"}</dd></div>;
+}
+
+function humanDetectionStage(stage: string): string {
+  return stage.replaceAll("_", " ").toLowerCase();
 }

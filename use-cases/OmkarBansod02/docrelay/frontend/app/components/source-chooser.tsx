@@ -1,10 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, FileText, Loader2 } from "lucide-react";
+import { Cloud, FileText, Loader2, Triangle } from "lucide-react";
 import type { GoogleConnection, SourceRegistration } from "../lib/api";
 import { getAuthorizeUrl, getConnections, registerSource } from "../lib/api";
 import { browserPickerTokenManager } from "../google-drive/picker-token";
+import { Button, InlineNotice, StateMark } from "./ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
@@ -175,64 +176,55 @@ export function SourceChooser({
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20 text-muted">
-        <Loader2 className="w-5 h-5 animate-spin mr-2" />
+      <div className="flex min-h-[calc(100dvh-156px)] items-center justify-center text-[14px] text-muted">
+        <Loader2 className="mr-2 size-5 animate-spin" />
         Checking connection…
       </div>
     );
   }
 
   return (
-    <div className="max-w-md mx-auto py-12">
-      <div className="text-center mb-8">
-        <div className="w-12 h-12 rounded-lg bg-accent-soft flex items-center justify-center mx-auto mb-4">
-          <FileText className="w-6 h-6 text-accent" />
+    <section className="flex min-h-[calc(100dvh-156px)] items-center justify-center px-5 py-14 sm:px-8">
+      <div className="w-full max-w-[720px] text-center">
+        <div className="mx-auto mb-7 grid size-12 place-items-center rounded-lg bg-accent-soft text-accent" aria-hidden="true">
+          <FileText className="size-6" strokeWidth={1.8} />
         </div>
-        <h2 className="text-lg font-semibold text-ink mb-1">Select a document</h2>
-        <p className="text-sm text-muted">
-          Choose a Google Doc to review and modify safely through SuperDocs.
+        <h1 className="text-[30px] font-semibold tracking-[-0.035em] text-ink sm:text-[36px]">Choose a Google Drive document</h1>
+        <p className="mx-auto mt-4 max-w-[610px] text-[15px] leading-7 text-muted sm:text-[16px]">
+          Connect a document, ask SuperDocs to prepare a change, review exactly what will change, then write it back safely.
         </p>
-      </div>
 
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-error-soft border border-error/20 rounded text-sm text-error">
-          {error}
-        </div>
-      )}
+        {error ? <div className="mx-auto mt-7 max-w-lg text-left"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
 
-      {!connection ? (
-        <div className="bg-surface border border-border rounded-md p-6 text-center">
-          <Cloud className="w-8 h-8 text-muted mx-auto mb-3" />
-          <p className="text-sm text-muted mb-4">Connect your Google Drive to get started.</p>
-          <button
-            onClick={handleConnect}
-            className="px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors"
-          >
-            Connect Google Drive
-          </button>
-        </div>
-      ) : (
-        <div className="bg-surface border border-border rounded-md p-6 text-center">
-          <div className="flex items-center justify-center gap-1.5 text-xs text-success mb-4">
-            <span className="w-1.5 h-1.5 rounded-full bg-success" />
-            Google Drive connected
-          </div>
-          <button
-            onClick={openPicker}
-            disabled={pickerBusy}
-            className="px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {pickerBusy ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Selecting…
-              </span>
+        <div className="relative mx-auto mt-10 max-w-[670px] border-x border-t border-border px-6 pb-2 pt-0 sm:px-10">
+          <div className="-translate-y-1/2 bg-background px-4">
+            {!connection ? (
+              <Button onClick={handleConnect} className="min-w-[220px]">
+                <Cloud className="size-4" aria-hidden="true" />
+                Connect Google Drive
+              </Button>
             ) : (
-              "Choose document"
+              <Button onClick={openPicker} busy={pickerBusy} className="min-w-[220px]">
+                <Triangle className="size-4 fill-current" aria-hidden="true" />
+                {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
+              </Button>
             )}
-          </button>
+          </div>
+          <p className="-mt-2 text-[13px] text-muted">Only Google Docs are supported.</p>
         </div>
-      )}
-    </div>
+
+        <ol className="mx-auto mt-14 flex max-w-[620px] items-start" aria-label="Safe write-back overview">
+          {["Select", "Propose", "Review", "Verify & write"].map((label, index, items) => (
+            <li key={label} className="flex flex-1 items-start last:flex-none">
+              <div className="flex flex-col items-center gap-3 text-[13px] text-muted">
+                <StateMark />
+                <span className="whitespace-nowrap">{label}</span>
+              </div>
+              {index < items.length - 1 ? <span className="mx-3 mt-2.5 h-px flex-1 bg-border sm:mx-5" aria-hidden="true" /> : null}
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
   );
 }

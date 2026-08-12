@@ -403,7 +403,7 @@ describe("PickerTokenManager — browser token lifecycle", () => {
 
   it("component source never calls revoke during normal Picker use", async () => {
     const fs = await import("fs");
-    const sources = ["../app/components/source-chooser.tsx", "../app/google-drive/google-drive-panel.tsx"]
+    const sources = ["../app/components/source-chooser.tsx", "../app/components/write-authorization.tsx", "../app/google-drive/google-drive-panel.tsx"]
       .map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8"));
     const codeOnly = sources.join("\n")
       .replace(/\/\/.*$/gm, "")
@@ -418,6 +418,7 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     const source = [
       "../app/google-drive/picker-token.ts",
       "../app/components/source-chooser.tsx",
+      "../app/components/write-authorization.tsx",
       "../app/google-drive/google-drive-panel.tsx",
     ].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8")).join("\n");
 
@@ -431,6 +432,7 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     const fs = await import("fs");
     const source = [
       "../app/components/source-chooser.tsx",
+      "../app/components/write-authorization.tsx",
       "../app/google-drive/google-drive-panel.tsx",
     ].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8")).join("\n");
     const codeOnly = source
@@ -441,5 +443,18 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     expect(codeOnly).toContain("getToken");
     expect(codeOnly).toContain("response.expires_in");
     expect(codeOnly).not.toMatch(/3600\s*\*\s*1000/);
+  });
+
+  it("exact-file authorization rejects a different Picker file and shares the session manager", async () => {
+    const fs = await import("fs");
+    const source = fs.readFileSync(
+      new URL("../app/components/write-authorization.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    expect(source).toContain("browserPickerTokenManager");
+    expect(source).toContain("pickedId !== providerFileId");
+    expect(source).toContain("verifyWriteAuthorization(runId, pickedId)");
+    expect(source).not.toContain("new PickerTokenManager");
   });
 });

@@ -1,126 +1,132 @@
 "use client";
 
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { ChevronDown } from "lucide-react";
+import { useState } from "react";
 import type { ProposalView, SourceRegistration } from "../lib/api";
-import { SourceSummary } from "./source-summary";
-import { ProposalDiff } from "./document-canvas";
-import { StatusBadge } from "./status-badge";
+import { DiffView, extractText } from "./diff-view";
+import { DocumentIdentity, type DocumentIdentityData } from "./document-identity";
+import { WorkflowProgress } from "./workflow-progress";
+import { Button, StateMark } from "./ui";
 
 export function ReviewPanel({
   source,
+  document,
   proposals,
   decisions,
   submitting,
   onDecide,
   onSubmitAll,
 }: {
-  source: SourceRegistration;
+  source?: SourceRegistration;
+  document?: DocumentIdentityData;
   proposals: ProposalView[];
   decisions: Map<string, { approve: boolean; feedback?: string }>;
   submitting: boolean;
   onDecide: (proposalId: string, approve: boolean) => void;
   onSubmitAll: () => void;
 }) {
-  const allDecided = proposals.every((p) => decisions.has(p.proposal_id) || p.decision !== null);
-  const hasAnyNew = proposals.some((p) => decisions.has(p.proposal_id));
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selected = proposals[Math.min(selectedIndex, Math.max(proposals.length - 1, 0))];
+  const allDecided = proposals.every((proposal) => decisions.has(proposal.proposal_id) || proposal.decision !== null);
+  const hasAnyNew = proposals.some((proposal) => decisions.has(proposal.proposal_id));
+  const identity = document ?? (source ? { name: source.source.name, revision: source.baseline.revision_id } : { name: "Google document", revision: null });
+
+  if (!selected) {
+    return (
+      <div>
+        <DocumentIdentity document={identity} />
+        <WorkflowProgress current="Review" />
+        <p className="px-5 py-12 text-[14px] text-muted sm:px-8 lg:px-10">No proposals are waiting for review.</p>
+      </div>
+    );
+  }
+
+  const existing = selected.decision;
+  const pending = decisions.get(selected.proposal_id);
+  const approved = pending?.approve ?? existing === "APPROVE";
 
   return (
-    <div className="space-y-5">
-      <SourceSummary source={source} compact />
+    <div>
+      <DocumentIdentity document={identity} />
+      <WorkflowProgress current="Review" />
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_270px]">
+        <section className="min-w-0 px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
+          <h2 className="text-[30px] font-semibold tracking-[-0.04em] text-ink sm:text-[34px]">Review proposed changes</h2>
+          <p className="mt-2 text-[14px] leading-6 text-muted sm:text-[15px]">Approve or reject every change before DocRelay prepares a write plan.</p>
 
-      <div className="bg-surface-muted rounded-lg p-6 sm:p-8">
-        <div className="max-w-2xl mx-auto space-y-4">
-          <div className="mb-6">
-            <h2 className="text-base font-semibold text-ink mb-1">Review proposals</h2>
-            <p className="text-sm text-muted">
-              Approve or reject each proposed change. All decisions must be explicit.
-            </p>
+          <div className="mt-7 grid overflow-hidden rounded-lg border border-border md:grid-cols-[210px_minmax(0,1fr)]">
+            <aside className="border-b border-border bg-surface md:border-b-0 md:border-r">
+              <div className="border-b border-border px-4 py-4 text-[13px] font-medium text-ink">{proposals.length} proposed {proposals.length === 1 ? "change" : "changes"}</div>
+              <div className="hidden md:block">
+                {proposals.map((proposal, index) => {
+                  const decision = decisions.get(proposal.proposal_id);
+                  const isSelected = index === selectedIndex;
+                  const resolved = decision !== undefined || proposal.decision !== null;
+                  return (
+                    <button
+                      type="button"
+                      key={proposal.proposal_id}
+                      onClick={() => setSelectedIndex(index)}
+                      className={`flex min-h-14 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors ${isSelected ? "bg-surface-muted text-ink" : "text-muted hover:bg-surface-muted"}`}
+                    >
+                      <StateMark state={resolved ? "complete" : isSelected ? "current" : "idle"} />
+                      <span>{index + 1}</span>
+                      <span className="truncate capitalize">{proposal.operation || "Proposed"} change</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <label className="relative block md:hidden">
+                <span className="sr-only">Selected proposal</span>
+                <select value={selectedIndex} onChange={(event) => setSelectedIndex(Number(event.target.value))} className="min-h-12 w-full appearance-none bg-surface px-4 pr-10 text-[14px] text-ink outline-none">
+                  {proposals.map((proposal, index) => <option key={proposal.proposal_id} value={index}>Change {index + 1} of {proposals.length} · {proposal.operation || "Proposal"}</option>)}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-4 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden="true" />
+              </label>
+            </aside>
+
+            <div className="min-w-0 bg-surface">
+              <div className="border-b border-border px-5 py-4 text-[13px] font-medium text-ink">Proposed change {selectedIndex + 1} of {proposals.length}</div>
+              <div className="px-5 py-7 sm:px-7">
+                <DiffView oldText={extractText(selected.old_html)} newText={extractText(selected.new_html)} />
+                {selected.ai_explanation ? (
+                  <div className="mt-8 border-t border-border pt-6">
+                    <h3 className="text-[13px] font-semibold text-ink">SuperDocs rationale</h3>
+                    <p className="mt-2 text-[14px] leading-6 text-muted">{selected.ai_explanation}</p>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="sticky bottom-[76px] flex flex-wrap justify-end gap-3 border-t border-border bg-surface px-5 py-4 lg:static">
+                <Button variant={pending && !pending.approve ? "danger" : "secondary"} disabled={submitting || existing !== null} onClick={() => onDecide(selected.proposal_id, false)} className="min-w-[120px]">Reject</Button>
+                <Button disabled={submitting || existing !== null} onClick={() => onDecide(selected.proposal_id, true)} className="min-w-[160px]">{approved ? "Approved" : "Approve change"}</Button>
+              </div>
+            </div>
           </div>
 
-          {proposals.map((proposal) => {
-            const existing = proposal.decision;
-            const pending = decisions.get(proposal.proposal_id);
-            const decided = existing !== null || pending !== undefined;
-            const approved = pending?.approve ?? (existing === "APPROVE");
+          <div className="mt-5 flex justify-end">
+            <Button busy={submitting} disabled={!allDecided || !hasAnyNew} onClick={onSubmitAll} className="min-w-[180px]">
+              Submit {proposals.length} {proposals.length === 1 ? "decision" : "decisions"}
+            </Button>
+          </div>
+        </section>
 
-            return (
-              <div
-                key={proposal.proposal_id}
-                className="bg-surface border border-border rounded-md overflow-hidden"
-              >
-                <div className="px-5 py-4 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted uppercase tracking-wide">
-                      Proposed change
-                    </span>
-                    {decided && (
-                      <StatusBadge variant={approved ? "success" : "error"}>
-                        {approved ? "Approved" : "Rejected"}
-                      </StatusBadge>
-                    )}
-                    {!decided && <StatusBadge variant="warning">Pending</StatusBadge>}
-                  </div>
-
-                  <ProposalDiff proposal={proposal} />
-
-                  {proposal.ai_explanation && (
-                    <div className="text-xs text-muted leading-relaxed pt-1">
-                      <span className="font-medium">SuperDocs:</span> {proposal.ai_explanation}
-                    </div>
-                  )}
-
-                  {existing === null && (
-                    <div className="flex items-center gap-2 pt-1">
-                      <button
-                        onClick={() => onDecide(proposal.proposal_id, false)}
-                        disabled={submitting}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                          pending && !pending.approve
-                            ? "bg-error-soft text-error border border-error/30"
-                            : "bg-surface-muted text-muted hover:text-error hover:bg-error-soft border border-border"
-                        } disabled:opacity-50`}
-                      >
-                        <XCircle className="w-3.5 h-3.5" />
-                        Reject
-                      </button>
-                      <button
-                        onClick={() => onDecide(proposal.proposal_id, true)}
-                        disabled={submitting}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                          pending?.approve
-                            ? "bg-success-soft text-success border border-success/30"
-                            : "bg-surface-muted text-muted hover:text-success hover:bg-success-soft border border-border"
-                        } disabled:opacity-50`}
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Approve
-                      </button>
-                    </div>
-                  )}
-                </div>
+        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-7 lg:py-10">
+          <h2 className="text-[15px] font-semibold text-ink">Review evidence</h2>
+          <div className="mt-7">
+            {[
+              { label: "Proposal received", state: "complete" as const },
+              { label: extractText(selected.old_html) ? "Exact old text captured" : "Old text unavailable", state: extractText(selected.old_html) ? "complete" as const : "info" as const },
+              { label: existing || pending ? "Decision recorded" : "Decision required", state: existing || pending ? "complete" as const : "current" as const },
+            ].map((item, index, items) => (
+              <div key={item.label} className="relative flex gap-3 pb-11 last:pb-0">
+                {index < items.length - 1 ? <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" /> : null}
+                <StateMark state={item.state} />
+                <span className="text-[13px] leading-5 text-ink">{item.label}</span>
               </div>
-            );
-          })}
-
-          {allDecided && hasAnyNew && (
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={onSubmitAll}
-                disabled={submitting}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Submitting…
-                  </>
-                ) : (
-                  "Submit decisions"
-                )}
-              </button>
-            </div>
-          )}
-        </div>
+            ))}
+          </div>
+        </aside>
       </div>
     </div>
   );
