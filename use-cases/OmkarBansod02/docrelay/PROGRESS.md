@@ -40,6 +40,10 @@ Branch: `docrelay`
   UNKNOWN reconciliation without blind retry, restart/idempotency controls, complete
   structural postimage verification, minimal frontend states, and bounded real success
   and conflict proofs passed.
+- Phase 7 — **PASS**. The proven single contiguous ASCII/plain-text replacement now
+  supports unequal UTF-16 lengths. Baseline delete/insert coordinates remain fixed,
+  the immutable expected postimage shifts all affected body indexes by the exact delta,
+  and Phase 6 still requires full canonical equality after the guarded write.
 - Phase 8A — **PASS**. Provider evidence established Decision C: `drive.file` is
   per-file/non-transitive and cannot provide unattended descendant discovery.
 - Phase 8B — **CONDITIONAL PASS**. Explicit watch-profile OAuth, selected-root-bounded
@@ -59,8 +63,9 @@ Branch: `docrelay`
 - SuperDocs chunk IDs are fresh-ingestion lookup evidence, not Google ranges.
 - Only a uniquely proven, exact-range operation with the baseline revision may write;
   first-match/global replace and whole-document replacement are prohibited.
-- The Phase 4 V1 mapper accepts only one unique top-level `NORMAL_TEXT` body paragraph,
-  one plain text run, and one internal same-UTF-16-length ASCII token replacement.
+- The mapper accepts only one unique top-level `NORMAL_TEXT` body paragraph, one plain
+  text run, and one internal contiguous ordinary ASCII text replacement; old/new UTF-16
+  lengths may differ.
 - A SuperDocs `chunk_id` remains review lookup evidence only; MappingProof owns the
   provider-native UTF-16 range and WritePlan owns the exact future operation intent.
 - Only `WRITE_VERIFIED` is provider-write success. It requires a verified backup, an
@@ -156,3 +161,11 @@ the existing SuperDocs and human-review workflow, and exact-file write authoriza
 before unchanged Phase 6; deterministic backend validation passed with no automatic
 Google write. Live restricted-scope consent and existing/new descendant proof remain;
 Phase 9 implementation GO; no commit created.
+
+2026-08-12 — Phase 7 checkpoint: PASS; removed the equal-UTF-16-length mapper restriction
+for the existing single contiguous ASCII/plain-text subset; deterministic shorter and
+longer mapping, baseline-coordinate write planning, positive/negative index deltas,
+trailing-content preservation, guarded Phase 6 verification, and unrelated-difference
+rejection passed. Live proof was not run because no configured Google/SuperDocs
+environment was available; the bounded manual procedure remains. Phase 9 remains GO;
+no commit created.

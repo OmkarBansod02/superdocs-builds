@@ -80,6 +80,12 @@ GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
 
 
 def _canonical(token: str, *, neighbor: str = "Unchanged neighbor.\n") -> dict[str, Any]:
+    target_text = f"Payment is due within {token} days.\n"
+    target_end = 162 + len(target_text.encode("utf-16-le")) // 2
+    trailing_text = "Trailing content stays exact.\n"
+    token_delta = len(token.encode("utf-16-le")) // 2 - 2
+    trailing_start = 220 + token_delta
+    trailing_end = trailing_start + len(trailing_text.encode("utf-16-le")) // 2
     return {
         "schema": "docrelay.google-native-canonical.v1",
         "tabs": [
@@ -111,7 +117,7 @@ def _canonical(token: str, *, neighbor: str = "Unchanged neighbor.\n") -> dict[s
                     },
                     {
                         "startIndex": 162,
-                        "endIndex": 193,
+                        "endIndex": target_end,
                         "type": "paragraph",
                         "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
                         "bullet": None,
@@ -120,8 +126,25 @@ def _canonical(token: str, *, neighbor: str = "Unchanged neighbor.\n") -> dict[s
                             {
                                 "kind": "text",
                                 "startIndex": 162,
-                                "endIndex": 193,
-                                "text": f"Payment is due within {token} days.\n",
+                                "endIndex": target_end,
+                                "text": target_text,
+                                "style": {},
+                            }
+                        ],
+                    },
+                    {
+                        "startIndex": trailing_start,
+                        "endIndex": trailing_end,
+                        "type": "paragraph",
+                        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+                        "bullet": None,
+                        "positionedObjectIds": [],
+                        "runs": [
+                            {
+                                "kind": "text",
+                                "startIndex": trailing_start,
+                                "endIndex": trailing_end,
+                                "text": trailing_text,
                                 "style": {},
                             }
                         ],
@@ -264,7 +287,7 @@ class FakeGoogleWriteProvider:
 
 @asynccontextmanager
 async def _environment(
-    *, watched: bool = False
+    *, watched: bool = False, old_token: str = "45", new_token: str = "30"
 ) -> AsyncIterator[
     tuple[
         async_sessionmaker[Any],
@@ -287,7 +310,7 @@ async def _environment(
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(UTC)
-    baseline = _canonical("45")
+    baseline = _canonical(old_token)
     baseline_hash = sha256_json(baseline)
 
     async with sessions() as session:
@@ -330,7 +353,7 @@ async def _environment(
                 watch_config_id=watch.id,
                 provider_folder_id="parent-a",
                 version=1,
-                instruction="Change 45 days to 30 days.",
+                instruction=f"Change {old_token} days to {new_token} days.",
                 instruction_sha256="3" * 64,
                 configuration={"precedence": "nearest_enabled_ancestor"},
                 supported_formats={"mime_types": [GOOGLE_DOC_MIME]},
@@ -361,7 +384,7 @@ async def _environment(
             folder_rule_id=rule.id if rule is not None else None,
             folder_rule_version=rule.version if rule is not None else None,
             rule_snapshot={
-                "instruction": "Change 45 days to 30 days.",
+                "instruction": f"Change {old_token} days to {new_token} days.",
                 "instruction_sha256": "3" * 64,
             },
             mode=SyncMode.PREVIEW,
@@ -511,8 +534,8 @@ async def _environment(
             ordinal=1,
             operation=ProposalOperation.EDIT,
             chunk_id="ephemeral-chunk-a",
-            old_html="<p>Payment is due within 45 days.</p>",
-            new_html="<p>Payment is due within 30 days.</p>",
+            old_html=f"<p>Payment is due within {old_token} days.</p>",
+            new_html=f"<p>Payment is due within {new_token} days.</p>",
             payload_sha256="8" * 64,
             raw_payload={"operation": "edit"},
         )
@@ -558,7 +581,7 @@ async def _environment(
 
         plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run_id))
         assert plan is not None
-        expected = _canonical("30")
+        expected = _canonical(new_token)
         assert sha256_json(expected) == plan.expected_postimage_sha256
 
     provider = FakeGoogleWriteProvider(baseline, expected)
@@ -817,6 +840,40 @@ async def test_exact_persisted_plan_is_sent_once_with_required_revision() -> Non
         }
 
 
+async def test_phase6_verifies_longer_replacement_with_unchanged_backup_and_guard() -> None:
+    async with _environment(old_token="30", new_token="14 calendar") as (
+        _,
+        service,
+        provider,
+        run_id,
+        baseline,
+        expected,
+    ):
+        result = await service.execute(run_id)
+
+        assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert provider.copy_calls == provider.commit_calls == 1
+        operation = provider.operations[0]
+        assert operation.required_revision_id == "revision-A"
+        assert operation.requests[0]["deleteContentRange"]["range"] == {
+            "segmentId": "",
+            "tabId": "t.0",
+            "startIndex": 184,
+            "endIndex": 186,
+        }
+        assert operation.requests[1]["insertText"] == {
+            "location": {"segmentId": "", "tabId": "t.0", "index": 184},
+            "text": "14 calendar",
+        }
+        assert baseline["tabs"][0]["body"][1]["endIndex"] == 193
+        assert expected["tabs"][0]["body"][1]["endIndex"] == 202
+        assert baseline["tabs"][0]["body"][2]["startIndex"] == 220
+        assert expected["tabs"][0]["body"][2]["startIndex"] == 229
+        assert (
+            expected["tabs"][0]["body"][2]["runs"][0]["text"] == "Trailing content stays exact.\n"
+        )
+
+
 async def test_provider_revision_rejection_is_durable_conflict_without_force() -> None:
     async with _environment() as (_, service, provider, run_id, _, _):
         provider.commit_result = GuardedCommitResult(
@@ -876,8 +933,15 @@ async def test_unknown_write_reconciles_by_complete_canonical_state_without_retr
 
 
 async def test_unrelated_post_write_change_fails_structural_verification() -> None:
-    async with _environment() as (_, service, provider, run_id, _, _):
-        provider.expected = _canonical("30", neighbor="Unrelated changed.\n")
+    async with _environment(old_token="30", new_token="14 calendar") as (
+        _,
+        service,
+        provider,
+        run_id,
+        _,
+        _,
+    ):
+        provider.expected = _canonical("14 calendar", neighbor="Unrelated changed.\n")
 
         result = await service.execute(run_id)
 

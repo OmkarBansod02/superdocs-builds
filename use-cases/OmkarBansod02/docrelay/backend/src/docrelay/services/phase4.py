@@ -265,7 +265,7 @@ class Phase4PlanningService:
                 "approved immutable review decision",
                 "exact persisted baseline revision and native snapshot hash",
                 "one unique ordinary body paragraph and one plain text run",
-                "exact internal ASCII preimage with equal UTF-16 length",
+                "exact internal contiguous ASCII preimage",
                 "minimum delete-and-insert range guarded by requiredRevisionId",
             ),
             mapping_proof_id=stored_proof.id,

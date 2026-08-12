@@ -25,11 +25,11 @@ from docrelay.domain.write_plan import (
 )
 from docrelay.integrations.google.canonical import sha256_json
 
-MAPPER_VERSION = "docrelay.google-plain-token-mapper.v1"
-COMPILER_VERSION = "docrelay.google-write-plan-compiler.v1"
+MAPPER_VERSION = "docrelay.google-plain-text-mapper.v2"
+COMPILER_VERSION = "docrelay.google-write-plan-compiler.v2"
 MAPPING_SCHEMA_VERSION = "docrelay.mapping-proof.v1"
-VERIFIER_VERSION = "docrelay.google-native-canonical.v1"
-_ASCII_TOKEN = re.compile(r"[A-Za-z0-9]+")
+VERIFIER_VERSION = "docrelay.google-native-canonical.v2"
+_ASCII_PLAIN_TEXT = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*")
 
 
 class MappingFailureCode(StrEnum):
@@ -43,7 +43,6 @@ class MappingFailureCode(StrEnum):
     NON_CONTIGUOUS_REPLACEMENT = "NON_CONTIGUOUS_REPLACEMENT"
     NON_INTERNAL_REPLACEMENT = "NON_INTERNAL_REPLACEMENT"
     NON_ASCII_REPLACEMENT = "NON_ASCII_REPLACEMENT"
-    UNEQUAL_UTF16_LENGTH = "UNEQUAL_UTF16_LENGTH"
     WRONG_REVISION = "WRONG_REVISION"
     STALE_SNAPSHOT = "STALE_SNAPSHOT"
     MALFORMED_SNAPSHOT = "MALFORMED_SNAPSHOT"
@@ -178,18 +177,22 @@ class StructuralEligibility(_FrozenModel):
     one_plain_text_run: Literal[True] = True
     no_formatting_delta: Literal[True] = True
     internal_ascii_token: Literal[True] = True
-    equal_utf16_length: Literal[True] = True
+    equal_utf16_length: bool
     exact_preimage: Literal[True] = True
     minimum_range: Literal[True] = True
 
 
 class MappingProofPayload(_FrozenModel):
     schema_version: Literal["docrelay.mapping-proof.v1"] = "docrelay.mapping-proof.v1"
-    mapper_version: Literal["docrelay.google-plain-token-mapper.v1"] = (
-        "docrelay.google-plain-token-mapper.v1"
-    )
+    mapper_version: Literal[
+        "docrelay.google-plain-token-mapper.v1",
+        "docrelay.google-plain-text-mapper.v2",
+    ] = "docrelay.google-plain-text-mapper.v2"
     status: Literal["SUPPORTED"] = "SUPPORTED"
-    status_reason: Literal["ALL_V1_CONSTRAINTS_PASSED"] = "ALL_V1_CONSTRAINTS_PASSED"
+    status_reason: Literal[
+        "ALL_V1_CONSTRAINTS_PASSED",
+        "ALL_SUPPORTED_CONSTRAINTS_PASSED",
+    ] = "ALL_SUPPORTED_CONSTRAINTS_PASSED"
     created_at: datetime
     source_snapshot_id: UUID
     provider_file_id: str
@@ -338,15 +341,13 @@ def normalize_reviewed_change(proposal: ReviewedProposal) -> SemanticReplacement
             MappingFailureCode.NON_INTERNAL_REPLACEMENT,
             "replacement must be internal to the paragraph",
         )
-    if _ASCII_TOKEN.fullmatch(old_text) is None or _ASCII_TOKEN.fullmatch(new_text) is None:
+    if (
+        _ASCII_PLAIN_TEXT.fullmatch(old_text) is None
+        or _ASCII_PLAIN_TEXT.fullmatch(new_text) is None
+    ):
         raise MappingFailure(
             MappingFailureCode.NON_ASCII_REPLACEMENT,
-            "replacement must be one ordinary ASCII token",
-        )
-    if _utf16_length(old_text) != _utf16_length(new_text):
-        raise MappingFailure(
-            MappingFailureCode.UNEQUAL_UTF16_LENGTH,
-            "replacement must preserve UTF-16 length",
+            "replacement must be ordinary space-separated ASCII text",
         )
     return SemanticReplacement(
         proposal_id=proposal.proposal_id,
@@ -537,7 +538,9 @@ def map_replacement(
             edit_start_index=edit_start,
             edit_end_index=edit_end,
         ),
-        eligibility=StructuralEligibility(),
+        eligibility=StructuralEligibility(
+            equal_utf16_length=_utf16_length(change.old_text) == _utf16_length(change.new_text)
+        ),
     )
     return SealedMappingProof.seal(payload)
 
@@ -606,6 +609,13 @@ def compile_write_plan(
     run = runs[0]
     assert isinstance(run, dict)
     run["text"] = f"{change.new_paragraph}\n"
+    utf16_delta = _utf16_length(change.new_text) - _utf16_length(change.old_text)
+    _shift_body_indexes(
+        body,
+        replaced_start=location.edit_start_index,
+        replaced_end=location.edit_end_index,
+        delta=utf16_delta,
+    )
     expected_sha256 = sha256_json(expected)
     payload = WritePlanPayload(
         created_at=created_at,
@@ -675,7 +685,7 @@ def compile_write_plan(
                 "segment_id": location.segment_id,
                 "structural_element_index": location.structural_element_index,
                 "paragraph_start_index": location.paragraph_start_index,
-                "paragraph_end_index": location.paragraph_end_index,
+                "paragraph_end_index": location.paragraph_end_index + utf16_delta,
                 "paragraph_sha256": _sha256_text(change.new_paragraph),
             },
         ),
@@ -801,6 +811,41 @@ def _malformed(message: str) -> NoReturn:
 
 def _utf16_length(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
+
+
+def _shift_body_indexes(
+    value: Any,
+    *,
+    replaced_start: int,
+    replaced_end: int,
+    delta: int,
+) -> None:
+    if isinstance(value, list):
+        for child in value:
+            _shift_body_indexes(
+                child,
+                replaced_start=replaced_start,
+                replaced_end=replaced_end,
+                delta=delta,
+            )
+        return
+    if not isinstance(value, dict):
+        return
+    for key, child in value.items():
+        if key in {"startIndex", "endIndex"}:
+            if not isinstance(child, int) or isinstance(child, bool):
+                _malformed(f"provider {key} is malformed")
+            if replaced_start < child < replaced_end:
+                _malformed("provider index boundary intersects the replacement range")
+            if child >= replaced_end:
+                value[key] = child + delta
+            continue
+        _shift_body_indexes(
+            child,
+            replaced_start=replaced_start,
+            replaced_end=replaced_end,
+            delta=delta,
+        )
 
 
 def _sha256_text(value: str) -> str:

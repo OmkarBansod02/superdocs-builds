@@ -760,7 +760,9 @@ class Phase6ExecutionService:
         replacement = context.plan.payload.expected_replacement
         operation = context.plan.payload.provider_operations[0]
         expected_payload = await self._expected_payload(context)
-        intended_text = _text_at_operation_range(current.canonical_payload, operation)
+        intended_text = _text_at_operation_range(
+            current.canonical_payload, operation, postimage=True
+        )
         report: dict[str, JsonValue] = {
             "identity_matches": current.identity.file_id == context.provider_file_id,
             "revision_advanced": current.revision_id != source.baseline_revision_id,
@@ -1116,7 +1118,9 @@ class Phase6ExecutionService:
             _text_at_operation_range(baseline_payload, context.plan.payload.provider_operations[0])
             != context.plan.payload.expected_replacement.old_text
             or _text_at_operation_range(
-                expected_payload, context.plan.payload.provider_operations[0]
+                expected_payload,
+                context.plan.payload.provider_operations[0],
+                postimage=True,
             )
             != context.plan.payload.expected_replacement.new_text
             or sha256_json(expected_payload)
@@ -1515,13 +1519,22 @@ def _payload_schema(payload: dict[str, Any]) -> str:
 
 
 def _text_at_operation_range(
-    canonical: dict[str, Any], operation: GoogleDocsBatchUpdate
+    canonical: dict[str, Any],
+    operation: GoogleDocsBatchUpdate,
+    *,
+    postimage: bool = False,
 ) -> str | None:
     request = cast(dict[str, Any], operation.requests[0])
     try:
         range_value = request["deleteContentRange"]["range"]
         start = int(range_value["startIndex"])
         end = int(range_value["endIndex"])
+        if postimage:
+            insert_request = cast(dict[str, Any], operation.requests[1])
+            inserted_text = insert_request["insertText"]["text"]
+            if not isinstance(inserted_text, str):
+                return None
+            end = start + _utf16_length(inserted_text)
         tab_id = str(range_value["tabId"])
         tabs = canonical["tabs"]
         if not isinstance(tabs, list):
@@ -1612,17 +1625,60 @@ def _apply_provider_operation(
             offset_end = (end - run_start) * 2
             if 0 <= offset_start < offset_end <= len(encoded):
                 replacement = inserted_text.encode("utf-16-le")
-                if len(replacement) != offset_end - offset_start:
-                    raise WriteBackNotEligible(
-                        "WritePlan replacement does not preserve the proven UTF-16 length"
-                    )
                 run["text"] = (encoded[:offset_start] + replacement + encoded[offset_end:]).decode(
                     "utf-16-le"
                 )
                 matches += 1
     if matches != 1:
         raise WriteBackNotEligible("WritePlan range does not map to one baseline text run")
+    _shift_body_indexes(
+        tab.get("body"),
+        replaced_start=start,
+        replaced_end=end,
+        delta=_utf16_length(inserted_text) - (end - start),
+    )
     return expected
+
+
+def _shift_body_indexes(
+    value: Any,
+    *,
+    replaced_start: int,
+    replaced_end: int,
+    delta: int,
+) -> None:
+    if isinstance(value, list):
+        for child in value:
+            _shift_body_indexes(
+                child,
+                replaced_start=replaced_start,
+                replaced_end=replaced_end,
+                delta=delta,
+            )
+        return
+    if not isinstance(value, dict):
+        return
+    for key, child in value.items():
+        if key in {"startIndex", "endIndex"}:
+            if not isinstance(child, int) or isinstance(child, bool):
+                raise WriteBackNotEligible(f"provider {key} is malformed")
+            if replaced_start < child < replaced_end:
+                raise WriteBackNotEligible(
+                    "provider index boundary intersects the replacement range"
+                )
+            if child >= replaced_end:
+                value[key] = child + delta
+            continue
+        _shift_body_indexes(
+            child,
+            replaced_start=replaced_start,
+            replaced_end=replaced_end,
+            delta=delta,
+        )
+
+
+def _utf16_length(value: str) -> int:
+    return len(value.encode("utf-16-le")) // 2
 
 
 def _backup_name(source_name: str, revision: str) -> str:

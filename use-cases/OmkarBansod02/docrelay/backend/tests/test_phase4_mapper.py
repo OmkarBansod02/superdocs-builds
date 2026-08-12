@@ -132,6 +132,22 @@ def _supported_mapping():
     return change, _baseline(), map_replacement(change, _baseline(), created_at=NOW)
 
 
+def _compile(change, baseline: BaselineSnapshot):
+    proof = map_replacement(change, baseline, created_at=NOW)
+    return proof, compile_write_plan(
+        change=change,
+        baseline=baseline,
+        proof=proof,
+        sync_run_id=UUID("00000000-0000-0000-0000-000000000301"),
+        rule_identity=UUID("00000000-0000-0000-0000-000000000302"),
+        rule_version=1,
+        instruction_sha256=ZERO_HASH,
+        configuration_sha256=ONE_HASH,
+        created_at=NOW,
+        expires_at=NOW + timedelta(hours=24),
+    )
+
+
 def test_approved_unique_supported_replacement_produces_exact_proof_and_plan() -> None:
     change, baseline, proof = _supported_mapping()
     plan = compile_write_plan(
@@ -179,6 +195,56 @@ def test_approved_unique_supported_replacement_produces_exact_proof_and_plan() -
 
 
 @pytest.mark.parametrize(
+    ("old_value", "new_value", "delta"),
+    [
+        ("45", "7", -1),
+        ("30", "14 calendar", 9),
+    ],
+)
+def test_variable_length_replacement_shifts_complete_trailing_postimage(
+    old_value: str, new_value: str, delta: int
+) -> None:
+    old_paragraph = f"Payment is due within {old_value} days."
+    target = _paragraph(old_paragraph)
+    trailing = _paragraph("Trailing content stays exact.", start=240)
+    baseline = _baseline(_canonical([target, trailing]))
+    change = normalize_reviewed_change(
+        _proposal(
+            old_html=f"<p>{old_paragraph}</p>",
+            new_html=f"<p>Payment is due within {new_value} days.</p>",
+        )
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert change.old_text == old_value
+    assert change.new_text == new_value
+    assert proof.payload.eligibility.equal_utf16_length is (delta == 0)
+    assert proof.payload.location.edit_start_index == 184
+    assert proof.payload.location.edit_end_index == 184 + len(old_value)
+    operation = plan.payload.provider_operations[0]
+    delete_range = operation.requests[0]["deleteContentRange"]["range"]
+    insert = operation.requests[1]["insertText"]
+    assert delete_range["startIndex"] == 184
+    assert delete_range["endIndex"] == 184 + len(old_value)
+    assert insert["location"]["index"] == 184
+    assert insert["text"] == new_value
+
+    expected = deepcopy(baseline.canonical_payload)
+    expected_body = expected["tabs"][0]["body"]
+    expected_target = expected_body[0]
+    expected_target["endIndex"] += delta
+    expected_target["runs"][0]["endIndex"] += delta
+    expected_target["runs"][0]["text"] = f"Payment is due within {new_value} days.\n"
+    expected_body[1]["startIndex"] += delta
+    expected_body[1]["endIndex"] += delta
+    expected_body[1]["runs"][0]["startIndex"] += delta
+    expected_body[1]["runs"][0]["endIndex"] += delta
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+    assert expected_body[1]["runs"][0]["text"] == "Trailing content stays exact.\n"
+
+
+@pytest.mark.parametrize(
     ("proposal", "code"),
     [
         (_proposal(decision=ChangeDecision.REJECT), MappingFailureCode.NOT_APPROVED),
@@ -211,11 +277,8 @@ def test_non_current_or_non_approved_proposal_fails_closed(
             MappingFailureCode.NON_ASCII_REPLACEMENT,
         ),
         (
-            {
-                "old_html": "<p>Payment is due within 45 days.</p>",
-                "new_html": "<p>Payment is due within 120 days.</p>",
-            },
-            MappingFailureCode.UNEQUAL_UTF16_LENGTH,
+            {"new_html": '<p data-id="same">Payment is due within 30\tdays.</p>'},
+            MappingFailureCode.NON_ASCII_REPLACEMENT,
         ),
     ],
 )
@@ -248,6 +311,15 @@ def test_live_create_proposal_is_not_reclassified_as_a_plain_text_replacement() 
 
     assert error.value.code is MappingFailureCode.UNSUPPORTED_OPERATION
     assert str(error.value) == "only reviewed edit proposals are supported"
+
+
+def test_paragraph_boundary_replacement_is_unsupported() -> None:
+    with pytest.raises(MappingFailure) as error:
+        normalize_reviewed_change(
+            _proposal(new_html="<p>Payment is due within 30 days.</p><p>Added paragraph.</p>")
+        )
+
+    assert error.value.code is MappingFailureCode.FORMATTING_DELTA
 
 
 def test_old_preimage_missing_fails_closed() -> None:
