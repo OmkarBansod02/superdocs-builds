@@ -34,7 +34,7 @@ from docrelay.integrations.google.canonical import sha256_json
 from docrelay.integrations.google.contracts import (
     CommitClassification,
     CurrentGoogleDocument,
-    Phase6GooglePort,
+    GoogleWriteBackPort,
 )
 from docrelay.integrations.google.errors import GoogleIntegrationError
 from docrelay.integrations.google.read_only import GOOGLE_DOC_MIME
@@ -63,12 +63,12 @@ from docrelay.persistence.models import (
     WritePlan,
     WritePlanLineage,
 )
-from docrelay.services.phase3 import RunNotFound
+from docrelay.services.superdocs_workflow import RunNotFound
 
 EFFECT_LEASE = timedelta(minutes=15)
 
 
-class Phase6Error(RuntimeError):
+class WriteBackError(RuntimeError):
     code = "PHASE6_ERROR"
 
     def __init__(self, message: str) -> None:
@@ -76,19 +76,19 @@ class Phase6Error(RuntimeError):
         super().__init__(message)
 
 
-class WriteBackNotEligible(Phase6Error):
+class WriteBackNotEligible(WriteBackError):
     code = "WRITE_BACK_NOT_ELIGIBLE"
 
 
-class ExactFileWriteAuthorizationRequired(Phase6Error):
+class ExactFileWriteAuthorizationRequired(WriteBackError):
     code = "EXACT_FILE_WRITE_AUTHORIZATION_REQUIRED"
 
 
-class WatchedFileOutOfScope(Phase6Error):
+class WatchedFileOutOfScope(WriteBackError):
     code = "WATCHED_FILE_OUT_OF_SCOPE"
 
 
-class ConflictDecisionInvalid(Phase6Error):
+class ConflictDecisionInvalid(WriteBackError):
     code = "CONFLICT_DECISION_INVALID"
 
 
@@ -104,11 +104,11 @@ class WriteBackStatus(StrEnum):
     REVIEW_LATEST = "REVIEW_LATEST"
 
 
-class _Phase6Model(BaseModel):
+class _WriteBackModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class ConflictView(_Phase6Model):
+class ConflictView(_WriteBackModel):
     baseline_revision_id: str
     latest_revision_id: str | None
     detection_stage: str
@@ -117,7 +117,7 @@ class ConflictView(_Phase6Model):
     decision: ConflictChoice | None
 
 
-class WriteBackView(_Phase6Model):
+class WriteBackView(_WriteBackModel):
     run_id: UUID
     status: WriteBackStatus
     write_plan_id: UUID
@@ -133,7 +133,9 @@ class WriteBackView(_Phase6Model):
     conflict: ConflictView | None
 
 
-ProviderFactory = Callable[[AsyncSession, UUID], Phase6GooglePort | Awaitable[Phase6GooglePort]]
+ProviderFactory = Callable[
+    [AsyncSession, UUID], GoogleWriteBackPort | Awaitable[GoogleWriteBackPort]
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,7 +151,7 @@ class _Context:
     requires_exact_file_authorization: bool
 
 
-class Phase6ExecutionService:
+class WriteBackService:
     def __init__(
         self,
         *,
@@ -351,7 +353,7 @@ class Phase6ExecutionService:
             await session.commit()
             return context, None
 
-    async def _provider(self, connection_id: UUID) -> Phase6GooglePort:
+    async def _provider(self, connection_id: UUID) -> GoogleWriteBackPort:
         async with self._sessions() as session:
             value = self._provider_factory(session, connection_id)
             return await value if inspect.isawaitable(value) else value
@@ -359,7 +361,7 @@ class Phase6ExecutionService:
     async def _read_precheck(
         self,
         context: _Context,
-        provider: Phase6GooglePort,
+        provider: GoogleWriteBackPort,
         *,
         stage: str,
     ) -> CurrentGoogleDocument | None:
@@ -438,7 +440,7 @@ class Phase6ExecutionService:
     async def _create_backup(
         self,
         context: _Context,
-        provider: Phase6GooglePort,
+        provider: GoogleWriteBackPort,
         source_name: str,
     ) -> object | None:
         async with self._sessions() as session:
@@ -507,7 +509,7 @@ class Phase6ExecutionService:
     async def _verify_backup(
         self,
         context: _Context,
-        provider: Phase6GooglePort,
+        provider: GoogleWriteBackPort,
         backup: Backup,
     ) -> bool:
         backup_file_id = backup.provider_backup_file_id
@@ -561,7 +563,7 @@ class Phase6ExecutionService:
             await session.commit()
         return True
 
-    async def _commit(self, context: _Context, provider: Phase6GooglePort) -> WriteBackView:
+    async def _commit(self, context: _Context, provider: GoogleWriteBackPort) -> WriteBackView:
         operation = context.plan.payload.provider_operations[0]
         async with self._sessions() as session:
             run = await session.get(SyncRun, context.run_id, with_for_update=True)
@@ -652,7 +654,7 @@ class Phase6ExecutionService:
         return await self._verify_after_write(context, provider)
 
     async def _reconcile_unknown_write(
-        self, context: _Context, provider: Phase6GooglePort
+        self, context: _Context, provider: GoogleWriteBackPort
     ) -> WriteBackView:
         try:
             current = await provider.inspect_current(
@@ -736,7 +738,7 @@ class Phase6ExecutionService:
         return await self.get_status(context.run_id)
 
     async def _verify_after_write(
-        self, context: _Context, provider: Phase6GooglePort
+        self, context: _Context, provider: GoogleWriteBackPort
     ) -> WriteBackView:
         try:
             current = await provider.inspect_current(
@@ -1284,7 +1286,7 @@ class Phase6ExecutionService:
             await session.commit()
 
     async def _safe_latest_revision(
-        self, context: _Context, provider: Phase6GooglePort
+        self, context: _Context, provider: GoogleWriteBackPort
     ) -> str | None:
         try:
             current = await provider.inspect_current(

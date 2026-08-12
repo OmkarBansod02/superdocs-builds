@@ -66,13 +66,13 @@ from docrelay.persistence.models import (
     WriteConflict,
     WritePlan,
 )
-from docrelay.services.phase4 import DryRunStatus, Phase4PlanningService
-from docrelay.services.phase6 import (
+from docrelay.services.write_planning import DryRunStatus, WritePlanningService
+from docrelay.services.writeback import (
     ConflictChoice,
     ExactFileWriteAuthorizationRequired,
-    Phase6ExecutionService,
     WatchedFileOutOfScope,
     WriteBackNotEligible,
+    WriteBackService,
     WriteBackStatus,
 )
 
@@ -291,7 +291,7 @@ async def _environment(
 ) -> AsyncIterator[
     tuple[
         async_sessionmaker[Any],
-        Phase6ExecutionService,
+        WriteBackService,
         FakeGoogleWriteProvider,
         Any,
         dict[str, Any],
@@ -572,7 +572,7 @@ async def _environment(
         run_id = run.id
         proposal_id = proposal.id
 
-    dry_run = await Phase4PlanningService(sessions=sessions, owner_subject="owner-a").dry_run(
+    dry_run = await WritePlanningService(sessions=sessions, owner_subject="owner-a").dry_run(
         run_id, proposal_id=proposal_id
     )
     assert dry_run.status is DryRunStatus.READY
@@ -585,7 +585,7 @@ async def _environment(
         assert sha256_json(expected) == plan.expected_postimage_sha256
 
     provider = FakeGoogleWriteProvider(baseline, expected)
-    service = Phase6ExecutionService(
+    service = WriteBackService(
         sessions=sessions,
         owner_subject="owner-a",
         provider_factory=lambda _session, _connection_id: provider,

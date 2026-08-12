@@ -28,19 +28,19 @@ from docrelay.mcp import create_mcp_server
 from docrelay.persistence.database import Database
 from docrelay.services.artifacts import ArtifactStore, FilesystemArtifactStore
 from docrelay.services.machine import MachineOperations
-from docrelay.services.phase3 import (
+from docrelay.services.superdocs_workflow import (
     ExportNotReady,
     IncompleteDecisionSet,
-    Phase3Error,
     ReviewOperationInvalid,
     ReviewPayloadInvalid,
     RunNotFound,
     SelectedBaselineChanged,
     SourceNotFound,
     SuperDocsNotConfigured,
+    SuperDocsWorkflowError,
 )
-from docrelay.services.phase6 import Phase6Error
 from docrelay.services.watch import WatchError, WatchNotFound
+from docrelay.services.writeback import WriteBackError
 
 
 def create_app(
@@ -159,8 +159,10 @@ def create_app(
             )
         return response
 
-    @app.exception_handler(Phase3Error)
-    async def handle_phase3_error(_: Request, exc: Phase3Error) -> Response:
+    @app.exception_handler(SuperDocsWorkflowError)
+    async def handle_superdocs_workflow_error(
+        _: Request, exc: SuperDocsWorkflowError
+    ) -> Response:
         if isinstance(exc, (RunNotFound, SourceNotFound)):
             status_code = 404
         elif isinstance(exc, SuperDocsNotConfigured):
@@ -209,8 +211,8 @@ def create_app(
             media_type="application/json",
         )
 
-    @app.exception_handler(Phase6Error)
-    async def handle_phase6_error(_: Request, exc: Phase6Error) -> Response:
+    @app.exception_handler(WriteBackError)
+    async def handle_write_back_error(_: Request, exc: WriteBackError) -> Response:
         return Response(
             content=json.dumps(
                 {"error": {"code": exc.code, "message": exc.safe_message}},

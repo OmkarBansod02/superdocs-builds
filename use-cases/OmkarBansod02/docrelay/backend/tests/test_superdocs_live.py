@@ -18,7 +18,7 @@ from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
 from docrelay.persistence.database import Database
 from docrelay.persistence.models import GoogleBaselineCapture, SuperDocsJob
 from docrelay.services.artifacts import FilesystemArtifactStore
-from docrelay.services.phase3 import DecisionInput, Phase3Baseline, Phase3Orchestrator
+from docrelay.services.superdocs_workflow import DecisionInput, SuperDocsBaseline, SuperDocsWorkflow
 
 pytestmark = pytest.mark.live_superdocs
 
@@ -59,7 +59,7 @@ async def test_one_bounded_production_superdocs_restart_review_export(tmp_path: 
         assert result.revision_id == selected.provider_revision_id
         assert result.native_canonical_sha256 == selected.native_canonical_sha256
         assert "45 days" in _docx_text(result.docx_bytes)
-        phase3_baseline = Phase3Baseline(
+        superdocs_baseline = SuperDocsBaseline(
             cloud_document_id=source_id,
             provider_revision_id=result.revision_id,
             source_format=recaptured.document.mime_type,
@@ -73,14 +73,14 @@ async def test_one_bounded_production_superdocs_restart_review_export(tmp_path: 
             docx_bytes=result.docx_bytes,
             filename="synthetic-phase3-baseline.docx",
         )
-        first_process = Phase3Orchestrator(
+        first_process = SuperDocsWorkflow(
             sessions=database.sessions,
             superdocs=superdocs_runtime.client,
             artifacts=artifacts,
             owner_subject=settings.docrelay_owner_subject,
         )
         started = await first_process.start_run(
-            baseline=phase3_baseline,
+            baseline=superdocs_baseline,
             instruction='Change "45 days" to "30 days" and nothing else.',
             model_tier="core",
         )
@@ -98,7 +98,7 @@ async def test_one_bounded_production_superdocs_restart_review_export(tmp_path: 
         assert proposal.new_html is not None and "30 days" in proposal.new_html
 
         # Reconstruct the production service with only durable DB/artifact/provider state.
-        restarted_process = Phase3Orchestrator(
+        restarted_process = SuperDocsWorkflow(
             sessions=database.sessions,
             superdocs=superdocs_runtime.client,
             artifacts=FilesystemArtifactStore(tmp_path),

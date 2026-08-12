@@ -102,7 +102,7 @@ Branch: `docrelay`
 
 ## Next action
 
-Post-Phase-9 module rename/refactor is GO but has not been performed. Production release
+Post-Phase-9 production service modules now use domain terminology. Production release
 of watch mode remains gated on the bounded live Google proof and restricted-scope
 compliance; do not infer Shared Drive, new-format, broader mapping, or automatic write
 support from Phase 8B/9.

@@ -58,7 +58,7 @@ from docrelay.persistence.models import (
 from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
 
 
-class Phase3Error(RuntimeError):
+class SuperDocsWorkflowError(RuntimeError):
     code = "PHASE3_ERROR"
 
     def __init__(self, safe_message: str) -> None:
@@ -66,47 +66,47 @@ class Phase3Error(RuntimeError):
         self.safe_message = safe_message
 
 
-class RunNotFound(Phase3Error):
+class RunNotFound(SuperDocsWorkflowError):
     code = "RUN_NOT_FOUND"
 
 
-class SourceNotFound(Phase3Error):
+class SourceNotFound(SuperDocsWorkflowError):
     code = "SOURCE_NOT_FOUND"
 
 
-class SelectedBaselineChanged(Phase3Error):
+class SelectedBaselineChanged(SuperDocsWorkflowError):
     code = "SELECTED_BASELINE_CHANGED"
 
 
-class SuperDocsNotConfigured(Phase3Error):
+class SuperDocsNotConfigured(SuperDocsWorkflowError):
     code = "SUPERDOCS_NOT_CONFIGURED"
 
 
-class ExportNotReady(Phase3Error):
+class ExportNotReady(SuperDocsWorkflowError):
     code = "EXPORT_NOT_READY"
 
 
-class IncompleteDecisionSet(Phase3Error):
+class IncompleteDecisionSet(SuperDocsWorkflowError):
     code = "INCOMPLETE_DECISION_SET"
 
 
-class ReviewPayloadInvalid(Phase3Error):
+class ReviewPayloadInvalid(SuperDocsWorkflowError):
     code = "SUPERDOCS_REVIEW_PAYLOAD_INVALID"
 
 
-class ReviewOperationInvalid(Phase3Error):
+class ReviewOperationInvalid(SuperDocsWorkflowError):
     code = "REVIEW_OPERATION_INVALID"
 
 
-class RecoveryBlocked(Phase3Error):
+class RecoveryBlocked(SuperDocsWorkflowError):
     code = "SUPERDOCS_RECOVERY_BLOCKED"
 
 
-class Phase3Contract(BaseModel):
+class _WorkflowModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class Phase3Baseline(Phase3Contract):
+class SuperDocsBaseline(_WorkflowModel):
     cloud_document_id: UUID
     provider_revision_id: str = Field(min_length=1)
     source_format: str = Field(min_length=1)
@@ -121,20 +121,20 @@ class Phase3Baseline(Phase3Contract):
     filename: str = Field(min_length=1)
 
 
-class Phase3RuleContext(Phase3Contract):
+class WorkflowRuleContext(_WorkflowModel):
     folder_rule_id: UUID
     folder_rule_version: int = Field(ge=1)
     intent_discriminator: str = Field(min_length=1)
     rule_snapshot: dict[str, JsonValue]
 
 
-class DecisionInput(Phase3Contract):
+class DecisionInput(_WorkflowModel):
     proposal_id: UUID
     approve: bool
     feedback: str | None = None
 
 
-class ProposalView(Phase3Contract):
+class ProposalView(_WorkflowModel):
     proposal_id: UUID
     review_round: int
     change_id: str
@@ -149,7 +149,7 @@ class ProposalView(Phase3Contract):
     feedback: str | None = None
 
 
-class ExportView(Phase3Contract):
+class ExportView(_WorkflowModel):
     export_id: UUID
     artifact_reference: str
     sha256: str
@@ -161,12 +161,12 @@ class ExportView(Phase3Contract):
     exported_at: datetime
 
 
-class ExportArtifactView(Phase3Contract):
+class ExportArtifactView(_WorkflowModel):
     metadata: ExportView
     content: bytes = Field(exclude=True, min_length=1)
 
 
-class RunView(Phase3Contract):
+class RunView(_WorkflowModel):
     run_id: UUID
     source_id: UUID
     provider_revision_id: str
@@ -186,7 +186,7 @@ class RunView(Phase3Contract):
     write_authorization: WriteAuthorizationState | None
 
 
-class WriteBackRunSummary(Phase3Contract):
+class WriteBackRunSummary(_WorkflowModel):
     status: str
     backup_created: bool
     backup_verified: bool
@@ -259,7 +259,7 @@ async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBa
     )
 
 
-class Phase3Orchestrator:
+class SuperDocsWorkflow:
     """Durable one-run SuperDocs state machine used by API and worker processes."""
 
     def __init__(
@@ -278,11 +278,11 @@ class Phase3Orchestrator:
     async def start_run(
         self,
         *,
-        baseline: Phase3Baseline,
+        baseline: SuperDocsBaseline,
         instruction: str,
         model_tier: str | None = None,
         thinking_depth: str | None = None,
-        rule_context: Phase3RuleContext | None = None,
+        rule_context: WorkflowRuleContext | None = None,
     ) -> RunView:
         if not instruction or not instruction.strip():
             raise ValueError("instruction must not be empty")

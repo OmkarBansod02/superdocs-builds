@@ -63,7 +63,7 @@ from docrelay.services.machine import (
     MultiDocumentQueryService,
     ReviewStatus,
 )
-from docrelay.services.phase3 import Phase3Orchestrator
+from docrelay.services.superdocs_workflow import SuperDocsWorkflow
 from docrelay.services.watch import WatchClaimLost, WatchInvalidRoot, WatchService
 
 
@@ -422,7 +422,7 @@ class WatchHarness:
         connection_id: UUID,
         drive: FakeDrive,
         superdocs: FakeSuperDocs,
-        orchestrator: Phase3Orchestrator,
+        orchestrator: SuperDocsWorkflow,
     ) -> None:
         self.engine = engine
         self.sessions = sessions
@@ -474,7 +474,7 @@ async def _environment() -> AsyncIterator[WatchHarness]:
         connection_id = connection.id
     drive = FakeDrive(page_size=1)
     superdocs = FakeSuperDocs()
-    orchestrator = Phase3Orchestrator(
+    orchestrator = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=superdocs,  # type: ignore[arg-type]
         artifacts=InMemoryArtifactStore(),

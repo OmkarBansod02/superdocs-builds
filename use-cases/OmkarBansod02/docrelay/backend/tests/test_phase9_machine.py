@@ -8,8 +8,8 @@ from starlette.testclient import TestClient
 from docrelay.app import create_app
 from docrelay.core.config import Settings
 from docrelay.mcp import create_mcp_server
-from docrelay.services.phase4 import DryRunStatus, DryRunView
-from docrelay.services.phase6 import ExactFileWriteAuthorizationRequired
+from docrelay.services.write_planning import DryRunStatus, DryRunView
+from docrelay.services.writeback import ExactFileWriteAuthorizationRequired
 
 
 class StubDatabase:

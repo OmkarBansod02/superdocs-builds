@@ -30,7 +30,7 @@ from docrelay.domain.enums import (
 from docrelay.domain.write_plan import GoogleDocsBatchUpdate
 from docrelay.integrations.google.contracts import (
     CommitClassification,
-    Phase6GooglePort,
+    GoogleWriteBackPort,
 )
 from docrelay.integrations.google.read_only import DRIVE_API_BASE
 from docrelay.integrations.google.runtime import GoogleRuntime
@@ -54,9 +54,9 @@ from docrelay.persistence.models import (
     WriteConflict,
     WritePlan,
 )
-from docrelay.services.phase4 import DryRunStatus, Phase4PlanningService
-from docrelay.services.phase6 import (
-    Phase6ExecutionService,
+from docrelay.services.write_planning import DryRunStatus, WritePlanningService
+from docrelay.services.writeback import (
+    WriteBackService,
     WriteBackStatus,
     _text_at_operation_range,
 )
@@ -82,10 +82,10 @@ async def test_one_real_success_and_one_real_conflict() -> None:
     assert runtime is not None and runtime.write_client_factory is not None
     database = Database(settings.database_url)
 
-    async def provider_factory(session: AsyncSession, connection_id: UUID) -> Phase6GooglePort:
+    async def provider_factory(session: AsyncSession, connection_id: UUID) -> GoogleWriteBackPort:
         return await _google_service(session, runtime, settings).write_client(connection_id)
 
-    execution = Phase6ExecutionService(
+    execution = WriteBackService(
         sessions=database.sessions,
         owner_subject=settings.docrelay_owner_subject,
         provider_factory=provider_factory,
@@ -395,7 +395,7 @@ async def _prepare_live_plan(
         run_id = run.id
         proposal_id = proposal.id
 
-    dry_run = await Phase4PlanningService(
+    dry_run = await WritePlanningService(
         sessions=database.sessions,
         owner_subject=settings.docrelay_owner_subject,
     ).dry_run(run_id, proposal_id=proposal_id)

@@ -40,11 +40,11 @@ from docrelay.persistence.models import (
     WatchScan,
     WatchScanItem,
 )
-from docrelay.services.phase3 import (
-    Phase3Baseline,
-    Phase3Orchestrator,
-    Phase3RuleContext,
+from docrelay.services.superdocs_workflow import (
     RunView,
+    SuperDocsBaseline,
+    SuperDocsWorkflow,
+    WorkflowRuleContext,
 )
 
 WATCH_RULE_SCHEMA = "docrelay.watch-folder-rule.v1"
@@ -114,11 +114,11 @@ class WatchRunStarter(Protocol):
     async def start_run(
         self,
         *,
-        baseline: Phase3Baseline,
+        baseline: SuperDocsBaseline,
         instruction: str,
         model_tier: str | None = None,
         thinking_depth: str | None = None,
-        rule_context: Phase3RuleContext | None = None,
+        rule_context: WorkflowRuleContext | None = None,
     ) -> RunView: ...
 
 
@@ -164,7 +164,7 @@ class PreparedVersion:
 
 
 class WatchService:
-    """Persisted scheduler/discovery layer that feeds the authoritative Phase 3 pipeline."""
+    """Persisted scheduler/discovery layer that feeds the SuperDocs workflow."""
 
     def __init__(
         self,
@@ -795,7 +795,7 @@ class WatchService:
             raise WatchDiscoveryFailed(
                 "Google document version changed between discovery and immutable capture"
             )
-        rule_context = Phase3RuleContext(
+        rule_context = WorkflowRuleContext(
             folder_rule_id=prepared.rule.rule_id,
             folder_rule_version=prepared.rule.version,
             intent_discriminator=f"watch-document-version:{prepared.version_id}",
@@ -803,7 +803,7 @@ class WatchService:
         )
         await self._renew_claim(claim)
         run = await self._runs.start_run(
-            baseline=_phase3_baseline(registered),
+            baseline=_superdocs_baseline(registered),
             instruction=prepared.rule.instruction,
             rule_context=rule_context,
         )
@@ -1491,7 +1491,7 @@ def build_watch_service(
     sessions: async_sessionmaker[AsyncSession],
     owner_subject: str,
     runtime: object,
-    runs: Phase3Orchestrator,
+    runs: SuperDocsWorkflow,
     state_ttl_seconds: int,
     refresh_skew_seconds: int,
     baseline_max_attempts: int,
@@ -1514,9 +1514,9 @@ def build_watch_service(
     )
 
 
-def _phase3_baseline(registered: RegisteredBaseline) -> Phase3Baseline:
+def _superdocs_baseline(registered: RegisteredBaseline) -> SuperDocsBaseline:
     result = registered.result
-    return Phase3Baseline(
+    return SuperDocsBaseline(
         cloud_document_id=registered.document.id,
         provider_revision_id=result.revision_id,
         source_format=registered.document.mime_type,

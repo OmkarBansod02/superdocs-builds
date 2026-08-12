@@ -1,1 +1,1 @@
-"""External integration contracts; Phase 1 contains no runtime provider clients."""
+"""External integration contracts and runtime provider clients."""

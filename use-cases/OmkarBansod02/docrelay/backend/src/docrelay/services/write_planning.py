@@ -45,7 +45,7 @@ from docrelay.persistence.models import (
     WritePlan,
     WritePlanLineage,
 )
-from docrelay.services.phase3 import RunNotFound
+from docrelay.services.superdocs_workflow import RunNotFound
 
 
 class DryRunStatus(StrEnum):
@@ -56,18 +56,18 @@ class DryRunStatus(StrEnum):
     NOT_APPROVED = "NOT_APPROVED"
 
 
-class _Phase4Model(BaseModel):
+class _WritePlanningModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
-class DryRunSource(_Phase4Model):
+class DryRunSource(_WritePlanningModel):
     provider: Literal[Provider.GOOGLE]
     file_id: str
     baseline_revision_id: str
     native_snapshot_sha256: str
 
 
-class DryRunView(_Phase4Model):
+class DryRunView(_WritePlanningModel):
     run_id: UUID
     proposal_id: UUID | None
     status: DryRunStatus
@@ -89,8 +89,8 @@ class DryRunView(_Phase4Model):
     cloud_mutation_performed: Literal[False] = False
 
 
-class Phase4PlanningService:
-    """Compile persisted Phase 3 review evidence without any provider dependency."""
+class WritePlanningService:
+    """Compile persisted SuperDocs review evidence without any provider dependency."""
 
     def __init__(
         self,

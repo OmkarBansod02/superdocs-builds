@@ -1,1 +1,1 @@
-"""Mapping/compiler/verifier boundaries; no mapper is implemented in Phase 1."""
+"""Mapping, write-plan compilation, and verification boundaries."""

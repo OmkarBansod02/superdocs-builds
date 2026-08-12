@@ -18,20 +18,20 @@ from docrelay.persistence.models import (
     GoogleBaselineCapture,
 )
 from docrelay.services.machine import RunSummary
-from docrelay.services.phase3 import (
+from docrelay.services.superdocs_workflow import (
     DecisionInput,
     ExportNotReady,
     ExportView,
-    Phase3Baseline,
-    Phase3Orchestrator,
     ProposalView,
     RunView,
     SelectedBaselineChanged,
     SourceNotFound,
+    SuperDocsBaseline,
     SuperDocsNotConfigured,
+    SuperDocsWorkflow,
 )
-from docrelay.services.phase4 import DryRunView
-from docrelay.services.phase6 import WriteBackView
+from docrelay.services.write_planning import DryRunView
+from docrelay.services.writeback import WriteBackView
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
 
@@ -99,7 +99,7 @@ class WriteAuthorizationResponse(RunAPIModel):
     )
 
 
-def _orchestrator(request: Request) -> Phase3Orchestrator:
+def _orchestrator(request: Request) -> SuperDocsWorkflow:
     return machine_operations(request).runs()
 
 
@@ -151,7 +151,7 @@ async def start_run(
         raise SelectedBaselineChanged(
             "the selected Google baseline is no longer the current immutable revision"
         )
-    phase3_baseline = Phase3Baseline(
+    superdocs_baseline = SuperDocsBaseline(
         cloud_document_id=recaptured.document.id,
         provider_revision_id=result.revision_id,
         source_format=recaptured.document.mime_type,
@@ -171,7 +171,7 @@ async def start_run(
         filename=f"docrelay-source-{recaptured.document.id}.docx",
     )
     return await orchestrator.start_run(
-        baseline=phase3_baseline,
+        baseline=superdocs_baseline,
         instruction=payload.instruction,
         model_tier=payload.model_tier,
         thinking_depth=payload.thinking_depth,

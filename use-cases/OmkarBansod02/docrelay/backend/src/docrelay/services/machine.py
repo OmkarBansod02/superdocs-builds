@@ -20,7 +20,7 @@ from docrelay.domain.enums import (
     WatchScanTrigger,
     WriteAuthorizationState,
 )
-from docrelay.integrations.google.contracts import Phase6GooglePort
+from docrelay.integrations.google.contracts import GoogleWriteBackPort
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import GoogleConnectionService
@@ -45,20 +45,20 @@ from docrelay.persistence.models import (
     WritePlan,
 )
 from docrelay.services.artifacts import ArtifactStore
-from docrelay.services.phase3 import (
+from docrelay.services.superdocs_workflow import (
     DecisionInput,
     ExportArtifactView,
     ExportView,
-    Phase3Orchestrator,
     ProposalView,
     RunNotFound,
     RunView,
     SuperDocsNotConfigured,
+    SuperDocsWorkflow,
     get_write_back_summary,
 )
-from docrelay.services.phase4 import DryRunView, Phase4PlanningService
-from docrelay.services.phase6 import Phase6ExecutionService, WriteBackView
 from docrelay.services.watch import WatchNotFound, WatchService, build_watch_service
+from docrelay.services.write_planning import DryRunView, WritePlanningService
+from docrelay.services.writeback import WriteBackService, WriteBackView
 
 
 class ReviewStatus(StrEnum):
@@ -465,10 +465,10 @@ class MachineOperations:
             owner_subject=self.settings.docrelay_owner_subject,
         )
 
-    def runs(self) -> Phase3Orchestrator:
+    def runs(self) -> SuperDocsWorkflow:
         if self.superdocs_runtime is None:
             raise SuperDocsNotConfigured("SuperDocs is not configured on this server")
-        return Phase3Orchestrator(
+        return SuperDocsWorkflow(
             sessions=self.database.sessions,
             superdocs=self.superdocs_runtime.client,
             artifacts=self.artifacts,
@@ -493,18 +493,20 @@ class MachineOperations:
             max_items_per_scan=self.settings.watch_max_items_per_scan,
         )
 
-    def planning(self) -> Phase4PlanningService:
-        return Phase4PlanningService(
+    def planning(self) -> WritePlanningService:
+        return WritePlanningService(
             sessions=self.database.sessions,
             owner_subject=self.settings.docrelay_owner_subject,
         )
 
-    def write_service(self) -> Phase6ExecutionService:
+    def write_service(self) -> WriteBackService:
         runtime = self.google_runtime
         if runtime is None or runtime.write_client_factory is None:
             raise SuperDocsNotConfigured("Google write-back is not configured on this server")
 
-        async def provider_factory(session: AsyncSession, connection_id: UUID) -> Phase6GooglePort:
+        async def provider_factory(
+            session: AsyncSession, connection_id: UUID
+        ) -> GoogleWriteBackPort:
             google = GoogleConnectionService(
                 session=session,
                 runtime=runtime,
@@ -515,7 +517,7 @@ class MachineOperations:
             )
             return await google.write_client(connection_id)
 
-        return Phase6ExecutionService(
+        return WriteBackService(
             sessions=self.database.sessions,
             owner_subject=self.settings.docrelay_owner_subject,
             provider_factory=provider_factory,

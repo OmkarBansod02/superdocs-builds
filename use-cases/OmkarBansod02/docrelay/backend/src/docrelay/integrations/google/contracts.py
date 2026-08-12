@@ -134,7 +134,7 @@ class CanonicalRead(Protocol):
     async def reread_canonical(self, file_id: str) -> CanonicalReread: ...
 
 
-class Phase6GooglePort(Protocol):
+class GoogleWriteBackPort(Protocol):
     async def inspect_current(
         self, *, file_id: str, destination_parent_id: str
     ) -> CurrentGoogleDocument: ...

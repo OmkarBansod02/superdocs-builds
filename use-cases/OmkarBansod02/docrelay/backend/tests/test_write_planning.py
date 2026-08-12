@@ -34,7 +34,7 @@ from docrelay.persistence.models import (
     SyncRun,
     WritePlan,
 )
-from docrelay.services.phase4 import DryRunStatus, Phase4PlanningService
+from docrelay.services.write_planning import DryRunStatus, WritePlanningService
 
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 
@@ -263,7 +263,7 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
         run_id = run.id
         proposal_id = proposal.id
 
-    service = Phase4PlanningService(sessions=sessions, owner_subject="owner-a")
+    service = WritePlanningService(sessions=sessions, owner_subject="owner-a")
     first = await service.dry_run(run_id, proposal_id=proposal_id)
     second = await service.dry_run(run_id, proposal_id=proposal_id)
 

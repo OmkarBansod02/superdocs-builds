@@ -5,7 +5,7 @@ import httpx
 from pydantic import SecretStr
 
 from docrelay.core.config import Settings
-from docrelay.integrations.google.contracts import Phase6GooglePort
+from docrelay.integrations.google.contracts import GoogleWriteBackPort
 from docrelay.integrations.google.credentials import CredentialCipher
 from docrelay.integrations.google.oauth import GoogleOAuthHTTPClient, GoogleOAuthPort
 from docrelay.integrations.google.read_only import GoogleReadHTTPClient, GoogleReadPort
@@ -19,7 +19,7 @@ class GoogleRuntime:
     client_id: str
     redirect_uri: str
     read_client_factory: Callable[[SecretStr], GoogleReadPort]
-    write_client_factory: Callable[[SecretStr], Phase6GooglePort] | None = None
+    write_client_factory: Callable[[SecretStr], GoogleWriteBackPort] | None = None
     close_callback: Callable[[], Awaitable[None]] | None = None
 
     @classmethod

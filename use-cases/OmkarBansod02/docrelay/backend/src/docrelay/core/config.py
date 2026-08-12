@@ -43,7 +43,12 @@ class Settings(BaseSettings):
     superdocs_api_key: SecretStr | None = None
     superdocs_api_base: str = "https://api.superdocs.app/v1"
     superdocs_http_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
-    phase3_worker_poll_seconds: float = Field(default=2.0, gt=0, le=60)
+    superdocs_worker_poll_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        validation_alias="phase3_worker_poll_seconds",
+    )
     watch_worker_claim_limit: int = Field(default=10, ge=1, le=100)
     watch_scan_lease_seconds: int = Field(default=300, ge=30, le=3600)
     watch_max_items_per_scan: int = Field(default=5000, ge=1, le=100_000)

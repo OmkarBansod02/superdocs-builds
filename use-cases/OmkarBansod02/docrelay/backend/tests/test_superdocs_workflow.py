@@ -49,13 +49,13 @@ from docrelay.persistence.models import (
     SuperDocsJob,
 )
 from docrelay.services.artifacts import InMemoryArtifactStore
-from docrelay.services.phase3 import (
+from docrelay.services.superdocs_workflow import (
     DecisionInput,
     IncompleteDecisionSet,
-    Phase3Baseline,
-    Phase3Orchestrator,
     RecoveryBlocked,
     ReviewPayloadInvalid,
+    SuperDocsBaseline,
+    SuperDocsWorkflow,
 )
 
 
@@ -261,7 +261,7 @@ class FakeSuperDocs:
 
 
 @pytest.fixture
-async def phase3_database() -> AsyncIterator[
+async def workflow_database() -> AsyncIterator[
     tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID]
 ]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -300,9 +300,9 @@ async def phase3_database() -> AsyncIterator[
     await engine.dispose()
 
 
-def baseline(document_id: UUID, revision: str = "revision-A") -> Phase3Baseline:
+def baseline(document_id: UUID, revision: str = "revision-A") -> SuperDocsBaseline:
     docx = f"PK\x03\x04synthetic baseline {revision} with 45 days".encode()
-    return Phase3Baseline(
+    return SuperDocsBaseline(
         cloud_document_id=document_id,
         provider_revision_id=revision,
         source_format="application/vnd.google-apps.document",
@@ -338,13 +338,13 @@ def proposal(
 
 
 async def test_lost_start_response_recovers_same_job_without_duplicate_paid_start(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     provider.start_loses_response = True
     artifacts = InMemoryArtifactStore()
-    first_process = Phase3Orchestrator(
+    first_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
 
@@ -355,7 +355,7 @@ async def test_lost_start_response_recovers_same_job_without_duplicate_paid_star
     assert view.state is SyncRunState.EDITING
     assert view.attention_code == "SUPERDOCS_JOB_START_OUTCOME_UNKNOWN"
 
-    restarted_process = Phase3Orchestrator(
+    restarted_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     recovered = await restarted_process.resume(view.run_id)
@@ -379,13 +379,13 @@ async def test_lost_start_response_recovers_same_job_without_duplicate_paid_star
 
 
 async def test_lost_upload_response_recovers_fresh_session_without_second_upload(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     provider.upload_loses_response = True
     artifacts = InMemoryArtifactStore()
-    first_process = Phase3Orchestrator(
+    first_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     first = await first_process.start_run(
@@ -393,7 +393,7 @@ async def test_lost_upload_response_recovers_fresh_session_without_second_upload
     )
     assert first.attention_code == "SUPERDOCS_UPLOAD_OUTCOME_UNKNOWN"
 
-    restarted_process = Phase3Orchestrator(
+    restarted_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     recovered = await restarted_process.resume(first.run_id)
@@ -406,12 +406,12 @@ async def test_lost_upload_response_recovers_fresh_session_without_second_upload
 
 
 async def test_definitive_upload_rejection_is_not_retried_without_explicit_override(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     provider.upload_rejects = True
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),
@@ -434,12 +434,12 @@ async def test_definitive_upload_rejection_is_not_retried_without_explicit_overr
 
 
 async def test_review_requires_complete_explicit_set_and_preserves_replacement_lineage(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     artifacts = InMemoryArtifactStore()
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     started = await service.start_run(
@@ -465,7 +465,7 @@ async def test_review_requires_complete_explicit_set_and_preserves_replacement_l
     assert provider.decision_calls == []
 
     by_change = {item.change_id: item for item in awaiting.pending_proposals}
-    restarted_at_review = Phase3Orchestrator(
+    restarted_at_review = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     await restarted_at_review.submit_decisions(
@@ -522,12 +522,12 @@ async def test_review_requires_complete_explicit_set_and_preserves_replacement_l
 
 
 async def test_lost_review_response_reconciles_same_job_without_resubmission(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     artifacts = InMemoryArtifactStore()
-    first_process = Phase3Orchestrator(
+    first_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     started = await first_process.start_run(
@@ -548,7 +548,7 @@ async def test_lost_review_response_reconciles_same_job_without_resubmission(
     assert submitted.attention_code == "SUPERDOCS_REVIEW_SUBMISSION_OUTCOME_UNKNOWN"
     assert started.run_id in await first_process.list_resumable_run_ids()
 
-    restarted_process = Phase3Orchestrator(
+    restarted_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     reconciled = await restarted_process.resume(started.run_id)
@@ -568,11 +568,11 @@ async def test_lost_review_response_reconciles_same_job_without_resubmission(
 
 
 async def test_same_intent_reuses_run_but_new_revision_gets_fresh_ingestion(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),
@@ -599,11 +599,11 @@ async def test_same_intent_reuses_run_but_new_revision_gets_fresh_ingestion(
 
 
 async def test_continue_prompt_is_exact_and_malformed_review_fails_closed(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),
@@ -629,12 +629,12 @@ async def test_continue_prompt_is_exact_and_malformed_review_fails_closed(
 
 
 async def test_lost_stop_response_reconciles_explicit_continue_prompt_decision(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     provider.continue_loses_response = True
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),
@@ -651,7 +651,7 @@ async def test_lost_stop_response_reconciles_explicit_continue_prompt_decision(
     )
     assert unknown.attention_code == "SUPERDOCS_CONTINUE_OUTCOME_UNKNOWN"
 
-    restarted = Phase3Orchestrator(
+    restarted = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),
@@ -670,13 +670,13 @@ async def test_lost_stop_response_reconciles_explicit_continue_prompt_decision(
 
 
 async def test_completed_job_recovery_refocuses_and_exports_without_second_edit_job(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
     provider.export_times_out_once = True
     artifacts = InMemoryArtifactStore()
-    first_process = Phase3Orchestrator(
+    first_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     started = await first_process.start_run(
@@ -696,7 +696,7 @@ async def test_completed_job_recovery_refocuses_and_exports_without_second_edit_
     assert job is not None and job.status is SuperDocsJobStatus.COMPLETED
     assert export_before is None
 
-    restarted_process = Phase3Orchestrator(
+    restarted_process = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
     completed = await restarted_process.resume(started.run_id)
@@ -716,11 +716,11 @@ async def test_completed_job_recovery_refocuses_and_exports_without_second_edit_
 
 
 async def test_provider_completion_cannot_bypass_an_explicit_proposal_decision(
-    phase3_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
 ) -> None:
-    _, sessions, document_id = phase3_database
+    _, sessions, document_id = workflow_database
     provider = FakeSuperDocs()
-    service = Phase3Orchestrator(
+    service = SuperDocsWorkflow(
         sessions=sessions,
         superdocs=provider,
         artifacts=InMemoryArtifactStore(),

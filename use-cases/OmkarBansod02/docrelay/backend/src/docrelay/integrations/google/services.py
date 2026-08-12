@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from docrelay.domain.enums import ConnectionStatus, Provider
-from docrelay.integrations.google.contracts import Phase6GooglePort
+from docrelay.integrations.google.contracts import GoogleWriteBackPort
 from docrelay.integrations.google.credentials import (
     CredentialEncryptionError,
     EncryptedValue,
@@ -382,7 +382,7 @@ class GoogleConnectionService:
             )
         return metadata
 
-    async def write_client(self, connection_id: UUID) -> Phase6GooglePort:
+    async def write_client(self, connection_id: UUID) -> GoogleWriteBackPort:
         connection = await self._owned_connection(connection_id)
         token = await self._valid_access_token(connection)
         factory = self._runtime.write_client_factory

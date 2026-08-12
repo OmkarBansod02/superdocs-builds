@@ -5,7 +5,7 @@ from mcp.server import MCPServer
 
 from docrelay.domain.enums import ConflictChoice
 from docrelay.services.machine import MachineOperations
-from docrelay.services.phase3 import DecisionInput
+from docrelay.services.superdocs_workflow import DecisionInput
 
 
 def create_mcp_server(operations: MachineOperations) -> MCPServer:

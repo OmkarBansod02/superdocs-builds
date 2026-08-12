@@ -7,14 +7,14 @@ from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.superdocs.runtime import SuperDocsRuntime
 from docrelay.persistence.database import Database
 from docrelay.services.artifacts import FilesystemArtifactStore
-from docrelay.services.phase3 import Phase3Error, Phase3Orchestrator
+from docrelay.services.superdocs_workflow import SuperDocsWorkflow, SuperDocsWorkflowError
 from docrelay.services.watch import WatchError, WatchService, build_watch_service
 
 logger = logging.getLogger(__name__)
 
 
 async def run_once(
-    orchestrator: Phase3Orchestrator,
+    orchestrator: SuperDocsWorkflow,
     watcher: WatchService | None = None,
     *,
     watch_claim_limit: int = 10,
@@ -46,7 +46,7 @@ async def run_once(
     for run_id in run_ids:
         try:
             await orchestrator.resume(run_id)
-        except Phase3Error as exc:
+        except SuperDocsWorkflowError as exc:
             logger.warning(
                 "phase3_worker_attention",
                 extra={
@@ -69,11 +69,11 @@ async def main() -> None:
     configure_logging(settings.log_level)
     superdocs_runtime = SuperDocsRuntime.from_settings(settings)
     if superdocs_runtime is None:
-        raise RuntimeError("SUPERDOCS_API_KEY is required for the Phase 3 worker")
+        raise RuntimeError("SUPERDOCS_API_KEY is required for the SuperDocs workflow worker")
     google_runtime = GoogleRuntime.from_settings(settings)
     database = Database(settings.database_url)
     artifacts = FilesystemArtifactStore(settings.docrelay_artifact_dir)
-    orchestrator = Phase3Orchestrator(
+    orchestrator = SuperDocsWorkflow(
         sessions=database.sessions,
         superdocs=superdocs_runtime.client,
         artifacts=artifacts,
@@ -103,7 +103,7 @@ async def main() -> None:
                 watch_claim_limit=settings.watch_worker_claim_limit,
             )
             idle_multiplier = 1.0 if work_count else min(idle_multiplier * 1.5, 5.0)
-            await asyncio.sleep(settings.phase3_worker_poll_seconds * idle_multiplier)
+            await asyncio.sleep(settings.superdocs_worker_poll_seconds * idle_multiplier)
     finally:
         if google_runtime is not None:
             await google_runtime.close()
