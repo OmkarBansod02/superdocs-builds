@@ -231,6 +231,12 @@ export interface WriteBackRunSummary {
     old_text: string;
     new_text: string;
     context: DryRunView["context"];
+    changes?: Array<{
+      proposal_id?: string | null;
+      old_text: string;
+      new_text: string;
+      context: DryRunView["context"];
+    }>;
   } | null;
   backup_created: boolean;
   backup_verified: boolean;
@@ -250,6 +256,14 @@ export interface DryRunSource {
   native_snapshot_sha256: string;
 }
 
+export interface DryRunMappedChange {
+  proposal_id: string;
+  old_text: string;
+  new_text: string;
+  context: DryRunView["context"];
+  structural_location: Record<string, unknown>;
+}
+
 export interface DryRunView {
   run_id: string;
   proposal_id: string | null;
@@ -264,6 +278,7 @@ export interface DryRunView {
     source_snapshot_id: string;
     native_snapshot_sha256: string;
   } | null;
+  changes?: DryRunMappedChange[];
   structural_location: Record<string, unknown> | null;
   operation_count: number;
   operation_types: string[];

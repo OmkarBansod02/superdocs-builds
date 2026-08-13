@@ -55,6 +55,9 @@ Branch: `docrelay`
   multi-document summaries; REST and a stateless Streamable HTTP MCP facade share one
   application-service seam for scan, review, dry-run, exact-file authorization,
   write-back, verification, and reviewed-DOCX export without batch approval/write.
+- Multi-approved write — **CONDITIONAL PASS**. Multiple approved, independent,
+  non-overlapping text replacements can share one MappingProof/WritePlan and one
+  guarded Google `batchUpdate`. Live Google write remains manual.
 
 ## Proven assumptions
 
@@ -67,9 +70,10 @@ Branch: `docrelay`
 - SuperDocs chunk IDs are fresh-ingestion lookup evidence, not Google ranges.
 - Only a uniquely proven, exact-range operation with the baseline revision may write;
   first-match/global replace and whole-document replacement are prohibited.
-- The mapper accepts only one unique top-level `NORMAL_TEXT` body paragraph, one plain
-  text run, and one internal contiguous ordinary ASCII text replacement; old/new UTF-16
-  lengths may differ.
+- Each approved proposal must independently map to one unique top-level `NORMAL_TEXT`
+  body paragraph, one plain text run, and one internal contiguous ordinary ASCII text
+  replacement; old/new UTF-16 lengths may differ. Multiple approved replacements may
+  share one WritePlan only when their frozen baseline ranges do not overlap.
 - A SuperDocs `chunk_id` remains review lookup evidence only; MappingProof owns the
   provider-native UTF-16 range and WritePlan owns the exact future operation intent.
 - Only `WRITE_VERIFIED` is provider-write success. It requires a verified backup, an
@@ -102,10 +106,10 @@ Branch: `docrelay`
 
 ## Next action
 
-Post-Phase-9 production service modules now use domain terminology. Production release
+Manual live proof of two approved non-overlapping Google Docs replacements remains;
+do not infer create/append, overlap, or automatic write support. Production release
 of watch mode remains gated on the bounded live Google proof and restricted-scope
-compliance; do not infer Shared Drive, new-format, broader mapping, or automatic write
-support from Phase 8B/9.
+compliance.
 
 ## Checkpoint log
 
@@ -205,3 +209,10 @@ and the valid omitted-zero Google leading section-break shape compiles without w
 range rejection. Both persisted live dry-runs returned READY with zero cloud mutation; focused
 backend/frontend tests and affected lint/format/type checks passed. One rendered browser recovery
 click remains manual because Browser/Playwright was unavailable; no SuperDocs-side issue found.
+
+2026-08-13 — Multi-approved write checkpoint: CONDITIONAL PASS; multiple approved independent
+non-overlapping text replacements now compile into one guarded Docs `batchUpdate` ordered
+highest-baseline-index to lowest, with complete postimage verification and rejected proposals
+absent from MappingProof/WritePlan. Focused backend tests passed (119) plus frontend UI tests
+(29); affected Ruff/mypy/typecheck/lint and `git diff --check` passed. No live Google write
+was performed. No commit created.

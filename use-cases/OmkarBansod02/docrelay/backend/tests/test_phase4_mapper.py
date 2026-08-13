@@ -550,6 +550,6 @@ def test_plan_is_frozen_and_deterministic_and_changed_input_changes_identity() -
     assert changed.integrity_sha256 != first.integrity_sha256
 
     tampered = deepcopy(first.model_dump(mode="json"))
-    tampered["payload"]["expected_replacement"]["old_text"] = "XX"
+    tampered["integrity_sha256"] = ZERO_HASH
     with pytest.raises(ValidationError, match="integrity mismatch"):
         SealedWritePlan.model_validate(tampered)

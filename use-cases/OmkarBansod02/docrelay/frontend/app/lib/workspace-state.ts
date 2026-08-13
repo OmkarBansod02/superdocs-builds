@@ -164,6 +164,8 @@ export function humanDryRunFailure(reasonCode: string | null, reason: string | n
     WRONG_REVISION: "The document revision has changed since the baseline.",
     NOT_APPROVED: "This proposal has not been approved.",
     UNDECIDED: "No review decision has been made for this proposal.",
+    OVERLAPPING_MAPPED_RANGES: "Two approved changes overlap in the document, so DocRelay stopped before writing.",
+    DUPLICATE_TARGET_MAPPING: "Two approved changes mapped to the same place in the document.",
     UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS: "More than one proposal was approved, but this mapper can safely write only one.",
     UNSUPPORTED_FORMATTING: "The document contains unsupported formatting.",
     UNSUPPORTED_STRUCTURE: "The document structure is not supported for safe write-back.",

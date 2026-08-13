@@ -5,11 +5,12 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { contextRange, DiffView } from "../app/components/diff-view";
+import { DryRunSummary } from "../app/components/dry-run-summary";
 import { ProcessingState } from "../app/components/processing-state";
-import { WriteBackResult } from "../app/components/write-back-result";
 import { writeBackViewFromPersisted } from "../app/components/run-detail-workspace";
-import type { DryRunView, RunSummary, RunView, WriteBackView } from "../app/lib/api";
 import { runStatusDisplay } from "../app/components/run-status";
+import { WriteBackResult } from "../app/components/write-back-result";
+import type { DryRunView, RunSummary, RunView, WriteBackView } from "../app/lib/api";
 
 function run(overrides: Partial<RunSummary>): RunSummary {
   return {
@@ -147,6 +148,87 @@ describe("contextual write preview", () => {
     expect(html).toContain(">eight</mark>");
     expect(html).toContain(" days after receipt.");
     expect(html).toContain("Context is read-only");
+  });
+
+  it("lists every approved mapped change on dry-run and verified screens", () => {
+    const payment = {
+      offset_unit: "UNICODE_CODE_POINT" as const,
+      before: {
+        text: "Payment terms are 30 days.",
+        highlight_start: 18,
+        highlight_end: 20,
+      },
+      after: {
+        text: "Payment terms are 14 days.",
+        highlight_start: 18,
+        highlight_end: 20,
+      },
+      source_snapshot_id: "snapshot-1",
+      native_snapshot_sha256: "a".repeat(64),
+    };
+    const warranty = {
+      offset_unit: "UNICODE_CODE_POINT" as const,
+      before: {
+        text: "Warranty lasts 12 months.",
+        highlight_start: 15,
+        highlight_end: 17,
+      },
+      after: {
+        text: "Warranty lasts 24 months.",
+        highlight_start: 15,
+        highlight_end: 17,
+      },
+      source_snapshot_id: "snapshot-1",
+      native_snapshot_sha256: "a".repeat(64),
+    };
+    const dryRunHtml = renderToStaticMarkup(
+      createElement(DryRunSummary, {
+        document: { name: "Agreement", revision: "revision-1" },
+        dryRun: dryRun({
+          old_text: "30",
+          new_text: "14",
+          context: payment,
+          operation_count: 4,
+          changes: [
+            { proposal_id: "p1", old_text: "30", new_text: "14", context: payment, structural_location: {} },
+            { proposal_id: "p2", old_text: "12", new_text: "24", context: warranty, structural_location: {} },
+          ],
+        }),
+        writing: false,
+        onWrite: () => undefined,
+      }),
+    );
+    expect(dryRunHtml).toContain("2 approved changes will be written as 4 guarded Google Docs operations.");
+    expect(dryRunHtml).toContain("Change 1");
+    expect(dryRunHtml).toContain("Change 2");
+    expect(dryRunHtml).toContain(">30</mark>");
+    expect(dryRunHtml).toContain(">14</mark>");
+    expect(dryRunHtml).toContain(">12</mark>");
+    expect(dryRunHtml).toContain(">24</mark>");
+
+    const verifiedHtml = renderToStaticMarkup(
+      createElement(WriteBackResult, {
+        document: { name: "Agreement", revision: "revision-1" },
+        result: verifiedWrite({
+          preview: {
+            old_text: "30",
+            new_text: "14",
+            context: payment,
+            changes: [
+              { proposal_id: "p1", old_text: "30", new_text: "14", context: payment },
+              { proposal_id: "p2", old_text: "12", new_text: "24", context: warranty },
+            ],
+          },
+        }),
+        deciding: false,
+        onDecision: vi.fn(),
+      }),
+    );
+    expect(verifiedHtml).toContain("Changes written and verified");
+    expect(verifiedHtml).toContain("Change 1");
+    expect(verifiedHtml).toContain("Change 2");
+    expect(verifiedHtml).toContain(">30</mark>");
+    expect(verifiedHtml).toContain(">24</mark>");
   });
 
   it("falls back to exact values when context is absent or belongs to another plan", () => {

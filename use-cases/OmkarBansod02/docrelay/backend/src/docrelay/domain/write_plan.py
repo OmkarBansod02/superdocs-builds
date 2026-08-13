@@ -97,6 +97,38 @@ class ExpectedReplacementContract(FrozenContract):
     new_paragraph_sha256: Sha256
 
 
+class PlannedReplacementContract(FrozenContract):
+    proposal_id: UUID
+    decision_id: UUID
+    old_text: str = Field(min_length=1)
+    new_text: str = Field(min_length=1)
+    old_paragraph_sha256: Sha256
+    new_paragraph_sha256: Sha256
+    tab_id: str = Field(min_length=1)
+    segment_id: Literal[""] = ""
+    structural_element_index: int = Field(ge=0)
+    baseline_edit_start_index: int = Field(ge=0)
+    baseline_edit_end_index: int = Field(gt=0)
+    google_delete_start_index: int = Field(ge=0)
+    google_delete_end_index: int = Field(gt=0)
+    google_insert_index: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_baseline_and_google_ranges(self) -> Self:
+        if self.baseline_edit_start_index >= self.baseline_edit_end_index:
+            raise ValueError("planned replacement baseline range is empty")
+        if (
+            self.google_delete_start_index != self.baseline_edit_start_index
+            or self.google_delete_end_index != self.baseline_edit_end_index
+            or self.google_insert_index != self.baseline_edit_start_index
+        ):
+            raise ValueError(
+                "Google indexes must equal the frozen baseline range when mutations "
+                "are ordered from highest baseline index to lowest"
+            )
+        return self
+
+
 class UnsupportedChangeContract(FrozenContract):
     proposal_id: UUID | None = None
     superdocs_change_id: str | None = None
@@ -115,6 +147,7 @@ class WritePlanPayload(FrozenContract):
     compiler_version: str = Field(min_length=1)
     approval_lineage: tuple[ApprovalLineageContract, ...] = Field(min_length=1)
     expected_replacement: ExpectedReplacementContract
+    planned_replacements: tuple[PlannedReplacementContract, ...] = Field(min_length=1)
     provider_operations: tuple[GoogleDocsBatchUpdate, ...] = Field(min_length=1, max_length=1)
     expected_postimage: ExpectedPostimageContract
     unsupported_or_rejected_changes: tuple[UnsupportedChangeContract, ...] = ()
@@ -126,6 +159,65 @@ class WritePlanPayload(FrozenContract):
         operation = self.provider_operations[0]
         if operation.required_revision_id != self.source.baseline_revision_id:
             raise ValueError("provider operation is not guarded by the exact baseline revision")
+        if len(self.planned_replacements) != len(self.approval_lineage):
+            raise ValueError("planned replacements must match the approved lineage set")
+        planned_ids = tuple(item.proposal_id for item in self.planned_replacements)
+        lineage_ids = tuple(item.proposal_id for item in self.approval_lineage)
+        if planned_ids != lineage_ids:
+            raise ValueError("planned replacement identities must match approval lineage order")
+        first = self.planned_replacements[0]
+        if (
+            first.old_text != self.expected_replacement.old_text
+            or first.new_text != self.expected_replacement.new_text
+            or first.old_paragraph_sha256 != self.expected_replacement.old_paragraph_sha256
+            or first.new_paragraph_sha256 != self.expected_replacement.new_paragraph_sha256
+        ):
+            raise ValueError("expected_replacement must mirror the first planned replacement")
+        expected_requests = 2 * len(self.planned_replacements)
+        if len(operation.requests) != expected_requests:
+            raise ValueError(
+                "provider operation count must be two requests per planned replacement"
+            )
+        google_order = tuple(
+            sorted(
+                self.planned_replacements,
+                key=lambda item: (
+                    -item.baseline_edit_start_index,
+                    -item.baseline_edit_end_index,
+                    str(item.proposal_id),
+                ),
+            )
+        )
+        for index, item in enumerate(google_order):
+            delete_request = operation.requests[index * 2]
+            insert_request = operation.requests[index * 2 + 1]
+            if set(delete_request) != {"deleteContentRange"} or set(insert_request) != {
+                "insertText"
+            }:
+                raise ValueError("provider operation shape is not the exact supported subset")
+            range_value = delete_request["deleteContentRange"]
+            if not isinstance(range_value, dict):
+                raise ValueError("provider delete range is malformed")
+            delete_range = range_value.get("range")
+            insert_value = insert_request["insertText"]
+            if not isinstance(delete_range, dict) or not isinstance(insert_value, dict):
+                raise ValueError("provider mutation payload is malformed")
+            location = insert_value.get("location")
+            if not isinstance(location, dict):
+                raise ValueError("provider insert location is malformed")
+            if (
+                delete_range.get("tabId") != item.tab_id
+                or delete_range.get("segmentId") != item.segment_id
+                or delete_range.get("startIndex") != item.google_delete_start_index
+                or delete_range.get("endIndex") != item.google_delete_end_index
+                or location.get("tabId") != item.tab_id
+                or location.get("segmentId") != item.segment_id
+                or location.get("index") != item.google_insert_index
+                or insert_value.get("text") != item.new_text
+            ):
+                raise ValueError(
+                    "provider operations are not the frozen high-to-low replacement set"
+                )
         return self
 
 

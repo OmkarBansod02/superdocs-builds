@@ -42,10 +42,12 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
     ? dryRun
     : null;
   const preview = verifiedDryRun ?? result.preview;
+  const items = verifiedChanges(preview, change);
+  const multiple = items.length > 1;
   const checks = [
     result.backup_created ? "Versioned backup created" : null,
     result.backup_verified ? "Backup verified" : null,
-    result.write_applied ? "Approved change applied" : null,
+    result.write_applied ? (multiple ? "Approved changes applied" : "Approved change applied") : null,
     result.resulting_revision_id ? "Google revision advanced" : null,
     result.structurally_verified ? "Resulting structure verified" : null,
   ].filter((item): item is string => item !== null);
@@ -55,14 +57,21 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
       <WorkflowProgress current="Write-back" />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
         <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
-          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Change written and verified</h2>
-          <p className="mt-2 text-[15px] text-muted">The approved change is now in Google Drive.</p>
+          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">{multiple ? "Changes written and verified" : "Change written and verified"}</h2>
+          <p className="mt-2 text-[15px] text-muted">{multiple ? "The approved changes are now in Google Drive." : "The approved change is now in Google Drive."}</p>
           <p className="mt-5 text-[17px] font-semibold text-success">Write-back verified</p>
 
-          {preview?.old_text || preview?.new_text || change?.oldText || change?.newText ? (
+          {items.length ? (
             <div className="mt-9">
               <h3 className="text-[18px] font-semibold text-ink">What changed</h3>
-              <div className="mt-5"><DiffView oldText={preview?.old_text ?? change?.oldText ?? null} newText={preview?.new_text ?? change?.newText ?? null} context={preview?.context} /></div>
+              <div className="mt-5 grid gap-8">
+                {items.map((item, index) => (
+                  <div key={item.proposal_id ?? String(index)}>
+                    {multiple ? <p className="mb-3 text-[13px] font-semibold uppercase tracking-[0.04em] text-muted">Change {index + 1}</p> : null}
+                    <DiffView oldText={item.old_text} newText={item.new_text} context={item.context} />
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -176,4 +185,17 @@ function RevisionRow({ label, value }: { label: string; value: string | null }) 
 
 function humanDetectionStage(stage: string): string {
   return stage.replaceAll("_", " ").toLowerCase();
+}
+
+function verifiedChanges(
+  preview: DryRunView | WriteBackView["preview"] | null | undefined,
+  change?: { oldText: string | null; newText: string | null },
+): Array<{ proposal_id?: string | null; old_text: string | null; new_text: string | null; context?: DryRunView["context"] }> {
+  if (preview && "changes" in preview && preview.changes && preview.changes.length > 0) {
+    return preview.changes;
+  }
+  const oldText = preview && "old_text" in preview ? preview.old_text : change?.oldText ?? null;
+  const newText = preview && "new_text" in preview ? preview.new_text : change?.newText ?? null;
+  if (!oldText && !newText) return [];
+  return [{ old_text: oldText ?? null, new_text: newText ?? null, context: preview && "context" in preview ? preview.context : undefined }];
 }

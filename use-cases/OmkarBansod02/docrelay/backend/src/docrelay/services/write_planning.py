@@ -21,11 +21,12 @@ from docrelay.mapping.production import (
     BaselineSnapshot,
     MappingFailure,
     MappingFailureCode,
+    ProviderLocation,
     ReviewedProposal,
     SealedMappingProof,
     SemanticReplacement,
     compile_write_plan,
-    map_replacement,
+    map_approved_replacements,
     normalize_reviewed_change,
     write_plan_identity,
 )
@@ -89,6 +90,14 @@ class ContextualReplacement(_WritePlanningModel):
     native_snapshot_sha256: str
 
 
+class DryRunMappedChange(_WritePlanningModel):
+    proposal_id: UUID
+    old_text: str = Field(min_length=1)
+    new_text: str = Field(min_length=1)
+    context: ContextualReplacement
+    structural_location: dict[str, JsonValue]
+
+
 class DryRunView(_WritePlanningModel):
     run_id: UUID
     proposal_id: UUID | None
@@ -97,6 +106,7 @@ class DryRunView(_WritePlanningModel):
     old_text: str | None
     new_text: str | None
     context: ContextualReplacement | None = None
+    changes: tuple[DryRunMappedChange, ...] = ()
     structural_location: dict[str, JsonValue] | None
     operation_count: int = Field(ge=0)
     operation_types: tuple[str, ...]
@@ -114,11 +124,23 @@ class DryRunView(_WritePlanningModel):
     @model_validator(mode="after")
     def validate_context_contract(self) -> Self:
         if self.status is not DryRunStatus.READY:
-            if self.context is not None:
+            if self.context is not None or self.changes:
                 raise ValueError("non-ready dry-runs cannot expose write preview context")
             return self
-        if self.context is None or self.old_text is None or self.new_text is None:
+        if (
+            self.context is None
+            or self.old_text is None
+            or self.new_text is None
+            or not self.changes
+        ):
             raise ValueError("ready dry-runs require exact contextual replacement evidence")
+        first = self.changes[0]
+        if (
+            first.old_text != self.old_text
+            or first.new_text != self.new_text
+            or first.context != self.context
+        ):
+            raise ValueError("top-level dry-run preview must match the first mapped change")
         before = self.context.before
         after = self.context.after
         if (
@@ -130,6 +152,18 @@ class DryRunView(_WritePlanningModel):
             or self.context.native_snapshot_sha256 != self.source.native_snapshot_sha256
         ):
             raise ValueError("context does not match the exact frozen replacement evidence")
+        for change in self.changes:
+            change_before = change.context.before
+            change_after = change.context.after
+            if (
+                change_before.text[change_before.highlight_start : change_before.highlight_end]
+                != change.old_text
+                or change_after.text[change_after.highlight_start : change_after.highlight_end]
+                != change.new_text
+                or self.source is None
+                or change.context.native_snapshot_sha256 != self.source.native_snapshot_sha256
+            ):
+                raise ValueError("mapped change context does not match frozen replacement evidence")
         return self
 
 
@@ -169,75 +203,12 @@ class WritePlanningService:
                 native_snapshot_sha256=snapshot.native_canonical_sha256,
             )
             try:
-                lineage = await self._review_lineage(session, run, snapshot, proposal_id)
-                (
-                    proposal,
-                    decision,
-                    round_row,
-                    job,
-                    superdocs_session,
-                    superdocs_document,
-                    export,
-                ) = lineage
+                approved_lineage = await self._approved_review_lineage(
+                    session, run, snapshot, proposal_id
+                )
+                export = approved_lineage[0][6]
                 await self._require_export_artifact(export)
                 capture = await self._baseline_capture(session, snapshot)
-                superseded = (
-                    await session.scalar(
-                        select(ProposedChange.id).where(
-                            ProposedChange.replaces_proposal_id == proposal.id
-                        )
-                    )
-                    is not None
-                )
-                lineage_current = (
-                    run.state is SyncRunState.REVIEWED_EXPORT_READY
-                    and run.baseline_revision_id == snapshot.provider_revision_id
-                    and proposal.sync_run_id == run.id
-                    and proposal.superdocs_job_id == job.id
-                    and proposal.review_round_id == round_row.id
-                    and proposal.target_document_id == superdocs_document.id
-                    and decision is not None
-                    and decision.sync_run_id == run.id
-                    and decision.proposed_change_id == proposal.id
-                    and round_row.sync_run_id == run.id
-                    and round_row.superdocs_job_id == job.id
-                    and round_row.resolution is ReviewRoundResolution.SUBMIT_CHANGES
-                    and job.sync_run_id == run.id
-                    and job.status is SuperDocsJobStatus.COMPLETED
-                    and job.superdocs_session_id == superdocs_session.id
-                    and job.target_document_id == superdocs_document.id
-                    and superdocs_session.sync_run_id == run.id
-                    and superdocs_document.superdocs_session_id == superdocs_session.id
-                    and superdocs_document.source_snapshot_id == snapshot.id
-                    and export.sync_run_id == run.id
-                    and export.source_snapshot_id == snapshot.id
-                    and export.superdocs_session_id == superdocs_session.id
-                    and export.superdocs_document_id == superdocs_document.id
-                    and export.superdocs_job_id == job.id
-                    and not export.warnings
-                )
-                reviewed = ReviewedProposal(
-                    proposal_id=proposal.id,
-                    decision_id=decision.id if decision else None,
-                    decision=decision.decision if decision else None,
-                    decision_sha256=decision.decision_sha256 if decision else None,
-                    superseded=superseded,
-                    operation=proposal.operation,
-                    review_round=round_row.ordinal,
-                    session_id=superdocs_session.session_id,
-                    session_document_id=superdocs_document.session_document_id,
-                    durable_document_id=superdocs_document.durable_document_id,
-                    job_id=job.provider_job_id,
-                    superdocs_export_id=export.id,
-                    approved_export_sha256=export.sha256,
-                    final_version_id=export.final_version_id,
-                    superdocs_change_id=proposal.superdocs_change_id,
-                    chunk_id=proposal.chunk_id,
-                    old_html=proposal.old_html,
-                    new_html=proposal.new_html,
-                    lineage_current=lineage_current,
-                )
-                change = normalize_reviewed_change(reviewed)
                 baseline = BaselineSnapshot(
                     snapshot_id=snapshot.id,
                     provider=Provider.GOOGLE,
@@ -252,12 +223,111 @@ class WritePlanningService:
                     exported_docx_sha256=snapshot.exported_artifact_sha256,
                     canonical_payload=capture.canonical_payload,
                 )
-                proof = map_replacement(change, baseline, export.exported_at)
-                context = _contextual_replacement(change, baseline, proof)
+                mapped_changes: list[SemanticReplacement] = []
+                persisted_lineage: list[
+                    tuple[ProposedChange, ReviewDecision, SemanticReplacement]
+                ] = []
+                for (
+                    proposal,
+                    decision,
+                    round_row,
+                    job,
+                    superdocs_session,
+                    superdocs_document,
+                    export,
+                ) in approved_lineage:
+                    superseded = (
+                        await session.scalar(
+                            select(ProposedChange.id).where(
+                                ProposedChange.replaces_proposal_id == proposal.id
+                            )
+                        )
+                        is not None
+                    )
+                    lineage_current = (
+                        run.state is SyncRunState.REVIEWED_EXPORT_READY
+                        and run.baseline_revision_id == snapshot.provider_revision_id
+                        and proposal.sync_run_id == run.id
+                        and proposal.superdocs_job_id == job.id
+                        and proposal.review_round_id == round_row.id
+                        and proposal.target_document_id == superdocs_document.id
+                        and decision.sync_run_id == run.id
+                        and decision.proposed_change_id == proposal.id
+                        and round_row.sync_run_id == run.id
+                        and round_row.superdocs_job_id == job.id
+                        and round_row.resolution is ReviewRoundResolution.SUBMIT_CHANGES
+                        and job.sync_run_id == run.id
+                        and job.status is SuperDocsJobStatus.COMPLETED
+                        and job.superdocs_session_id == superdocs_session.id
+                        and job.target_document_id == superdocs_document.id
+                        and superdocs_session.sync_run_id == run.id
+                        and superdocs_document.superdocs_session_id == superdocs_session.id
+                        and superdocs_document.source_snapshot_id == snapshot.id
+                        and export.sync_run_id == run.id
+                        and export.source_snapshot_id == snapshot.id
+                        and export.superdocs_session_id == superdocs_session.id
+                        and export.superdocs_document_id == superdocs_document.id
+                        and export.superdocs_job_id == job.id
+                        and not export.warnings
+                    )
+                    reviewed = ReviewedProposal(
+                        proposal_id=proposal.id,
+                        decision_id=decision.id,
+                        decision=decision.decision,
+                        decision_sha256=decision.decision_sha256,
+                        superseded=superseded,
+                        operation=proposal.operation,
+                        review_round=round_row.ordinal,
+                        session_id=superdocs_session.session_id,
+                        session_document_id=superdocs_document.session_document_id,
+                        durable_document_id=superdocs_document.durable_document_id,
+                        job_id=job.provider_job_id,
+                        superdocs_export_id=export.id,
+                        approved_export_sha256=export.sha256,
+                        final_version_id=export.final_version_id,
+                        superdocs_change_id=proposal.superdocs_change_id,
+                        chunk_id=proposal.chunk_id,
+                        old_html=proposal.old_html,
+                        new_html=proposal.new_html,
+                        lineage_current=lineage_current,
+                    )
+                    try:
+                        change = normalize_reviewed_change(reviewed)
+                    except MappingFailure as exc:
+                        raise MappingFailure(
+                            exc.code,
+                            (
+                                f"approved proposal {proposal.id} cannot be safely mapped: "
+                                f"{exc.safe_message}"
+                            ),
+                            candidate_count=exc.candidate_count,
+                            proposal_id=proposal.id,
+                        ) from exc
+                    mapped_changes.append(change)
+                    persisted_lineage.append((proposal, decision, change))
+                proof = map_approved_replacements(
+                    tuple(mapped_changes), baseline, export.exported_at
+                )
+                changes_by_id = {item.proposal_id: item for item in mapped_changes}
+                ordered_changes = tuple(
+                    changes_by_id[item.lineage.proposal_id] for item in proof.payload.replacements
+                )
+                dry_run_changes = tuple(
+                    DryRunMappedChange(
+                        proposal_id=change.proposal_id,
+                        old_text=change.old_text,
+                        new_text=change.new_text,
+                        context=_contextual_replacement(change, baseline, item.location),
+                        structural_location=item.location.model_dump(mode="json"),
+                    )
+                    for change, item in zip(
+                        ordered_changes, proof.payload.replacements, strict=True
+                    )
+                )
                 stored_proof = await self._persist_proof(session, run, snapshot, proof)
                 rule_hash = _hash_json(run.rule_snapshot)
                 plan = compile_write_plan(
-                    change=change,
+                    mapped=ordered_changes,
                     baseline=baseline,
                     proof=proof,
                     sync_run_id=run.id,
@@ -275,15 +345,19 @@ class WritePlanningService:
                     session,
                     run,
                     snapshot,
-                    proposal,
-                    decision,
+                    persisted_lineage,
                     stored_proof,
                     plan,
                 )
                 await session.commit()
             except MappingFailure as exc:
                 await session.rollback()
-                return _failure_view(run_id, proposal_id, exc, source=source)
+                return _failure_view(
+                    run_id,
+                    exc.proposal_id or proposal_id,
+                    exc,
+                    source=source,
+                )
             except ValidationError:
                 await session.rollback()
                 return _failure_view(
@@ -297,26 +371,35 @@ class WritePlanningService:
                 )
 
         operation = plan.payload.provider_operations[0]
-        location = proof.payload.location
+        first = dry_run_changes[0]
+        why_safe: tuple[str, ...] = (
+            "approved immutable review decision",
+            "exact persisted baseline revision and native snapshot hash",
+            "one unique ordinary body paragraph and one plain text run",
+            "exact internal contiguous ASCII preimage",
+            "minimum delete-and-insert range guarded by requiredRevisionId",
+        )
+        if len(dry_run_changes) > 1:
+            why_safe = (
+                *why_safe,
+                "independent non-overlapping replacements on the same frozen revision",
+            )
         return DryRunView(
             run_id=run_id,
-            proposal_id=change.proposal_id,
+            proposal_id=first.proposal_id,
             status=DryRunStatus.READY,
             source=source,
-            old_text=change.old_text,
-            new_text=change.new_text,
-            context=context,
-            structural_location=location.model_dump(mode="json"),
+            old_text=first.old_text,
+            new_text=first.new_text,
+            context=first.context,
+            changes=dry_run_changes,
+            structural_location=first.structural_location,
             operation_count=len(operation.requests),
-            operation_types=("deleteContentRange", "insertText"),
-            provider_operation=operation.provider_payload(),
-            why_safe=(
-                "approved immutable review decision",
-                "exact persisted baseline revision and native snapshot hash",
-                "one unique ordinary body paragraph and one plain text run",
-                "exact internal contiguous ASCII preimage",
-                "minimum delete-and-insert range guarded by requiredRevisionId",
+            operation_types=tuple(
+                next(iter(request)) for request in operation.requests if isinstance(request, dict)
             ),
+            provider_operation=operation.provider_payload(),
+            why_safe=why_safe,
             mapping_proof_id=stored_proof.id,
             mapping_proof_sha256=proof.integrity_sha256,
             write_plan_id=stored_plan.id,
@@ -364,20 +447,23 @@ class WritePlanningService:
             raise RunNotFound("run was not found")
         return row._tuple()
 
-    async def _review_lineage(
+    async def _approved_review_lineage(
         self,
         session: AsyncSession,
         run: SyncRun,
         snapshot: SourceSnapshot,
         proposal_id: UUID | None,
     ) -> tuple[
-        ProposedChange,
-        ReviewDecision | None,
-        ReviewRound,
-        SuperDocsJob,
-        SuperDocsSession,
-        SuperDocsDocument,
-        SuperDocsExport,
+        tuple[
+            ProposedChange,
+            ReviewDecision,
+            ReviewRound,
+            SuperDocsJob,
+            SuperDocsSession,
+            SuperDocsDocument,
+            SuperDocsExport,
+        ],
+        ...,
     ]:
         roster = tuple(
             await session.scalars(
@@ -402,6 +488,13 @@ class WritePlanningService:
                 MappingFailureCode.STALE_LINEAGE,
                 "review decision lineage is ambiguous",
             )
+        if proposal_id is not None:
+            selected_proposal = next((item for item in roster if item.id == proposal_id), None)
+            if selected_proposal is None:
+                raise MappingFailure(
+                    MappingFailureCode.STALE_LINEAGE,
+                    "selected proposal does not belong to this review lineage",
+                )
         approved = tuple(
             proposal
             for proposal in current_proposals
@@ -410,52 +503,50 @@ class WritePlanningService:
                 and decision.decision is ChangeDecision.APPROVE
             )
         )
-        if len(approved) > 1:
-            raise MappingFailure(
-                MappingFailureCode.UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS,
-                "multiple approved proposals are outside the one-change mapper subset",
-                candidate_count=len(approved),
+        if not approved:
+            code = (
+                MappingFailureCode.UNDECIDED
+                if len(decisions_by_proposal) != len(current_proposals)
+                else MappingFailureCode.NOT_APPROVED
             )
-        if proposal_id is None:
-            if not approved:
-                code = (
-                    MappingFailureCode.UNDECIDED
-                    if len(decisions_by_proposal) != len(current_proposals)
-                    else MappingFailureCode.NOT_APPROVED
-                )
-                raise MappingFailure(code, "review has no approved writable proposal")
-            proposal = approved[0]
-        else:
-            selected_proposal = next((item for item in roster if item.id == proposal_id), None)
-            if selected_proposal is None:
-                raise MappingFailure(
-                    MappingFailureCode.STALE_LINEAGE,
-                    "selected proposal does not belong to this review lineage",
-                )
-            proposal = selected_proposal
-        decision = decisions_by_proposal.get(proposal.id)
-        if decision is None and proposal.id not in current_ids:
-            decision = await session.scalar(
-                select(ReviewDecision).where(ReviewDecision.proposed_change_id == proposal.id)
-            )
-        round_row = await session.get(ReviewRound, proposal.review_round_id)
-        job = await session.get(SuperDocsJob, proposal.superdocs_job_id)
-        document = await session.get(SuperDocsDocument, proposal.target_document_id)
+            raise MappingFailure(code, "review has no approved writable proposal")
         export = await session.scalar(
             select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
         )
-        if round_row is None or job is None or document is None or export is None:
+        if export is None:
             raise MappingFailure(
                 MappingFailureCode.STALE_LINEAGE,
                 "review/export lineage is incomplete",
             )
-        superdocs_session = await session.get(SuperDocsSession, job.superdocs_session_id)
-        if superdocs_session is None or snapshot.id != document.source_snapshot_id:
-            raise MappingFailure(
-                MappingFailureCode.STALE_LINEAGE,
-                "review lineage does not bind to the source snapshot",
-            )
-        return proposal, decision, round_row, job, superdocs_session, document, export
+        rows: list[
+            tuple[
+                ProposedChange,
+                ReviewDecision,
+                ReviewRound,
+                SuperDocsJob,
+                SuperDocsSession,
+                SuperDocsDocument,
+                SuperDocsExport,
+            ]
+        ] = []
+        for proposal in approved:
+            decision = decisions_by_proposal[proposal.id]
+            round_row = await session.get(ReviewRound, proposal.review_round_id)
+            job = await session.get(SuperDocsJob, proposal.superdocs_job_id)
+            document = await session.get(SuperDocsDocument, proposal.target_document_id)
+            if round_row is None or job is None or document is None:
+                raise MappingFailure(
+                    MappingFailureCode.STALE_LINEAGE,
+                    "review/export lineage is incomplete",
+                )
+            superdocs_session = await session.get(SuperDocsSession, job.superdocs_session_id)
+            if superdocs_session is None or snapshot.id != document.source_snapshot_id:
+                raise MappingFailure(
+                    MappingFailureCode.STALE_LINEAGE,
+                    "review lineage does not bind to the source snapshot",
+                )
+            rows.append((proposal, decision, round_row, job, superdocs_session, document, export))
+        return tuple(rows)
 
     async def _baseline_capture(
         self, session: AsyncSession, snapshot: SourceSnapshot
@@ -522,30 +613,52 @@ class WritePlanningService:
         session: AsyncSession,
         run: SyncRun,
         snapshot: SourceSnapshot,
-        proposal: ProposedChange,
-        decision: ReviewDecision | None,
+        lineage_rows: list[tuple[ProposedChange, ReviewDecision, SemanticReplacement]],
         proof: MappingProof,
         plan: SealedWritePlan,
     ) -> WritePlan:
-        if decision is None or decision.decision is not ChangeDecision.APPROVE:
+        if not lineage_rows or any(
+            decision.decision is not ChangeDecision.APPROVE
+            for _proposal, decision, _change in lineage_rows
+        ):
             raise MappingFailure(
                 MappingFailureCode.NOT_APPROVED,
                 "only approved decisions can produce a WritePlan",
+            )
+        expected_ids = tuple(item.proposal_id for item in plan.payload.approval_lineage)
+        ordered = sorted(
+            lineage_rows,
+            key=lambda item: expected_ids.index(item[0].id) if item[0].id in expected_ids else -1,
+        )
+        if tuple(proposal.id for proposal, _decision, _change in ordered) != expected_ids:
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "WritePlan approval lineage does not match the approved mapped set",
             )
         existing = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run.id))
         plan_id = write_plan_identity(plan)
         payload = plan.payload.model_dump(mode="json")
         if existing is not None:
-            lineage = await session.scalar(
-                select(WritePlanLineage).where(WritePlanLineage.write_plan_id == existing.id)
+            stored_lineage = tuple(
+                await session.scalars(
+                    select(WritePlanLineage)
+                    .where(WritePlanLineage.write_plan_id == existing.id)
+                    .order_by(WritePlanLineage.ordinal, WritePlanLineage.id)
+                )
+            )
+            expected_lineage = tuple(
+                (proposal.id, decision.id, ordinal)
+                for ordinal, (proposal, decision, _change) in enumerate(ordered, start=1)
+            )
+            actual_lineage = tuple(
+                (item.proposed_change_id, item.review_decision_id, item.ordinal)
+                for item in stored_lineage
             )
             if (
                 existing.id != plan_id
                 or existing.integrity_sha256 != plan.integrity_sha256
                 or existing.payload != payload
-                or lineage is None
-                or lineage.proposed_change_id != proposal.id
-                or lineage.review_decision_id != decision.id
+                or actual_lineage != expected_lineage
             ):
                 raise MappingFailure(
                     MappingFailureCode.EXISTING_PLAN_LINEAGE_MISMATCH,
@@ -577,16 +690,17 @@ class WritePlanningService:
         )
         session.add(row)
         await session.flush()
-        session.add(
-            WritePlanLineage(
-                id=uuid5(NAMESPACE_URL, f"docrelay:write-plan-lineage:{row.id}:{proposal.id}"),
-                created_at=plan.payload.created_at,
-                write_plan_id=row.id,
-                proposed_change_id=proposal.id,
-                review_decision_id=decision.id,
-                ordinal=1,
+        for ordinal, (proposal, decision, _change) in enumerate(ordered, start=1):
+            session.add(
+                WritePlanLineage(
+                    id=uuid5(NAMESPACE_URL, f"docrelay:write-plan-lineage:{row.id}:{proposal.id}"),
+                    created_at=plan.payload.created_at,
+                    write_plan_id=row.id,
+                    proposed_change_id=proposal.id,
+                    review_decision_id=decision.id,
+                    ordinal=ordinal,
+                )
             )
-        )
         await session.flush()
         return row
 
@@ -642,7 +756,7 @@ def _hash_json(value: object) -> str:
 def _contextual_replacement(
     change: SemanticReplacement,
     baseline: BaselineSnapshot,
-    proof: SealedMappingProof,
+    location: ProviderLocation,
 ) -> ContextualReplacement:
     try:
         tabs = baseline.canonical_payload["tabs"]
@@ -651,11 +765,11 @@ def _contextual_replacement(
         assert isinstance(tab, dict)
         body = tab["body"]
         assert isinstance(body, list)
-        paragraph = body[proof.payload.location.structural_element_index]
+        paragraph = body[location.structural_element_index]
         assert isinstance(paragraph, dict)
         runs = paragraph["runs"]
         assert isinstance(runs, list)
-        run = runs[proof.payload.location.text_run_index]
+        run = runs[location.text_run_index]
         assert isinstance(run, dict)
         frozen_text = run["text"]
         assert isinstance(frozen_text, str) and frozen_text.endswith("\n")

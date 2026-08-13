@@ -33,12 +33,17 @@ export function DryRunSummary({
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
         <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
           <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Ready for safe write-back</h2>
-          <p className="mt-2 max-w-[680px] text-[15px] leading-6 text-muted">The approved change is mapped to {operationPhrase(dryRun.operation_count)} guarded Google Docs {dryRun.operation_count === 1 ? "operation" : "operations"}.</p>
+          <p className="mt-2 max-w-[680px] text-[15px] leading-6 text-muted">{writePlanSummary(dryRun)}</p>
 
           <div className="mt-8">
-            <h3 className="text-[18px] font-semibold text-ink">Change to write</h3>
-            <div className="mt-6">
-              <DiffView oldText={dryRun.old_text} newText={dryRun.new_text} context={dryRun.context} compact />
+            <h3 className="text-[18px] font-semibold text-ink">{(dryRun.changes?.length ?? 1) > 1 ? "Changes to write" : "Change to write"}</h3>
+            <div className="mt-6 grid gap-8">
+              {mappedChanges(dryRun).map((change, index) => (
+                <div key={change.proposal_id ?? String(index)}>
+                  {mappedChanges(dryRun).length > 1 ? <p className="mb-3 text-[13px] font-semibold uppercase tracking-[0.04em] text-muted">Change {index + 1}</p> : null}
+                  <DiffView oldText={change.old_text} newText={change.new_text} context={change.context} compact />
+                </div>
+              ))}
             </div>
           </div>
 
@@ -104,6 +109,20 @@ function TechnicalRow({ label, value }: { label: string; value: string }) {
   return <div className="grid gap-1 sm:grid-cols-[150px_1fr]"><dt>{label}</dt><dd className="break-all text-ink/75">{value}</dd></div>;
 }
 
+function writePlanSummary(dryRun: DryRunView): string {
+  const changeCount = mappedChanges(dryRun).length;
+  const operationCount = dryRun.operation_count;
+  if (changeCount <= 1) {
+    return `The approved change is mapped to ${operationPhrase(operationCount)} guarded Google Docs ${operationCount === 1 ? "operation" : "operations"}.`;
+  }
+  return `${changeCount} approved changes will be written as ${operationCount} guarded Google Docs operations.`;
+}
+
+function mappedChanges(dryRun: DryRunView): Array<{ proposal_id?: string | null; old_text: string | null; new_text: string | null; context?: DryRunView["context"] }> {
+  if (dryRun.changes && dryRun.changes.length > 0) return dryRun.changes;
+  return [{ proposal_id: dryRun.proposal_id, old_text: dryRun.old_text, new_text: dryRun.new_text, context: dryRun.context }];
+}
+
 function locationSummary(location: Record<string, unknown>): string {
   return typeof location.paragraph_index === "number" ? `Paragraph ${location.paragraph_index + 1}` : "Document body";
 }
@@ -120,7 +139,9 @@ function normalizedSafetyChecks(checks: string[]): string[] {
     "exact persisted baseline revision and native snapshot hash": "Exact source revision matched",
     "one unique ordinary body paragraph and one plain text run": "Unique location found",
     "exact internal ASCII preimage with equal UTF-16 length": "Source text exactly matched",
+    "exact internal contiguous ASCII preimage": "Source text exactly matched",
     "minimum delete-and-insert range guarded by requiredRevisionId": "Revision guard prepared",
+    "independent non-overlapping replacements on the same frozen revision": "Approved changes do not overlap",
   };
   const result = checks.map((check) => mapping[check] ?? check);
   if (!result.some((check) => check.toLowerCase().includes("backup"))) result.push("Backup will be created first");

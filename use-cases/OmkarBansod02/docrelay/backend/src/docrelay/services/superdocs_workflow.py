@@ -235,10 +235,18 @@ class PreviewContext(_WorkflowModel):
     native_snapshot_sha256: str
 
 
+class VerifiedWriteChange(_WorkflowModel):
+    proposal_id: UUID | None = None
+    old_text: str
+    new_text: str
+    context: PreviewContext | None
+
+
 class VerifiedWritePreview(_WorkflowModel):
     old_text: str
     new_text: str
     context: PreviewContext | None
+    changes: tuple[VerifiedWriteChange, ...] = ()
 
 
 async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBackRunSummary | None:
@@ -311,6 +319,7 @@ async def _verified_write_preview(
     session: AsyncSession,
     plan: WritePlan,
 ) -> VerifiedWritePreview | None:
+    planned = plan.payload.get("planned_replacements")
     replacement = plan.payload.get("expected_replacement")
     if not isinstance(replacement, dict):
         return None
@@ -318,7 +327,38 @@ async def _verified_write_preview(
     new_text = replacement.get("new_text")
     if not isinstance(old_text, str) or not isinstance(new_text, str):
         return None
-    preview = VerifiedWritePreview(old_text=old_text, new_text=new_text, context=None)
+    preview_changes: list[VerifiedWriteChange] = []
+    if isinstance(planned, list):
+        for item in planned:
+            if not isinstance(item, dict):
+                continue
+            item_old = item.get("old_text")
+            item_new = item.get("new_text")
+            if not isinstance(item_old, str) or not isinstance(item_new, str):
+                continue
+            raw_proposal_id = item.get("proposal_id")
+            try:
+                proposal_id = UUID(str(raw_proposal_id)) if raw_proposal_id is not None else None
+            except (TypeError, ValueError):
+                proposal_id = None
+            preview_changes.append(
+                VerifiedWriteChange(
+                    proposal_id=proposal_id,
+                    old_text=item_old,
+                    new_text=item_new,
+                    context=None,
+                )
+            )
+    if not preview_changes:
+        preview_changes.append(
+            VerifiedWriteChange(old_text=old_text, new_text=new_text, context=None)
+        )
+    preview = VerifiedWritePreview(
+        old_text=old_text,
+        new_text=new_text,
+        context=None,
+        changes=tuple(preview_changes),
+    )
     snapshot = await session.get(SourceSnapshot, plan.source_snapshot_id)
     proof = await session.get(MappingProof, plan.mapping_proof_id)
     if snapshot is None or proof is None or proof.source_snapshot_id != snapshot.id:
@@ -334,15 +374,41 @@ async def _verified_write_preview(
         or capture.provider_revision_id != snapshot.provider_revision_id
     ):
         return preview
-    context = _preview_context_from_frozen_lineage(
-        capture.canonical_payload,
-        proof.proof_payload,
-        old_text=old_text,
-        new_text=new_text,
-        source_snapshot_id=snapshot.id,
-        native_snapshot_sha256=snapshot.native_canonical_sha256,
-    )
-    return preview.model_copy(update={"context": context})
+    proof_replacements = proof.proof_payload.get("replacements")
+    locations_by_proposal: dict[str, dict[str, JsonValue]] = {}
+    if isinstance(proof_replacements, list):
+        for item in proof_replacements:
+            if not isinstance(item, dict):
+                continue
+            lineage = item.get("lineage")
+            mapped_location = item.get("location")
+            if isinstance(lineage, dict) and isinstance(mapped_location, dict):
+                proposal_key = lineage.get("proposal_id")
+                if isinstance(proposal_key, str):
+                    locations_by_proposal[proposal_key] = mapped_location
+    first_location = proof.proof_payload.get("location")
+    updated_changes: list[VerifiedWriteChange] = []
+    for change in preview.changes:
+        location: dict[str, JsonValue] | None
+        if change.proposal_id is not None:
+            location = locations_by_proposal.get(str(change.proposal_id))
+        elif isinstance(first_location, dict):
+            location = first_location
+        else:
+            location = None
+        context = None
+        if isinstance(location, dict):
+            context = _preview_context_from_frozen_lineage(
+                capture.canonical_payload,
+                {"location": location},
+                old_text=change.old_text,
+                new_text=change.new_text,
+                source_snapshot_id=snapshot.id,
+                native_snapshot_sha256=snapshot.native_canonical_sha256,
+            )
+        updated_changes.append(change.model_copy(update={"context": context}))
+    first_context = updated_changes[0].context if updated_changes else None
+    return preview.model_copy(update={"context": first_context, "changes": tuple(updated_changes)})
 
 
 def _preview_context_from_frozen_lineage(

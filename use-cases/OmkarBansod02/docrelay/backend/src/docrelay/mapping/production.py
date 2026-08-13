@@ -16,6 +16,7 @@ from docrelay.domain.write_plan import (
     ExpectedReplacementContract,
     GoogleDocsBatchUpdate,
     MappingProofContract,
+    PlannedReplacementContract,
     RuleContract,
     SealedWritePlan,
     Sha256,
@@ -25,8 +26,8 @@ from docrelay.domain.write_plan import (
 )
 from docrelay.integrations.google.canonical import sha256_json
 
-MAPPER_VERSION = "docrelay.google-plain-text-mapper.v2"
-COMPILER_VERSION = "docrelay.google-write-plan-compiler.v2"
+MAPPER_VERSION = "docrelay.google-plain-text-mapper.v3"
+COMPILER_VERSION = "docrelay.google-write-plan-compiler.v3"
 MAPPING_SCHEMA_VERSION = "docrelay.mapping-proof.v1"
 VERIFIER_VERSION = "docrelay.google-native-canonical.v2"
 _ASCII_PLAIN_TEXT = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*")
@@ -36,6 +37,8 @@ class MappingFailureCode(StrEnum):
     NOT_APPROVED = "NOT_APPROVED"
     UNDECIDED = "UNDECIDED"
     UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS = "UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS"
+    OVERLAPPING_MAPPED_RANGES = "OVERLAPPING_MAPPED_RANGES"
+    DUPLICATE_TARGET_MAPPING = "DUPLICATE_TARGET_MAPPING"
     SUPERSEDED = "SUPERSEDED"
     STALE_LINEAGE = "STALE_LINEAGE"
     UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
@@ -66,11 +69,13 @@ class MappingFailure(ValueError):
         message: str,
         *,
         candidate_count: int | None = None,
+        proposal_id: UUID | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.safe_message = message
         self.candidate_count = candidate_count
+        self.proposal_id = proposal_id
 
 
 class _FrozenModel(BaseModel):
@@ -183,12 +188,26 @@ class StructuralEligibility(_FrozenModel):
     minimum_range: Literal[True] = True
 
 
+class MappedReplacement(_FrozenModel):
+    lineage: ProofLineage
+    old_text: str
+    new_text: str
+    old_text_sha256: Sha256
+    new_text_sha256: Sha256
+    old_paragraph_sha256: Sha256
+    new_paragraph_sha256: Sha256
+    location: ProviderLocation
+    candidate_count: Literal[1] = 1
+    eligibility: StructuralEligibility
+
+
 class MappingProofPayload(_FrozenModel):
     schema_version: Literal["docrelay.mapping-proof.v1"] = "docrelay.mapping-proof.v1"
     mapper_version: Literal[
         "docrelay.google-plain-token-mapper.v1",
         "docrelay.google-plain-text-mapper.v2",
-    ] = "docrelay.google-plain-text-mapper.v2"
+        "docrelay.google-plain-text-mapper.v3",
+    ] = "docrelay.google-plain-text-mapper.v3"
     status: Literal["SUPPORTED"] = "SUPPORTED"
     status_reason: Literal[
         "ALL_V1_CONSTRAINTS_PASSED",
@@ -208,8 +227,42 @@ class MappingProofPayload(_FrozenModel):
     old_paragraph_sha256: Sha256
     new_paragraph_sha256: Sha256
     location: ProviderLocation
+    replacements: tuple[MappedReplacement, ...] = Field(min_length=1)
     candidate_count: Literal[1] = 1
     eligibility: StructuralEligibility
+
+    @model_validator(mode="after")
+    def replacements_match_singular_fields(self) -> Self:
+        first = self.replacements[0]
+        if (
+            first.lineage != self.lineage
+            or first.old_text != self.old_text
+            or first.new_text != self.new_text
+            or first.old_text_sha256 != self.old_text_sha256
+            or first.new_text_sha256 != self.new_text_sha256
+            or first.old_paragraph_sha256 != self.old_paragraph_sha256
+            or first.new_paragraph_sha256 != self.new_paragraph_sha256
+            or first.location != self.location
+            or first.eligibility != self.eligibility
+            or first.candidate_count != self.candidate_count
+        ):
+            raise ValueError("MappingProof singular fields must match the first mapped replacement")
+        proposal_ids = [item.lineage.proposal_id for item in self.replacements]
+        if len(set(proposal_ids)) != len(proposal_ids):
+            raise ValueError("MappingProof replacements must preserve unique proposal identity")
+        ordered = tuple(
+            sorted(
+                self.replacements,
+                key=lambda item: (
+                    item.location.edit_start_index,
+                    item.location.edit_end_index,
+                    str(item.lineage.proposal_id),
+                ),
+            )
+        )
+        if ordered != self.replacements:
+            raise ValueError("MappingProof replacements must be in deterministic document order")
+        return self
 
 
 class SealedMappingProof(_FrozenModel):
@@ -499,6 +552,47 @@ def map_replacement(
             candidate_count=1,
         )
 
+    lineage = ProofLineage(
+        proposal_id=change.proposal_id,
+        decision_id=change.decision_id,
+        decision_sha256=change.decision_sha256,
+        review_round=change.review_round,
+        session_id=change.session_id,
+        session_document_id=change.session_document_id,
+        durable_document_id=change.durable_document_id,
+        job_id=change.job_id,
+        superdocs_export_id=change.superdocs_export_id,
+        approved_export_sha256=change.approved_export_sha256,
+        final_version_id=change.final_version_id,
+        superdocs_change_id=change.superdocs_change_id,
+        chunk_id=change.chunk_id,
+        old_html_sha256=change.old_html_sha256,
+        new_html_sha256=change.new_html_sha256,
+    )
+    location = ProviderLocation(
+        tab_id=tab_id,
+        structural_element_index=structural_index,
+        paragraph_start_index=paragraph_start,
+        paragraph_end_index=paragraph_end,
+        text_run_start_index=run_start,
+        text_run_end_index=run_end,
+        edit_start_index=edit_start,
+        edit_end_index=edit_end,
+    )
+    eligibility = StructuralEligibility(
+        equal_utf16_length=_utf16_length(change.old_text) == _utf16_length(change.new_text)
+    )
+    mapped = MappedReplacement(
+        lineage=lineage,
+        old_text=change.old_text,
+        new_text=change.new_text,
+        old_text_sha256=_sha256_text(change.old_text),
+        new_text_sha256=_sha256_text(change.new_text),
+        old_paragraph_sha256=_sha256_text(change.old_paragraph),
+        new_paragraph_sha256=_sha256_text(change.new_paragraph),
+        location=location,
+        eligibility=eligibility,
+    )
     payload = MappingProofPayload(
         created_at=created_at,
         source_snapshot_id=baseline.snapshot_id,
@@ -506,49 +600,111 @@ def map_replacement(
         baseline_revision_id=baseline.baseline_revision_id,
         native_snapshot_sha256=baseline.native_canonical_sha256,
         native_raw_sha256=baseline.native_raw_sha256,
-        lineage=ProofLineage(
-            proposal_id=change.proposal_id,
-            decision_id=change.decision_id,
-            decision_sha256=change.decision_sha256,
-            review_round=change.review_round,
-            session_id=change.session_id,
-            session_document_id=change.session_document_id,
-            durable_document_id=change.durable_document_id,
-            job_id=change.job_id,
-            superdocs_export_id=change.superdocs_export_id,
-            approved_export_sha256=change.approved_export_sha256,
-            final_version_id=change.final_version_id,
-            superdocs_change_id=change.superdocs_change_id,
-            chunk_id=change.chunk_id,
-            old_html_sha256=change.old_html_sha256,
-            new_html_sha256=change.new_html_sha256,
-        ),
+        lineage=lineage,
         old_text=change.old_text,
         new_text=change.new_text,
-        old_text_sha256=_sha256_text(change.old_text),
-        new_text_sha256=_sha256_text(change.new_text),
-        old_paragraph_sha256=_sha256_text(change.old_paragraph),
-        new_paragraph_sha256=_sha256_text(change.new_paragraph),
-        location=ProviderLocation(
-            tab_id=tab_id,
-            structural_element_index=structural_index,
-            paragraph_start_index=paragraph_start,
-            paragraph_end_index=paragraph_end,
-            text_run_start_index=run_start,
-            text_run_end_index=run_end,
-            edit_start_index=edit_start,
-            edit_end_index=edit_end,
-        ),
-        eligibility=StructuralEligibility(
-            equal_utf16_length=_utf16_length(change.old_text) == _utf16_length(change.new_text)
-        ),
+        old_text_sha256=mapped.old_text_sha256,
+        new_text_sha256=mapped.new_text_sha256,
+        old_paragraph_sha256=mapped.old_paragraph_sha256,
+        new_paragraph_sha256=mapped.new_paragraph_sha256,
+        location=location,
+        replacements=(mapped,),
+        eligibility=eligibility,
     )
     return SealedMappingProof.seal(payload)
 
 
+def map_approved_replacements(
+    changes: tuple[SemanticReplacement, ...],
+    baseline: BaselineSnapshot,
+    created_at: datetime,
+) -> SealedMappingProof:
+    if not changes:
+        raise MappingFailure(
+            MappingFailureCode.NOT_APPROVED,
+            "review has no approved writable proposal",
+        )
+    proofs: list[SealedMappingProof] = []
+    for change in changes:
+        try:
+            proofs.append(map_replacement(change, baseline, created_at))
+        except MappingFailure as exc:
+            raise MappingFailure(
+                exc.code,
+                (
+                    f"approved proposal {change.proposal_id} cannot be safely mapped: "
+                    f"{exc.safe_message}"
+                ),
+                candidate_count=exc.candidate_count,
+                proposal_id=change.proposal_id,
+            ) from exc
+    return seal_mapped_set(tuple(proofs), created_at=created_at)
+
+
+def seal_mapped_set(
+    proofs: tuple[SealedMappingProof, ...],
+    *,
+    created_at: datetime,
+) -> SealedMappingProof:
+    if not proofs:
+        raise MappingFailure(
+            MappingFailureCode.NOT_APPROVED,
+            "review has no approved writable proposal",
+        )
+    first_payload = proofs[0].payload
+    replacements = tuple(
+        sorted(
+            (item for proof in proofs for item in proof.payload.replacements),
+            key=lambda item: (
+                item.location.edit_start_index,
+                item.location.edit_end_index,
+                str(item.lineage.proposal_id),
+            ),
+        )
+    )
+    for proof in proofs:
+        payload = proof.payload
+        if (
+            payload.source_snapshot_id != first_payload.source_snapshot_id
+            or payload.provider_file_id != first_payload.provider_file_id
+            or payload.baseline_revision_id != first_payload.baseline_revision_id
+            or payload.native_snapshot_sha256 != first_payload.native_snapshot_sha256
+            or payload.native_raw_sha256 != first_payload.native_raw_sha256
+        ):
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "mapped replacements do not share the same frozen source revision",
+            )
+    _reject_overlapping_or_duplicate_ranges(replacements)
+    if len(proofs) == 1:
+        return proofs[0]
+    first = replacements[0]
+    return SealedMappingProof.seal(
+        MappingProofPayload(
+            created_at=created_at,
+            source_snapshot_id=first_payload.source_snapshot_id,
+            provider_file_id=first_payload.provider_file_id,
+            baseline_revision_id=first_payload.baseline_revision_id,
+            native_snapshot_sha256=first_payload.native_snapshot_sha256,
+            native_raw_sha256=first_payload.native_raw_sha256,
+            lineage=first.lineage,
+            old_text=first.old_text,
+            new_text=first.new_text,
+            old_text_sha256=first.old_text_sha256,
+            new_text_sha256=first.new_text_sha256,
+            old_paragraph_sha256=first.old_paragraph_sha256,
+            new_paragraph_sha256=first.new_paragraph_sha256,
+            location=first.location,
+            replacements=replacements,
+            eligibility=first.eligibility,
+        )
+    )
+
+
 def compile_write_plan(
     *,
-    change: SemanticReplacement,
+    change: SemanticReplacement | None = None,
+    mapped: tuple[SemanticReplacement, ...] | None = None,
     baseline: BaselineSnapshot,
     proof: SealedMappingProof,
     sync_run_id: UUID,
@@ -559,43 +715,80 @@ def compile_write_plan(
     created_at: datetime,
     expires_at: datetime,
 ) -> SealedWritePlan:
+    if mapped is None:
+        if change is None:
+            raise MappingFailure(
+                MappingFailureCode.NOT_APPROVED,
+                "write planning requires at least one approved mapped replacement",
+            )
+        mapped = (change,)
+    elif change is not None and change.proposal_id not in {item.proposal_id for item in mapped}:
+        raise MappingFailure(
+            MappingFailureCode.STALE_LINEAGE,
+            "MappingProof does not bind to the requested immutable inputs",
+        )
     proof_payload = proof.payload
     if (
         proof_payload.source_snapshot_id != baseline.snapshot_id
         or proof_payload.baseline_revision_id != baseline.baseline_revision_id
         or proof_payload.native_snapshot_sha256 != baseline.native_canonical_sha256
-        or proof_payload.lineage.proposal_id != change.proposal_id
-        or proof_payload.lineage.decision_id != change.decision_id
-        or proof_payload.old_text_sha256 != _sha256_text(change.old_text)
-        or proof_payload.new_text_sha256 != _sha256_text(change.new_text)
+        or proof_payload.native_raw_sha256 != baseline.native_raw_sha256
+        or proof_payload.provider_file_id != baseline.provider_file_id
     ):
         raise MappingFailure(
             MappingFailureCode.STALE_LINEAGE,
             "MappingProof does not bind to the requested immutable inputs",
         )
-    location = proof_payload.location
-    requests: tuple[dict[str, JsonValue], ...] = (
-        {
-            "deleteContentRange": {
-                "range": {
-                    "segmentId": location.segment_id,
-                    "tabId": location.tab_id,
-                    "startIndex": location.edit_start_index,
-                    "endIndex": location.edit_end_index,
-                }
-            }
-        },
-        {
-            "insertText": {
-                "location": {
-                    "segmentId": location.segment_id,
-                    "tabId": location.tab_id,
-                    "index": location.edit_start_index,
-                },
-                "text": change.new_text,
-            }
-        },
+    changes_by_id = {item.proposal_id: item for item in mapped}
+    if len(changes_by_id) != len(mapped):
+        raise MappingFailure(
+            MappingFailureCode.DUPLICATE_TARGET_MAPPING,
+            "approved proposals are not uniquely identified",
+        )
+    if len(proof_payload.replacements) != len(mapped):
+        raise MappingFailure(
+            MappingFailureCode.STALE_LINEAGE,
+            "MappingProof does not bind to the requested immutable inputs",
+        )
+    document_order: list[tuple[SemanticReplacement, MappedReplacement]] = []
+    for replacement in proof_payload.replacements:
+        matched = changes_by_id.get(replacement.lineage.proposal_id)
+        if (
+            matched is None
+            or replacement.lineage.decision_id != matched.decision_id
+            or replacement.old_text_sha256 != _sha256_text(matched.old_text)
+            or replacement.new_text_sha256 != _sha256_text(matched.new_text)
+            or replacement.old_paragraph_sha256 != _sha256_text(matched.old_paragraph)
+            or replacement.new_paragraph_sha256 != _sha256_text(matched.new_paragraph)
+        ):
+            raise MappingFailure(
+                MappingFailureCode.STALE_LINEAGE,
+                "MappingProof does not bind to the requested immutable inputs",
+            )
+        document_order.append((matched, replacement))
+    _reject_overlapping_or_duplicate_ranges(tuple(item for _, item in document_order))
+    google_order = tuple(
+        sorted(
+            document_order,
+            key=lambda item: (
+                -item[1].location.edit_start_index,
+                -item[1].location.edit_end_index,
+                str(item[1].lineage.proposal_id),
+            ),
+        )
     )
+    requests: list[dict[str, JsonValue]] = []
+    for matched, replacement in google_order:
+        location = replacement.location
+        requests.extend(
+            _delete_insert_pair(
+                tab_id=location.tab_id,
+                segment_id=location.segment_id,
+                start=location.edit_start_index,
+                end=location.edit_end_index,
+                new_text=matched.new_text,
+            )
+        )
     expected = deepcopy(baseline.canonical_payload)
     tabs = expected["tabs"]
     assert isinstance(tabs, list)
@@ -603,21 +796,44 @@ def compile_write_plan(
     assert isinstance(tab, dict)
     body = tab["body"]
     assert isinstance(body, list)
-    paragraph = body[location.structural_element_index]
-    assert isinstance(paragraph, dict)
-    runs = paragraph["runs"]
-    assert isinstance(runs, list)
-    run = runs[0]
-    assert isinstance(run, dict)
-    run["text"] = f"{change.new_paragraph}\n"
-    utf16_delta = _utf16_length(change.new_text) - _utf16_length(change.old_text)
-    _shift_body_indexes(
-        body,
-        replaced_start=location.edit_start_index,
-        replaced_end=location.edit_end_index,
-        delta=utf16_delta,
-    )
+    for matched, replacement in google_order:
+        _apply_one_splice(
+            body,
+            structural_element_index=replacement.location.structural_element_index,
+            edit_start=replacement.location.edit_start_index,
+            edit_end=replacement.location.edit_end_index,
+            new_text=matched.new_text,
+        )
     expected_sha256 = sha256_json(expected)
+    first_change, first_mapped = document_order[0]
+    first_location = first_mapped.location
+    expected_paragraph = body[first_location.structural_element_index]
+    assert isinstance(expected_paragraph, dict)
+    expected_runs = expected_paragraph["runs"]
+    assert isinstance(expected_runs, list)
+    expected_run = expected_runs[0]
+    assert isinstance(expected_run, dict)
+    expected_paragraph_text = expected_run["text"]
+    assert isinstance(expected_paragraph_text, str) and expected_paragraph_text.endswith("\n")
+    planned = tuple(
+        PlannedReplacementContract(
+            proposal_id=matched.proposal_id,
+            decision_id=matched.decision_id,
+            old_text=matched.old_text,
+            new_text=matched.new_text,
+            old_paragraph_sha256=_sha256_text(matched.old_paragraph),
+            new_paragraph_sha256=_sha256_text(matched.new_paragraph),
+            tab_id=replacement.location.tab_id,
+            segment_id=replacement.location.segment_id,
+            structural_element_index=replacement.location.structural_element_index,
+            baseline_edit_start_index=replacement.location.edit_start_index,
+            baseline_edit_end_index=replacement.location.edit_end_index,
+            google_delete_start_index=replacement.location.edit_start_index,
+            google_delete_end_index=replacement.location.edit_end_index,
+            google_insert_index=replacement.location.edit_start_index,
+        )
+        for matched, replacement in document_order
+    )
     payload = WritePlanPayload(
         created_at=created_at,
         expires_at=expires_at,
@@ -646,35 +862,37 @@ def compile_write_plan(
             integrity_sha256=proof.integrity_sha256,
         ),
         compiler_version=COMPILER_VERSION,
-        approval_lineage=(
+        approval_lineage=tuple(
             ApprovalLineageContract(
-                proposal_id=change.proposal_id,
-                decision_id=change.decision_id,
-                review_round=change.review_round,
-                session_id=change.session_id,
-                session_document_id=change.session_document_id,
-                durable_document_id=change.durable_document_id,
-                job_id=change.job_id,
-                superdocs_export_id=change.superdocs_export_id,
-                approved_export_sha256=change.approved_export_sha256,
-                final_version_id=change.final_version_id,
-                superdocs_change_id=change.superdocs_change_id,
-                chunk_id=change.chunk_id,
+                proposal_id=matched.proposal_id,
+                decision_id=matched.decision_id,
+                review_round=matched.review_round,
+                session_id=matched.session_id,
+                session_document_id=matched.session_document_id,
+                durable_document_id=matched.durable_document_id,
+                job_id=matched.job_id,
+                superdocs_export_id=matched.superdocs_export_id,
+                approved_export_sha256=matched.approved_export_sha256,
+                final_version_id=matched.final_version_id,
+                superdocs_change_id=matched.superdocs_change_id,
+                chunk_id=matched.chunk_id,
                 approved=True,
-                old_html_sha256=change.old_html_sha256,
-                new_html_sha256=change.new_html_sha256,
-            ),
+                old_html_sha256=matched.old_html_sha256,
+                new_html_sha256=matched.new_html_sha256,
+            )
+            for matched, _replacement in document_order
         ),
         expected_replacement=ExpectedReplacementContract(
-            old_text=change.old_text,
-            new_text=change.new_text,
-            old_paragraph_sha256=_sha256_text(change.old_paragraph),
-            new_paragraph_sha256=_sha256_text(change.new_paragraph),
+            old_text=first_change.old_text,
+            new_text=first_change.new_text,
+            old_paragraph_sha256=_sha256_text(first_change.old_paragraph),
+            new_paragraph_sha256=_sha256_text(first_change.new_paragraph),
         ),
+        planned_replacements=planned,
         provider_operations=(
             GoogleDocsBatchUpdate(
                 required_revision_id=baseline.baseline_revision_id,
-                requests=requests,
+                requests=tuple(requests),
             ),
         ),
         expected_postimage=ExpectedPostimageContract(
@@ -682,12 +900,22 @@ def compile_write_plan(
             verifier_version=VERIFIER_VERSION,
             canonical_sha256=expected_sha256,
             canonical_payload={
-                "tab_id": location.tab_id,
-                "segment_id": location.segment_id,
-                "structural_element_index": location.structural_element_index,
-                "paragraph_start_index": location.paragraph_start_index,
-                "paragraph_end_index": location.paragraph_end_index + utf16_delta,
-                "paragraph_sha256": _sha256_text(change.new_paragraph),
+                "tab_id": first_location.tab_id,
+                "segment_id": first_location.segment_id,
+                "structural_element_index": first_location.structural_element_index,
+                "paragraph_start_index": expected_paragraph["startIndex"],
+                "paragraph_end_index": expected_paragraph["endIndex"],
+                "paragraph_sha256": _sha256_text(expected_paragraph_text[:-1]),
+                "replacements": [
+                    {
+                        "proposal_id": str(matched.proposal_id),
+                        "structural_element_index": replacement.location.structural_element_index,
+                        "baseline_edit_start_index": replacement.location.edit_start_index,
+                        "baseline_edit_end_index": replacement.location.edit_end_index,
+                        "new_text": matched.new_text,
+                    }
+                    for matched, replacement in document_order
+                ],
             },
         ),
     )
@@ -696,6 +924,104 @@ def compile_write_plan(
 
 def write_plan_identity(plan: SealedWritePlan) -> UUID:
     return _identity("write-plan", plan.integrity_sha256)
+
+
+def _reject_overlapping_or_duplicate_ranges(
+    replacements: tuple[MappedReplacement, ...],
+) -> None:
+    seen: list[MappedReplacement] = []
+    for item in replacements:
+        for other in seen:
+            if item.location.tab_id != other.location.tab_id:
+                continue
+            if (
+                item.location.edit_start_index == other.location.edit_start_index
+                and item.location.edit_end_index == other.location.edit_end_index
+            ):
+                raise MappingFailure(
+                    MappingFailureCode.DUPLICATE_TARGET_MAPPING,
+                    "two approved proposals mapped to the same frozen baseline span",
+                    candidate_count=2,
+                )
+            if (
+                item.location.edit_start_index < other.location.edit_end_index
+                and other.location.edit_start_index < item.location.edit_end_index
+            ):
+                raise MappingFailure(
+                    MappingFailureCode.OVERLAPPING_MAPPED_RANGES,
+                    "approved mapped ranges overlap on the frozen baseline",
+                    candidate_count=2,
+                )
+        seen.append(item)
+
+
+def _delete_insert_pair(
+    *,
+    tab_id: str,
+    segment_id: str,
+    start: int,
+    end: int,
+    new_text: str,
+) -> tuple[dict[str, JsonValue], dict[str, JsonValue]]:
+    return (
+        {
+            "deleteContentRange": {
+                "range": {
+                    "segmentId": segment_id,
+                    "tabId": tab_id,
+                    "startIndex": start,
+                    "endIndex": end,
+                }
+            }
+        },
+        {
+            "insertText": {
+                "location": {
+                    "segmentId": segment_id,
+                    "tabId": tab_id,
+                    "index": start,
+                },
+                "text": new_text,
+            }
+        },
+    )
+
+
+def _apply_one_splice(
+    body: list[Any],
+    *,
+    structural_element_index: int,
+    edit_start: int,
+    edit_end: int,
+    new_text: str,
+) -> None:
+    paragraph = body[structural_element_index]
+    if not isinstance(paragraph, dict):
+        _malformed("mapped paragraph is malformed")
+    runs = paragraph.get("runs")
+    if not isinstance(runs, list) or not runs:
+        _malformed("mapped paragraph has no text run")
+    run = runs[0]
+    if not isinstance(run, dict):
+        _malformed("mapped paragraph run is malformed")
+    run_start = _integer_index(run, "startIndex")
+    text = run.get("text")
+    if not isinstance(text, str):
+        _malformed("mapped text run content is malformed")
+    encoded = text.encode("utf-16-le")
+    offset_start = (edit_start - run_start) * 2
+    offset_end = (edit_end - run_start) * 2
+    if not 0 <= offset_start < offset_end <= len(encoded):
+        _malformed("replacement range does not map to one baseline text run")
+    run["text"] = (
+        encoded[:offset_start] + new_text.encode("utf-16-le") + encoded[offset_end:]
+    ).decode("utf-16-le")
+    _shift_body_indexes(
+        body,
+        replaced_start=edit_start,
+        replaced_end=edit_end,
+        delta=_utf16_length(new_text) - (edit_end - edit_start),
+    )
 
 
 def _parse_plain_paragraph(html: str) -> tuple[tuple[tuple[str, str | None], ...], str]:

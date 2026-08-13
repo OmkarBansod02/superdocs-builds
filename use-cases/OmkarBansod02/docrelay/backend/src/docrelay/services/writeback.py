@@ -29,7 +29,11 @@ from docrelay.domain.enums import (
     WriteAuthorizationState,
 )
 from docrelay.domain.state_machine import require_transition
-from docrelay.domain.write_plan import GoogleDocsBatchUpdate, SealedWritePlan
+from docrelay.domain.write_plan import (
+    GoogleDocsBatchUpdate,
+    PlannedReplacementContract,
+    SealedWritePlan,
+)
 from docrelay.integrations.google.canonical import sha256_json
 from docrelay.integrations.google.contracts import (
     CommitClassification,
@@ -613,7 +617,11 @@ class WriteBackService:
                         "write_plan_sha256": context.plan.integrity_sha256,
                         "required_revision_id": operation.required_revision_id,
                         "request_count": len(operation.requests),
-                        "request_types": ["deleteContentRange", "insertText"],
+                        "request_types": [
+                            next(iter(request))
+                            for request in operation.requests
+                            if isinstance(request, dict)
+                        ],
                     },
                     attempt_count=1,
                     started_at=datetime.now(UTC),
@@ -805,8 +813,7 @@ class WriteBackService:
     ) -> WriteBackView:
         expected = context.plan.payload.expected_postimage
         source = context.plan.payload.source
-        replacement = context.plan.payload.expected_replacement
-        operation = context.plan.payload.provider_operations[0]
+        planned = context.plan.payload.planned_replacements
         expected_payload = await self._expected_payload(context)
         watched_path_matches = (
             not context.requires_exact_file_authorization
@@ -814,9 +821,10 @@ class WriteBackService:
         )
         if not watched_path_matches:
             await self._invalidate_watched_scope(context, stage="POSTWRITE_VERIFICATION")
-        intended_text = _text_at_operation_range(
-            current.canonical_payload, operation, postimage=True
+        intended_matches = _planned_replacements_match(
+            current.canonical_payload, planned, postimage=True
         )
+        old_preimage_gone = _planned_old_preimages_gone(current.canonical_payload, planned)
         report: dict[str, JsonValue] = {
             "identity_matches": _current_identity_matches(context, current),
             "watched_root_path_matches": watched_path_matches,
@@ -824,8 +832,8 @@ class WriteBackService:
             "schema_matches": current.canonical_schema_version == _payload_schema(expected_payload),
             "canonical_hash_matches": current.canonical_sha256 == expected.canonical_sha256,
             "complete_structure_matches": current.canonical_payload == expected_payload,
-            "intended_range_has_new_text": intended_text == replacement.new_text,
-            "intended_range_old_preimage_gone": intended_text != replacement.old_text,
+            "intended_range_has_new_text": intended_matches,
+            "intended_range_old_preimage_gone": old_preimage_gone,
             "unaffected_structure_matches": current.canonical_payload == expected_payload,
         }
         passed = all(bool(value) for value in report.values())
@@ -1134,6 +1142,7 @@ class WriteBackService:
         except ValidationError as exc:
             raise WriteBackNotEligible("MappingProof failed its integrity seal") from exc
         proof_payload = sealed_proof.payload
+        mapped_by_proposal = {item.lineage.proposal_id: item for item in proof_payload.replacements}
         if (
             proof_payload.source_snapshot_id != context.snapshot_id
             or proof_payload.provider_file_id != plan.source.provider_file_id
@@ -1142,6 +1151,8 @@ class WriteBackService:
             or proof_payload.native_snapshot_sha256 != plan.source.native_canonical_sha256
             or proof_payload.old_text != plan.expected_replacement.old_text
             or proof_payload.new_text != plan.expected_replacement.new_text
+            or len(proof_payload.replacements) != len(plan.planned_replacements)
+            or len(proof_payload.replacements) != len(plan.approval_lineage)
         ):
             raise WriteBackNotEligible("MappingProof source lineage no longer matches the plan")
         lineages = tuple(
@@ -1153,14 +1164,16 @@ class WriteBackService:
         )
         if len(lineages) != len(plan.approval_lineage):
             raise WriteBackNotEligible("approved proposal lineage is incomplete")
-        for ordinal, (stored, sealed) in enumerate(
+        for ordinal, (stored, sealed, planned) in enumerate(
             zip(
                 sorted(lineages, key=lambda item: item.ordinal),
                 plan.approval_lineage,
+                plan.planned_replacements,
                 strict=True,
             ),
             start=1,
         ):
+            mapped = mapped_by_proposal.get(sealed.proposal_id)
             proposal = await session.get(ProposedChange, stored.proposed_change_id)
             decision = await session.get(ReviewDecision, stored.review_decision_id)
             export = await session.get(SuperDocsExport, sealed.superdocs_export_id)
@@ -1192,7 +1205,8 @@ class WriteBackService:
                 )
             )
             if (
-                proposal is None
+                mapped is None
+                or proposal is None
                 or decision is None
                 or export is None
                 or review_round is None
@@ -1202,6 +1216,12 @@ class WriteBackService:
                 or stored.ordinal != ordinal
                 or stored.proposed_change_id != sealed.proposal_id
                 or stored.review_decision_id != sealed.decision_id
+                or planned.proposal_id != sealed.proposal_id
+                or planned.decision_id != sealed.decision_id
+                or planned.old_text != mapped.old_text
+                or planned.new_text != mapped.new_text
+                or planned.baseline_edit_start_index != mapped.location.edit_start_index
+                or planned.baseline_edit_end_index != mapped.location.edit_end_index
                 or proposal.sync_run_id != context.run_id
                 or proposal.operation is not ProposalOperation.EDIT
                 or proposal.superdocs_change_id != sealed.superdocs_change_id
@@ -1234,10 +1254,10 @@ class WriteBackService:
                 or export.sha256 != sealed.approved_export_sha256
                 or export.final_version_id != sealed.final_version_id
                 or bool(export.warnings)
-                or proof_payload.lineage.proposal_id != proposal.id
-                or proof_payload.lineage.decision_id != decision.id
-                or proof_payload.lineage.decision_sha256 != decision.decision_sha256
-                or proof_payload.lineage.superdocs_export_id != export.id
+                or mapped.lineage.proposal_id != proposal.id
+                or mapped.lineage.decision_id != decision.id
+                or mapped.lineage.decision_sha256 != decision.decision_sha256
+                or mapped.lineage.superdocs_export_id != export.id
                 or superseding is not None
             ):
                 raise WriteBackNotEligible("reviewed proposal is no longer approved and current")
@@ -1246,14 +1266,12 @@ class WriteBackService:
             baseline_payload, context.plan.payload.provider_operations[0]
         )
         if (
-            _text_at_operation_range(baseline_payload, context.plan.payload.provider_operations[0])
-            != context.plan.payload.expected_replacement.old_text
-            or _text_at_operation_range(
-                expected_payload,
-                context.plan.payload.provider_operations[0],
-                postimage=True,
+            not _planned_replacements_match(
+                baseline_payload, context.plan.payload.planned_replacements, postimage=False
             )
-            != context.plan.payload.expected_replacement.new_text
+            or not _planned_replacements_match(
+                expected_payload, context.plan.payload.planned_replacements, postimage=True
+            )
             or sha256_json(expected_payload)
             != context.plan.payload.expected_postimage.canonical_sha256
         ):
@@ -1724,13 +1742,111 @@ def _text_at_operation_range(
     return None
 
 
+def _planned_replacements_match(
+    canonical: dict[str, Any],
+    planned: tuple[PlannedReplacementContract, ...],
+    *,
+    postimage: bool,
+) -> bool:
+    if not planned:
+        return False
+    for item in planned:
+        if postimage:
+            start, end = _postimage_range(item, planned)
+            expected = item.new_text
+        else:
+            start = item.baseline_edit_start_index
+            end = item.baseline_edit_end_index
+            expected = item.old_text
+        actual = _text_at_utf16_range(canonical, item.tab_id, start, end)
+        if actual != expected:
+            return False
+    return True
+
+
+def _planned_old_preimages_gone(
+    canonical: dict[str, Any],
+    planned: tuple[PlannedReplacementContract, ...],
+) -> bool:
+    if not planned:
+        return False
+    for item in planned:
+        start, end = _postimage_range(item, planned)
+        actual = _text_at_utf16_range(canonical, item.tab_id, start, end)
+        if actual is None or actual == item.old_text:
+            return False
+    return True
+
+
+def _postimage_range(
+    item: PlannedReplacementContract,
+    planned: tuple[PlannedReplacementContract, ...],
+) -> tuple[int, int]:
+    delta = 0
+    for other in planned:
+        if other.baseline_edit_end_index <= item.baseline_edit_start_index:
+            delta += _utf16_length(other.new_text) - (
+                other.baseline_edit_end_index - other.baseline_edit_start_index
+            )
+    start = item.baseline_edit_start_index + delta
+    return start, start + _utf16_length(item.new_text)
+
+
+def _text_at_utf16_range(
+    canonical: dict[str, Any], tab_id: str, start: int, end: int
+) -> str | None:
+    try:
+        tabs = canonical["tabs"]
+        if not isinstance(tabs, list):
+            return None
+        tab = next(
+            item
+            for item in tabs
+            if isinstance(item, dict)
+            and isinstance(item.get("tabProperties"), dict)
+            and item["tabProperties"].get("tabId") == tab_id
+        )
+        for block in tab.get("body") or []:
+            if not isinstance(block, dict):
+                continue
+            for run in block.get("runs") or []:
+                if not isinstance(run, dict) or run.get("kind") != "text":
+                    continue
+                run_start = run.get("startIndex")
+                text = run.get("text")
+                if not isinstance(run_start, int) or not isinstance(text, str):
+                    continue
+                encoded = text.encode("utf-16-le")
+                offset_start = (start - run_start) * 2
+                offset_end = (end - run_start) * 2
+                if 0 <= offset_start <= offset_end <= len(encoded):
+                    return encoded[offset_start:offset_end].decode("utf-16-le")
+    except (KeyError, StopIteration, TypeError, ValueError, UnicodeDecodeError):
+        return None
+    return None
+
+
 def _apply_provider_operation(
     baseline: dict[str, Any], operation: GoogleDocsBatchUpdate
 ) -> dict[str, Any]:
-    if len(operation.requests) != 2:
-        raise WriteBackNotEligible("WritePlan does not contain the exact two-operation subset")
-    delete_request = cast(dict[str, Any], operation.requests[0])
-    insert_request = cast(dict[str, Any], operation.requests[1])
+    if len(operation.requests) < 2 or len(operation.requests) % 2 != 0:
+        raise WriteBackNotEligible("WritePlan does not contain paired delete-and-insert operations")
+    expected = deepcopy(baseline)
+    for index in range(0, len(operation.requests), 2):
+        expected = _apply_delete_insert_pair(
+            expected,
+            delete_request=cast(dict[str, Any], operation.requests[index]),
+            insert_request=cast(dict[str, Any], operation.requests[index + 1]),
+        )
+    return expected
+
+
+def _apply_delete_insert_pair(
+    baseline: dict[str, Any],
+    *,
+    delete_request: dict[str, Any],
+    insert_request: dict[str, Any],
+) -> dict[str, Any]:
     if set(delete_request) != {"deleteContentRange"} or set(insert_request) != {"insertText"}:
         raise WriteBackNotEligible("WritePlan operation shape is not the exact supported subset")
     try:

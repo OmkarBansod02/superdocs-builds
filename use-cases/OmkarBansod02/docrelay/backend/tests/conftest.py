@@ -11,6 +11,7 @@ from docrelay.domain.write_plan import (
     ExpectedReplacementContract,
     GoogleDocsBatchUpdate,
     MappingProofContract,
+    PlannedReplacementContract,
     RuleContract,
     SealedWritePlan,
     SourceSnapshotContract,
@@ -36,6 +37,8 @@ def write_plan_factory() -> Callable[..., SealedWritePlan]:
     ) -> SealedWritePlan:
         now = datetime(2026, 8, 7, 17, 0, tzinfo=UTC)
         baseline_revision = "revision-A"
+        resolved_proposal_id = proposal_id or uuid4()
+        resolved_decision_id = decision_id or uuid4()
         payload = WritePlanPayload(
             created_at=now,
             expires_at=now + timedelta(hours=12),
@@ -66,8 +69,8 @@ def write_plan_factory() -> Callable[..., SealedWritePlan]:
             compiler_version="docrelay.google-write-plan-compiler.v1",
             approval_lineage=(
                 ApprovalLineageContract(
-                    proposal_id=proposal_id or uuid4(),
-                    decision_id=decision_id or uuid4(),
+                    proposal_id=resolved_proposal_id,
+                    decision_id=resolved_decision_id,
                     review_round=2,
                     session_id="session-for-revision-A",
                     session_document_id="doc_primary",
@@ -88,6 +91,23 @@ def write_plan_factory() -> Callable[..., SealedWritePlan]:
                 new_text="30",
                 old_paragraph_sha256=ZERO_HASH,
                 new_paragraph_sha256=ONE_HASH,
+            ),
+            planned_replacements=(
+                PlannedReplacementContract(
+                    proposal_id=resolved_proposal_id,
+                    decision_id=resolved_decision_id,
+                    old_text="45",
+                    new_text="30",
+                    old_paragraph_sha256=ZERO_HASH,
+                    new_paragraph_sha256=ONE_HASH,
+                    tab_id="t.0",
+                    structural_element_index=0,
+                    baseline_edit_start_index=184,
+                    baseline_edit_end_index=186,
+                    google_delete_start_index=184,
+                    google_delete_end_index=186,
+                    google_insert_index=184,
+                ),
             ),
             provider_operations=(
                 GoogleDocsBatchUpdate(
