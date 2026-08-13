@@ -636,6 +636,12 @@ class SuperDocsWorkflow:
     ) -> RunView:
         if not reviewer_subject:
             raise ValueError("reviewer_subject must not be empty")
+        if await self._is_immutable_decision_replay(
+            run_id,
+            decisions=decisions,
+            reviewer_subject=reviewer_subject,
+        ):
+            return await self.get_run(run_id)
         async with self._sessions() as session:
             run = await self._owned_run(session, run_id, for_update=True)
             round_row, job, superdocs_session = await self._current_round_context(session, run)
@@ -785,6 +791,70 @@ class SuperDocsWorkflow:
             run.failure_detail = None
             await session.commit()
         return await self.get_run(run_id)
+
+    async def _is_immutable_decision_replay(
+        self,
+        run_id: UUID,
+        *,
+        decisions: tuple[DecisionInput, ...],
+        reviewer_subject: str,
+    ) -> bool:
+        """Recognize an exact replay without resubmitting the provider mutation."""
+        async with self._sessions() as session:
+            run = await self._owned_run(session, run_id)
+            if run.state is SyncRunState.AWAITING_REVIEW or not decisions:
+                return False
+            provided_ids = [item.proposal_id for item in decisions]
+            if len(provided_ids) != len(set(provided_ids)):
+                return False
+            proposals = tuple(
+                await session.scalars(
+                    select(ProposedChange).where(
+                        ProposedChange.sync_run_id == run.id,
+                        ProposedChange.id.in_(provided_ids),
+                    )
+                )
+            )
+            if len(proposals) != len(provided_ids):
+                return False
+            round_ids = {item.review_round_id for item in proposals}
+            if len(round_ids) != 1:
+                return False
+            round_row = await session.get(ReviewRound, next(iter(round_ids)))
+            if (
+                round_row is None
+                or round_row.resolution is not ReviewRoundResolution.SUBMIT_CHANGES
+            ):
+                return False
+            round_proposal_ids = set(
+                await session.scalars(
+                    select(ProposedChange.id).where(ProposedChange.review_round_id == round_row.id)
+                )
+            )
+            if set(provided_ids) != round_proposal_ids:
+                return False
+            stored = tuple(
+                await session.scalars(
+                    select(ReviewDecision).where(
+                        ReviewDecision.proposed_change_id.in_(round_proposal_ids)
+                    )
+                )
+            )
+            if len(stored) != len(round_proposal_ids):
+                raise RecoveryBlocked("persisted review decisions are incomplete")
+            requested_by_id = {item.proposal_id: item for item in decisions}
+            for item in stored:
+                requested = requested_by_id[item.proposed_change_id]
+                expected = ChangeDecision.APPROVE if requested.approve else ChangeDecision.REJECT
+                if (
+                    item.decision is not expected
+                    or item.feedback != requested.feedback
+                    or item.reviewer_subject != reviewer_subject
+                ):
+                    raise ReviewOperationInvalid(
+                        "submitted decisions differ from the immutable persisted set"
+                    )
+            return True
 
     async def submit_continue(
         self,

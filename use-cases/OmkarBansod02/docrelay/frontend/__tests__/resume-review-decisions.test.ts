@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  createDryRun,
   resumeRun,
   submitDecisions,
   type GoogleConnection,
@@ -82,6 +83,22 @@ function jsonResponse(body: unknown, status = 200): Response {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("resume → review → submit decisions", () => {
+  it("sends every explicit safety retry through the dry-run API", async () => {
+    const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => (
+      jsonResponse({ status: "UNSUPPORTED" })
+    ));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await createDryRun(runId);
+    await createDryRun(runId);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(call[0]).toBe(`http://localhost:8000/api/v1/runs/${runId}/dry-run`);
+      expect(call[1]).toMatchObject({ method: "POST", body: "{}" });
+    }
+  });
+
   it("submits decisions to the authoritative run ID returned by resume", async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (url.endsWith(`/runs/${runId}/resume`)) return jsonResponse(awaitingReviewRun);

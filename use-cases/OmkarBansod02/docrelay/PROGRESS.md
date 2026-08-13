@@ -198,3 +198,10 @@ artifacts before external effects. Critical focused tests passed (59), adjacent 
 passed (44), and planning/API tranche passed (35); Ruff lint, mypy, and diff checks passed.
 Remaining work is bounded live provider proof plus the documented trusted-deployment/auth
 boundary; final packaging/demo is GO with those production conditions explicit. No commit.
+
+2026-08-13 — Live regression checkpoint: CONDITIONAL PASS; mixed approve/reject planning now
+selects exactly one immutable approved current proposal, exact decision replays are idempotent,
+and the valid omitted-zero Google leading section-break shape compiles without weakening malformed
+range rejection. Both persisted live dry-runs returned READY with zero cloud mutation; focused
+backend/frontend tests and affected lint/format/type checks passed. One rendered browser recovery
+click remains manual because Browser/Playwright was unavailable; no SuperDocs-side issue found.

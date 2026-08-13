@@ -164,6 +164,7 @@ export function humanDryRunFailure(reasonCode: string | null, reason: string | n
     WRONG_REVISION: "The document revision has changed since the baseline.",
     NOT_APPROVED: "This proposal has not been approved.",
     UNDECIDED: "No review decision has been made for this proposal.",
+    UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS: "More than one proposal was approved, but this mapper can safely write only one.",
     UNSUPPORTED_FORMATTING: "The document contains unsupported formatting.",
     UNSUPPORTED_STRUCTURE: "The document structure is not supported for safe write-back.",
     MULTIPLE_RUNS: "Multiple text runs found where exactly one was expected.",
@@ -171,4 +172,23 @@ export function humanDryRunFailure(reasonCode: string | null, reason: string | n
     EXISTING_PLAN_LINEAGE_MISMATCH: "An existing write plan has different inputs.",
   };
   return messages[reasonCode] ?? reason ?? reasonCode.replace(/_/g, " ").toLowerCase();
+}
+
+export function safetyFailureRecovery(reasonCode: string | null): {
+  kind: "refresh-source" | "retry-safety";
+  label: string;
+  explanation: string | null;
+} {
+  if (reasonCode === "MALFORMED_SNAPSHOT") {
+    return {
+      kind: "refresh-source",
+      label: "Reload source for a new review",
+      explanation: "This frozen snapshot does not contain a safely established provider range. Reload the current Google source and review it again; DocRelay will not write to Google during recovery.",
+    };
+  }
+  return {
+    kind: "retry-safety",
+    label: "Run safety check again",
+    explanation: null,
+  };
 }

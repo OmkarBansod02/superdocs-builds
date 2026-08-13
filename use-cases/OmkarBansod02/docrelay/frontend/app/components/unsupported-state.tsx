@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, ShieldAlert } from "lucide-react";
 import type { DryRunView, SourceRegistration } from "../lib/api";
-import { humanDryRunFailure } from "../lib/workspace-state";
+import { humanDryRunFailure, safetyFailureRecovery } from "../lib/workspace-state";
 import { SourceSummary } from "./source-summary";
 
 export function UnsupportedState({
@@ -17,6 +17,7 @@ export function UnsupportedState({
 }) {
   const [showDetails, setShowDetails] = useState(false);
   const humanReason = humanDryRunFailure(dryRun.reason_code, dryRun.reason);
+  const recovery = safetyFailureRecovery(dryRun.reason_code);
 
   return (
     <div className="space-y-5">
@@ -71,8 +72,11 @@ export function UnsupportedState({
               onClick={onReturn}
               className="px-4 py-2 bg-surface-muted text-ink text-sm font-medium rounded border border-border hover:bg-border/30 transition-colors"
             >
-              Return to document
+              {recovery.kind === "refresh-source" ? recovery.label : "Return to document"}
             </button>
+            {recovery.explanation ? (
+              <p className="mt-4 text-xs leading-5 text-muted">{recovery.explanation}</p>
+            ) : null}
           </div>
         </div>
       </div>

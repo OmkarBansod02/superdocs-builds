@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { runNeedsPolling, humanRunState, humanDryRunFailure, attentionMessage } from "../app/lib/workspace-state";
+import { runNeedsPolling, humanRunState, humanDryRunFailure, attentionMessage, safetyFailureRecovery } from "../app/lib/workspace-state";
 
 // ---------------------------------------------------------------------------
 // 1. Source selected state
@@ -159,8 +159,21 @@ describe("unsupported mapping fail-closed", () => {
     expect(humanDryRunFailure("AMBIGUOUS_PREIMAGE", null)).toContain("more than once");
     expect(humanDryRunFailure("NOT_APPROVED", null)).toContain("not been approved");
     expect(humanDryRunFailure("STALE_LINEAGE", null)).toContain("no longer current");
+    expect(humanDryRunFailure("UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS", null)).toContain("More than one");
     expect(humanDryRunFailure("UNSUPPORTED_STRUCTURE", null)).toContain("not supported");
     expect(humanDryRunFailure(null, "fallback reason")).toBe("fallback reason");
+  });
+
+  it("does not offer a fake retry for an immutable malformed snapshot", () => {
+    expect(safetyFailureRecovery("MALFORMED_SNAPSHOT")).toEqual({
+      kind: "refresh-source",
+      label: "Reload source for a new review",
+      explanation: expect.stringContaining("will not write to Google"),
+    });
+    expect(safetyFailureRecovery("STALE_LINEAGE")).toMatchObject({
+      kind: "retry-safety",
+      label: "Run safety check again",
+    });
   });
 
   it("unsupported dry-run has cloud_mutation_performed: false", () => {

@@ -35,6 +35,7 @@ _ASCII_PLAIN_TEXT = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*")
 class MappingFailureCode(StrEnum):
     NOT_APPROVED = "NOT_APPROVED"
     UNDECIDED = "UNDECIDED"
+    UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS = "UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS"
     SUPERSEDED = "SUPERSEDED"
     STALE_LINEAGE = "STALE_LINEAGE"
     UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
@@ -814,15 +815,33 @@ def _utf16_length(value: str) -> int:
 
 
 def _shift_body_indexes(
-    value: Any,
+    body: list[Any],
     *,
     replaced_start: int,
     replaced_end: int,
     delta: int,
 ) -> None:
+    for offset, element in enumerate(body):
+        _shift_provider_indexes(
+            element,
+            replaced_start=replaced_start,
+            replaced_end=replaced_end,
+            delta=delta,
+            allow_implicit_zero_section_break=offset == 0,
+        )
+
+
+def _shift_provider_indexes(
+    value: Any,
+    *,
+    replaced_start: int,
+    replaced_end: int,
+    delta: int,
+    allow_implicit_zero_section_break: bool = False,
+) -> None:
     if isinstance(value, list):
         for child in value:
-            _shift_body_indexes(
+            _shift_provider_indexes(
                 child,
                 replaced_start=replaced_start,
                 replaced_end=replaced_end,
@@ -831,16 +850,42 @@ def _shift_body_indexes(
         return
     if not isinstance(value, dict):
         return
+    implicit_zero_start = (
+        allow_implicit_zero_section_break
+        and value.get("type") == "sectionBreak"
+        and value.get("startIndex") is None
+        and value.get("endIndex") == 1
+    )
+    if "startIndex" in value or "endIndex" in value:
+        start = value.get("startIndex")
+        end = value.get("endIndex")
+        if implicit_zero_start:
+            start = 0
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or start < 0
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or end < 0
+            or end < start
+        ):
+            _malformed("provider structural range is malformed")
     for key, child in value.items():
         if key in {"startIndex", "endIndex"}:
-            if not isinstance(child, int) or isinstance(child, bool):
+            if key == "startIndex" and implicit_zero_start:
+                # Google omits the zero-valued startIndex on the mandatory leading
+                # body section break. Keep the omission in the canonical postimage;
+                # it is not a writable range and no index is fabricated from it.
+                continue
+            if not isinstance(child, int) or isinstance(child, bool) or child < 0:
                 _malformed(f"provider {key} is malformed")
             if replaced_start < child < replaced_end:
                 _malformed("provider index boundary intersects the replacement range")
             if child >= replaced_end:
                 value[key] = child + delta
             continue
-        _shift_body_indexes(
+        _shift_provider_indexes(
             child,
             replaced_start=replaced_start,
             replaced_end=replaced_end,

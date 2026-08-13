@@ -334,26 +334,65 @@ class WritePlanningService:
         SuperDocsDocument,
         SuperDocsExport,
     ]:
-        statement = select(ProposedChange).where(ProposedChange.sync_run_id == run.id)
-        if proposal_id is not None:
-            statement = statement.where(ProposedChange.id == proposal_id)
-        proposals = tuple(await session.scalars(statement.order_by(ProposedChange.created_at)))
-        if proposal_id is None and len(proposals) > 1:
-            superseded_ids = {
-                item.replaces_proposal_id
-                for item in proposals
-                if item.replaces_proposal_id is not None
-            }
-            proposals = tuple(item for item in proposals if item.id not in superseded_ids)
-        if len(proposals) != 1:
+        roster = tuple(
+            await session.scalars(
+                select(ProposedChange)
+                .where(ProposedChange.sync_run_id == run.id)
+                .order_by(ProposedChange.created_at, ProposedChange.id)
+            )
+        )
+        superseded_ids = {
+            item.replaces_proposal_id for item in roster if item.replaces_proposal_id is not None
+        }
+        current_proposals = tuple(item for item in roster if item.id not in superseded_ids)
+        current_ids = {item.id for item in current_proposals}
+        decisions = tuple(
+            await session.scalars(
+                select(ReviewDecision).where(ReviewDecision.proposed_change_id.in_(current_ids))
+            )
+        )
+        decisions_by_proposal = {item.proposed_change_id: item for item in decisions}
+        if len(decisions_by_proposal) != len(decisions):
             raise MappingFailure(
                 MappingFailureCode.STALE_LINEAGE,
-                "exactly one proposal must be selected for mapping",
+                "review decision lineage is ambiguous",
             )
-        proposal = proposals[0]
-        decision = await session.scalar(
-            select(ReviewDecision).where(ReviewDecision.proposed_change_id == proposal.id)
+        approved = tuple(
+            proposal
+            for proposal in current_proposals
+            if (
+                (decision := decisions_by_proposal.get(proposal.id)) is not None
+                and decision.decision is ChangeDecision.APPROVE
+            )
         )
+        if len(approved) > 1:
+            raise MappingFailure(
+                MappingFailureCode.UNSUPPORTED_MULTIPLE_APPROVED_PROPOSALS,
+                "multiple approved proposals are outside the one-change mapper subset",
+                candidate_count=len(approved),
+            )
+        if proposal_id is None:
+            if not approved:
+                code = (
+                    MappingFailureCode.UNDECIDED
+                    if len(decisions_by_proposal) != len(current_proposals)
+                    else MappingFailureCode.NOT_APPROVED
+                )
+                raise MappingFailure(code, "review has no approved writable proposal")
+            proposal = approved[0]
+        else:
+            selected_proposal = next((item for item in roster if item.id == proposal_id), None)
+            if selected_proposal is None:
+                raise MappingFailure(
+                    MappingFailureCode.STALE_LINEAGE,
+                    "selected proposal does not belong to this review lineage",
+                )
+            proposal = selected_proposal
+        decision = decisions_by_proposal.get(proposal.id)
+        if decision is None and proposal.id not in current_ids:
+            decision = await session.scalar(
+                select(ReviewDecision).where(ReviewDecision.proposed_change_id == proposal.id)
+            )
         round_row = await session.get(ReviewRound, proposal.review_round_id)
         job = await session.get(SuperDocsJob, proposal.superdocs_job_id)
         document = await session.get(SuperDocsDocument, proposal.target_document_id)

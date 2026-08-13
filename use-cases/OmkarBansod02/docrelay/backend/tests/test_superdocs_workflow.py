@@ -615,19 +615,39 @@ async def test_review_requires_complete_explicit_set_and_preserves_replacement_l
     restarted_at_review = SuperDocsWorkflow(
         sessions=sessions, superdocs=provider, artifacts=artifacts, owner_subject="owner-1"
     )
+    submitted_decisions = (
+        DecisionInput(proposal_id=by_change["change-a"].proposal_id, approve=True),
+        DecisionInput(
+            proposal_id=by_change["change-b"].proposal_id,
+            approve=False,
+            feedback="Keep B and add a narrower clarification.",
+        ),
+    )
     await restarted_at_review.submit_decisions(
         started.run_id,
-        decisions=(
-            DecisionInput(proposal_id=by_change["change-a"].proposal_id, approve=True),
-            DecisionInput(
-                proposal_id=by_change["change-b"].proposal_id,
-                approve=False,
-                feedback="Keep B and add a narrower clarification.",
-            ),
-        ),
+        decisions=submitted_decisions,
         reviewer_subject="reviewer-1",
     )
     assert [item.approved for item in provider.decision_calls[0]] == [True, False]
+    replayed = await restarted_at_review.submit_decisions(
+        started.run_id,
+        decisions=submitted_decisions,
+        reviewer_subject="reviewer-1",
+    )
+    assert replayed.state is SyncRunState.EDITING
+    assert len(provider.decision_calls) == 1
+    with pytest.raises(ReviewOperationInvalid, match="immutable persisted set"):
+        await restarted_at_review.submit_decisions(
+            started.run_id,
+            decisions=(
+                DecisionInput(
+                    proposal_id=by_change["change-a"].proposal_id,
+                    approve=False,
+                ),
+                submitted_decisions[1],
+            ),
+            reviewer_subject="reviewer-1",
+        )
 
     provider.job = provider.review_job(
         proposal(

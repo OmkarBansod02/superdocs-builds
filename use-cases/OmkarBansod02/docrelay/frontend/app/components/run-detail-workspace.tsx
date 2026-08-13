@@ -20,6 +20,7 @@ import {
   type RunView,
   type WriteBackView,
 } from "../lib/api";
+import { safetyFailureRecovery } from "../lib/workspace-state";
 import type { DocumentIdentityData } from "./document-identity";
 import { DocumentIdentity } from "./document-identity";
 import { DryRunSummary } from "./dry-run-summary";
@@ -181,10 +182,10 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
     content = <ReviewPanel document={document} proposals={proposals.length ? proposals : run.pending_proposals} decisions={decisions} submitting={submitting} onDecide={(proposalId, approve) => setDecisions((current) => new Map(current).set(proposalId, { approve }))} onSubmitAll={() => void submitReview()} />;
   } else if (dryRun?.status === "READY") {
     content = <DryRunSummary document={document} dryRun={dryRun} writing={writing} onWrite={() => void write()} />;
-  } else if (dryRun) {
-    content = <SafetyStop document={document} dryRun={dryRun} onRetry={() => void prepareDryRun()} />;
   } else if (dryRunBusy) {
     content = <PreparingSafetyCheck document={document} />;
+  } else if (dryRun) {
+    content = <SafetyStop document={document} dryRun={dryRun} onRetry={() => void prepareDryRun()} />;
   } else if (shouldPoll) {
     content = <ProcessingState document={document} run={run} />;
   } else {
@@ -234,7 +235,8 @@ function PreparingSafetyCheck({ document }: { document: DocumentIdentityData }) 
 }
 
 function SafetyStop({ document, dryRun, onRetry }: { document: DocumentIdentityData; dryRun: DryRunView; onRetry: () => void }) {
-  return <div><DocumentIdentity document={document} /><WorkflowProgress current="Safety check" warning /><section className="mx-auto max-w-[760px] px-5 py-14 sm:px-8"><h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">Safety check stopped</h1><div className="mt-6"><InlineNotice tone="warning">{dryRun.reason ?? "DocRelay could not produce a unique, current write plan."}</InlineNotice></div>{dryRun.reason_code ? <p className="mt-4 font-mono text-[11px] text-muted">{dryRun.reason_code}</p> : null}<Button variant="secondary" className="mt-7" onClick={onRetry}>Run safety check again</Button></section></div>;
+  const recovery = safetyFailureRecovery(dryRun.reason_code);
+  return <div><DocumentIdentity document={document} /><WorkflowProgress current="Safety check" warning /><section className="mx-auto max-w-[760px] px-5 py-14 sm:px-8"><h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">Safety check stopped</h1><div className="mt-6"><InlineNotice tone="warning">{dryRun.reason ?? "DocRelay could not produce a unique, current write plan."}</InlineNotice></div>{dryRun.reason_code ? <p className="mt-4 font-mono text-[11px] text-muted">{dryRun.reason_code}</p> : null}{recovery.explanation ? <p className="mt-5 max-w-[650px] text-[14px] leading-6 text-muted">{recovery.explanation}</p> : null}{recovery.kind === "refresh-source" ? <Link href="/" className="mt-7 inline-flex min-h-11 items-center justify-center rounded-md border border-accent bg-surface px-4 text-[14px] font-semibold text-accent transition-colors hover:bg-accent-soft">{recovery.label}</Link> : <Button variant="secondary" className="mt-7" onClick={onRetry}>{recovery.label}</Button>}</section></div>;
 }
 
 function RunAttention({ document, summary, onRefresh }: { document: DocumentIdentityData; summary: RunSummary; onRefresh: () => void }) {

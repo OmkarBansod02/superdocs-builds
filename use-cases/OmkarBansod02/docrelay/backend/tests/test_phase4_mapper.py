@@ -244,6 +244,91 @@ def test_variable_length_replacement_shifts_complete_trailing_postimage(
     assert expected_body[1]["runs"][0]["text"] == "Trailing content stays exact.\n"
 
 
+def test_live_omitted_zero_start_on_leading_section_break_is_supported() -> None:
+    """The sanitized 2026-08-13 Google shape omits the zero-valued startIndex."""
+    leading_section_break = {
+        "startIndex": None,
+        "endIndex": 1,
+        "type": "sectionBreak",
+        "sectionStyle": {},
+    }
+    target = _paragraph(start=1)
+    baseline = _baseline(_canonical([leading_section_break, target]))
+    change = normalize_reviewed_change(_proposal())
+
+    proof, plan = _compile(change, baseline)
+
+    assert proof.payload.location.structural_element_index == 1
+    operation = plan.payload.provider_operations[0]
+    assert operation.requests[0]["deleteContentRange"]["range"]["startIndex"] == 23
+    assert plan.payload.expected_postimage.canonical_payload["structural_element_index"] == 1
+    # The compiler establishes that this exact provider omission means zero, but
+    # preserves the canonical shape and never invents a writable range from it.
+    expected = deepcopy(baseline.canonical_payload)
+    expected["tabs"][0]["body"][1]["runs"][0]["text"] = "Payment is due within 30 days.\n"
+    assert expected["tabs"][0]["body"][0]["startIndex"] is None
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+
+
+@pytest.mark.parametrize(
+    "leading_section_break",
+    [
+        {
+            "startIndex": "0",
+            "endIndex": 1,
+            "type": "sectionBreak",
+            "sectionStyle": {},
+        },
+        {
+            "startIndex": {},
+            "endIndex": 1,
+            "type": "sectionBreak",
+            "sectionStyle": {},
+        },
+        {
+            "startIndex": -1,
+            "endIndex": 1,
+            "type": "sectionBreak",
+            "sectionStyle": {},
+        },
+        {
+            "startIndex": 2,
+            "endIndex": 1,
+            "type": "sectionBreak",
+            "sectionStyle": {},
+        },
+        {
+            "startIndex": None,
+            "endIndex": 2,
+            "type": "sectionBreak",
+            "sectionStyle": {},
+        },
+    ],
+)
+def test_malformed_or_impossible_leading_indexes_never_produce_a_write_plan(
+    leading_section_break: dict[str, object],
+) -> None:
+    baseline = _baseline(_canonical([leading_section_break, _paragraph(start=1)]))
+    change = normalize_reviewed_change(_proposal())
+    proof = map_replacement(change, baseline, created_at=NOW)
+
+    with pytest.raises(MappingFailure) as error:
+        compile_write_plan(
+            change=change,
+            baseline=baseline,
+            proof=proof,
+            sync_run_id=UUID("00000000-0000-0000-0000-000000000301"),
+            rule_identity=UUID("00000000-0000-0000-0000-000000000302"),
+            rule_version=1,
+            instruction_sha256=ZERO_HASH,
+            configuration_sha256=ONE_HASH,
+            created_at=NOW,
+            expires_at=NOW + timedelta(hours=24),
+        )
+
+    assert error.value.code is MappingFailureCode.MALFORMED_SNAPSHOT
+
+
 @pytest.mark.parametrize(
     ("proposal", "code"),
     [
@@ -413,6 +498,22 @@ def test_malformed_provider_snapshot_fails_closed() -> None:
             _baseline(canonical),
             NOW,
         )
+    assert error.value.code is MappingFailureCode.MALFORMED_SNAPSHOT
+
+
+@pytest.mark.parametrize("bad_start", [None, "1", {}, -1])
+def test_target_paragraph_start_must_be_an_established_nonnegative_integer(
+    bad_start: object,
+) -> None:
+    paragraph = _paragraph()
+    paragraph["startIndex"] = bad_start
+    with pytest.raises(MappingFailure) as error:
+        map_replacement(
+            normalize_reviewed_change(_proposal()),
+            _baseline(_canonical([paragraph])),
+            NOW,
+        )
+
     assert error.value.code is MappingFailureCode.MALFORMED_SNAPSHOT
 
 

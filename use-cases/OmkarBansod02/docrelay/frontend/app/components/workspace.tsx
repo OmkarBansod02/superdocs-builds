@@ -353,7 +353,9 @@ export function Workspace() {
             <UnsupportedState
               source={state.source}
               dryRun={state.dryRun}
-              onReturn={handleReturnFromUnsupported}
+              onReturn={state.dryRun.reason_code === "MALFORMED_SNAPSHOT"
+                ? handleChangeSource
+                : handleReturnFromUnsupported}
             />
           )}
 
