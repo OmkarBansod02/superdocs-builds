@@ -54,6 +54,7 @@ class SuperDocsRequestError(SuperDocsError):
         status_code: int | None = None,
         request_id: str | None = None,
         retryable: bool = False,
+        timed_out: bool = False,
     ) -> None:
         super().__init__(safe_message)
         self.safe_message = safe_message
@@ -61,6 +62,7 @@ class SuperDocsRequestError(SuperDocsError):
         self.status_code = status_code
         self.request_id = request_id
         self.retryable = retryable
+        self.timed_out = timed_out
 
 
 class SuperDocsHTTPClient:
@@ -427,6 +429,7 @@ class SuperDocsHTTPClient:
                 "SuperDocs request timed out",
                 outcome_unknown=outcome_sensitive,
                 retryable=not outcome_sensitive,
+                timed_out=True,
             ) from exc
         except httpx.HTTPError as exc:
             outcome = "transport_error"

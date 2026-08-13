@@ -81,7 +81,7 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
     return () => controller.abort();
   }, [load]);
 
-  const shouldPoll = loaded ? ["QUEUED", "BASELINING", "EDITING", "COMMITTING", "VERIFYING"].includes(loaded.summary.workflow_state) : false;
+  const shouldPoll = loaded ? !loaded.run.provider_read_error && ["QUEUED", "BASELINING", "EDITING", "COMMITTING", "VERIFYING"].includes(loaded.summary.workflow_state) : false;
   useEffect(() => {
     if (!shouldPoll) return;
     const timer = window.setInterval(() => {
@@ -118,6 +118,16 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
       : "Manual run";
     return { name: loaded.summary.document_name, revision: loaded.summary.source_revision_id, origin };
   }, [loaded]);
+
+  const checkProviderStatus = useCallback(async () => {
+    setError(null);
+    try {
+      await resumeRun(runId);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "SuperDocs status could not be checked.");
+    }
+  }, [load, runId]);
 
   async function submitReview() {
     if (!loaded || submitting) return;
@@ -186,8 +196,8 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
     content = <PreparingSafetyCheck document={document} />;
   } else if (dryRun) {
     content = <SafetyStop document={document} dryRun={dryRun} onRetry={() => void prepareDryRun()} />;
-  } else if (shouldPoll) {
-    content = <ProcessingState document={document} run={run} />;
+  } else if (shouldPoll || run.provider_read_error) {
+    content = <ProcessingState document={document} run={run} onCheckStatus={checkProviderStatus} />;
   } else {
     content = <RunAttention document={document} summary={summary} onRefresh={() => void load()} />;
   }

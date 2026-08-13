@@ -38,7 +38,7 @@ export function DryRunSummary({
           <div className="mt-8">
             <h3 className="text-[18px] font-semibold text-ink">Change to write</h3>
             <div className="mt-6">
-              <DiffView oldText={dryRun.old_text} newText={dryRun.new_text} compact />
+              <DiffView oldText={dryRun.old_text} newText={dryRun.new_text} context={dryRun.context} compact />
             </div>
           </div>
 

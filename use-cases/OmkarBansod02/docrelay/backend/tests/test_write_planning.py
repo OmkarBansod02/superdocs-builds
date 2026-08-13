@@ -1,6 +1,8 @@
 import hashlib
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
 from sqlalchemy import event, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -36,7 +38,7 @@ from docrelay.persistence.models import (
     WritePlan,
 )
 from docrelay.services.artifacts import InMemoryArtifactStore
-from docrelay.services.write_planning import DryRunStatus, WritePlanningService
+from docrelay.services.write_planning import DryRunStatus, DryRunView, WritePlanningService
 
 NOW = datetime(2026, 8, 10, 12, 0, tzinfo=UTC)
 
@@ -287,6 +289,32 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
     assert first == second
     assert first.old_text == "45"
     assert first.new_text == "30"
+    assert first.context is not None
+    assert first.context.before.text == "Payment is due within 45 days."
+    assert first.context.after.text == "Payment is due within 30 days."
+    assert (
+        first.context.before.text[
+            first.context.before.highlight_start : first.context.before.highlight_end
+        ]
+        == first.old_text
+    )
+    assert (
+        first.context.after.text[
+            first.context.after.highlight_start : first.context.after.highlight_end
+        ]
+        == first.new_text
+    )
+    before_prefix = first.context.before.text[: first.context.before.highlight_start]
+    before_suffix = first.context.before.text[first.context.before.highlight_end :]
+    after_prefix = first.context.after.text[: first.context.after.highlight_start]
+    after_suffix = first.context.after.text[first.context.after.highlight_end :]
+    assert (before_prefix, before_suffix) == (after_prefix, after_suffix)
+    assert first.context.source_snapshot_id == snapshot.id
+    assert first.context.native_snapshot_sha256 == canonical_hash
+    unsupported_with_context = first.model_dump(mode="python")
+    unsupported_with_context["status"] = DryRunStatus.UNSUPPORTED
+    with pytest.raises(ValidationError, match="non-ready dry-runs"):
+        DryRunView.model_validate(unsupported_with_context)
     assert first.operation_types == ("deleteContentRange", "insertText")
     assert first.operation_count == 2
     assert first.cloud_mutation_performed is False
@@ -301,6 +329,7 @@ async def test_dry_run_persists_one_deterministic_proof_and_plan_without_google_
         artifacts=corrupt_artifacts,
     ).dry_run(run_id, proposal_id=proposal_id)
     assert corrupt.status is DryRunStatus.STALE
+    assert corrupt.context is None
     assert corrupt.reason is not None and "immutable identity" in corrupt.reason
 
     async with sessions() as session:

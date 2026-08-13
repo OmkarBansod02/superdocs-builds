@@ -2,7 +2,7 @@ import hashlib
 import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
@@ -175,12 +175,22 @@ class ExportArtifactView(_WorkflowModel):
     content: bytes = Field(exclude=True, min_length=1)
 
 
+class ProviderReadErrorView(_WorkflowModel):
+    code: str
+    operation: Literal["jobs.get"] = "jobs.get"
+    retryable: Literal[True] = True
+    observed_at: datetime
+    occurrence_count: int = Field(ge=1)
+    provider_request_id: str | None = None
+
+
 class RunView(_WorkflowModel):
     run_id: UUID
     source_id: UUID
     provider_revision_id: str
     state: SyncRunState
     attention_code: str | None
+    provider_read_error: ProviderReadErrorView | None = None
     session_id: str | None
     session_document_id: str | None
     durable_document_id: str | None
@@ -471,7 +481,13 @@ class SuperDocsWorkflow:
         job = await self._ensure_job_started(run_id)
         if job is None:
             return await self.get_run(run_id)
-        snapshot = await self._superdocs.get_job(job.provider_job_id)
+        try:
+            snapshot = await self._superdocs.get_job(job.provider_job_id)
+        except SuperDocsRequestError as exc:
+            if exc.outcome_unknown or not exc.retryable:
+                raise
+            await self._record_provider_read_error(run_id, exc)
+            return await self.get_run(run_id)
         await self._handle_job_snapshot(run_id, snapshot)
         return await self.get_run(run_id)
 
@@ -521,6 +537,7 @@ class SuperDocsWorkflow:
                 provider_revision_id=snapshot.provider_revision_id,
                 state=run.state,
                 attention_code=run.failure_code,
+                provider_read_error=_provider_read_error_view(run.failure_detail),
                 session_id=superdocs_session.session_id if superdocs_session else None,
                 session_document_id=document.session_document_id if document else None,
                 durable_document_id=document.durable_document_id if document else None,
@@ -1424,6 +1441,11 @@ class SuperDocsWorkflow:
                 "error_code": snapshot.error_code,
             }
             job.usage_evidence = snapshot.usage
+            detail = dict(run.failure_detail or {})
+            detail.pop("provider_read_error", None)
+            if run.failure_code in _PROVIDER_READ_ATTENTION_CODES:
+                run.failure_code = None
+            run.failure_detail = detail or None
             if snapshot.reference.status is SuperDocsJobStatus.COMPLETED:
                 job.completed_at = datetime.now(UTC)
                 document = await session.get(SuperDocsDocument, job.target_document_id)
@@ -2008,6 +2030,32 @@ class SuperDocsWorkflow:
             run.failure_detail = {}
             await session.commit()
 
+    async def _record_provider_read_error(self, run_id: UUID, exc: SuperDocsRequestError) -> None:
+        code = (
+            "SUPERDOCS_STATUS_READ_TIMEOUT"
+            if exc.timed_out
+            else "SUPERDOCS_STATUS_READ_UNAVAILABLE"
+        )
+        async with self._sessions() as session:
+            run = await self._owned_run(session, run_id, for_update=True)
+            detail = dict(run.failure_detail or {})
+            previous = detail.get("provider_read_error")
+            previous_count = (
+                previous.get("occurrence_count", 0) if isinstance(previous, dict) else 0
+            )
+            detail["provider_read_error"] = {
+                "code": code,
+                "operation": "jobs.get",
+                "retryable": True,
+                "observed_at": datetime.now(UTC).isoformat(),
+                "occurrence_count": previous_count + 1,
+                "provider_request_id": exc.request_id,
+            }
+            if run.failure_code is None or run.failure_code in _PROVIDER_READ_ATTENTION_CODES:
+                run.failure_code = code
+            run.failure_detail = detail
+            await session.commit()
+
     async def _owned_document(self, session: AsyncSession, document_id: UUID) -> CloudDocument:
         document = await session.scalar(
             select(CloudDocument)
@@ -2236,6 +2284,24 @@ _AUTOMATIC_RECOVERY_ATTENTION_CODES = (
     "SUPERDOCS_JOB_START_OUTCOME_UNKNOWN",
     "SUPERDOCS_FOCUS_OUTCOME_UNKNOWN",
 )
+
+_PROVIDER_READ_ATTENTION_CODES = frozenset(
+    {"SUPERDOCS_STATUS_READ_TIMEOUT", "SUPERDOCS_STATUS_READ_UNAVAILABLE"}
+)
+
+
+def _provider_read_error_view(
+    failure_detail: dict[str, JsonValue] | None,
+) -> ProviderReadErrorView | None:
+    if not failure_detail:
+        return None
+    value = failure_detail.get("provider_read_error")
+    if not isinstance(value, dict):
+        return None
+    try:
+        return ProviderReadErrorView.model_validate(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _pending_batch_decisions_match(

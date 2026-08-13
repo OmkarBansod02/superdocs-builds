@@ -2,10 +2,10 @@ import hashlib
 import json
 from datetime import timedelta
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Self
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -23,6 +23,7 @@ from docrelay.mapping.production import (
     MappingFailureCode,
     ReviewedProposal,
     SealedMappingProof,
+    SemanticReplacement,
     compile_write_plan,
     map_replacement,
     normalize_reviewed_change,
@@ -68,6 +69,26 @@ class DryRunSource(_WritePlanningModel):
     native_snapshot_sha256: str
 
 
+class ContextSpan(_WritePlanningModel):
+    text: str
+    highlight_start: int = Field(ge=0)
+    highlight_end: int = Field(gt=0)
+
+    @model_validator(mode="after")
+    def validate_highlight(self) -> Self:
+        if self.highlight_start >= self.highlight_end or self.highlight_end > len(self.text):
+            raise ValueError("context highlight is outside the displayed text")
+        return self
+
+
+class ContextualReplacement(_WritePlanningModel):
+    offset_unit: Literal["UNICODE_CODE_POINT"] = "UNICODE_CODE_POINT"
+    before: ContextSpan
+    after: ContextSpan
+    source_snapshot_id: UUID
+    native_snapshot_sha256: str
+
+
 class DryRunView(_WritePlanningModel):
     run_id: UUID
     proposal_id: UUID | None
@@ -75,6 +96,7 @@ class DryRunView(_WritePlanningModel):
     source: DryRunSource | None
     old_text: str | None
     new_text: str | None
+    context: ContextualReplacement | None = None
     structural_location: dict[str, JsonValue] | None
     operation_count: int = Field(ge=0)
     operation_types: tuple[str, ...]
@@ -88,6 +110,27 @@ class DryRunView(_WritePlanningModel):
     reason: str | None
     candidate_count: int | None
     cloud_mutation_performed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_context_contract(self) -> Self:
+        if self.status is not DryRunStatus.READY:
+            if self.context is not None:
+                raise ValueError("non-ready dry-runs cannot expose write preview context")
+            return self
+        if self.context is None or self.old_text is None or self.new_text is None:
+            raise ValueError("ready dry-runs require exact contextual replacement evidence")
+        before = self.context.before
+        after = self.context.after
+        if (
+            before.text[before.highlight_start : before.highlight_end] != self.old_text
+            or after.text[after.highlight_start : after.highlight_end] != self.new_text
+            or before.text[: before.highlight_start] != after.text[: after.highlight_start]
+            or before.text[before.highlight_end :] != after.text[after.highlight_end :]
+            or self.source is None
+            or self.context.native_snapshot_sha256 != self.source.native_snapshot_sha256
+        ):
+            raise ValueError("context does not match the exact frozen replacement evidence")
+        return self
 
 
 class WritePlanningService:
@@ -210,6 +253,7 @@ class WritePlanningService:
                     canonical_payload=capture.canonical_payload,
                 )
                 proof = map_replacement(change, baseline, export.exported_at)
+                context = _contextual_replacement(change, baseline, proof)
                 stored_proof = await self._persist_proof(session, run, snapshot, proof)
                 rule_hash = _hash_json(run.rule_snapshot)
                 plan = compile_write_plan(
@@ -261,6 +305,7 @@ class WritePlanningService:
             source=source,
             old_text=change.old_text,
             new_text=change.new_text,
+            context=context,
             structural_location=location.model_dump(mode="json"),
             operation_count=len(operation.requests),
             operation_types=("deleteContentRange", "insertText"),
@@ -573,6 +618,7 @@ def _failure_view(
         source=source,
         old_text=None,
         new_text=None,
+        context=None,
         structural_location=None,
         operation_count=0,
         operation_types=(),
@@ -591,3 +637,54 @@ def _failure_view(
 def _hash_json(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _contextual_replacement(
+    change: SemanticReplacement,
+    baseline: BaselineSnapshot,
+    proof: SealedMappingProof,
+) -> ContextualReplacement:
+    try:
+        tabs = baseline.canonical_payload["tabs"]
+        assert isinstance(tabs, list)
+        tab = tabs[0]
+        assert isinstance(tab, dict)
+        body = tab["body"]
+        assert isinstance(body, list)
+        paragraph = body[proof.payload.location.structural_element_index]
+        assert isinstance(paragraph, dict)
+        runs = paragraph["runs"]
+        assert isinstance(runs, list)
+        run = runs[proof.payload.location.text_run_index]
+        assert isinstance(run, dict)
+        frozen_text = run["text"]
+        assert isinstance(frozen_text, str) and frozen_text.endswith("\n")
+        before = frozen_text[:-1]
+    except (AssertionError, IndexError, KeyError, TypeError) as exc:
+        raise MappingFailure(
+            MappingFailureCode.STALE_SNAPSHOT,
+            "context could not be derived from the frozen mapped source paragraph",
+        ) from exc
+    start = len(change.prefix)
+    end = start + len(change.old_text)
+    if before != change.old_paragraph or before[start:end] != change.old_text:
+        raise MappingFailure(
+            MappingFailureCode.STALE_LINEAGE,
+            "context does not contain the exact approved source preimage",
+        )
+    after = f"{before[:start]}{change.new_text}{before[end:]}"
+    if after != change.new_paragraph:
+        raise MappingFailure(
+            MappingFailureCode.STALE_LINEAGE,
+            "context does not match the approved replacement paragraph",
+        )
+    return ContextualReplacement(
+        before=ContextSpan(text=before, highlight_start=start, highlight_end=end),
+        after=ContextSpan(
+            text=after,
+            highlight_start=start,
+            highlight_end=start + len(change.new_text),
+        ),
+        source_snapshot_id=baseline.snapshot_id,
+        native_snapshot_sha256=baseline.native_canonical_sha256,
+    )

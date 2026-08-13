@@ -202,6 +202,14 @@ export interface RunView {
   provider_revision_id: string;
   state: SyncRunState;
   attention_code: string | null;
+  provider_read_error?: {
+    code: string;
+    operation: "jobs.get";
+    retryable: true;
+    observed_at: string;
+    occurrence_count: number;
+    provider_request_id?: string | null;
+  } | null;
   session_id: string | null;
   session_document_id: string | null;
   durable_document_id: string | null;
@@ -242,6 +250,13 @@ export interface DryRunView {
   source: DryRunSource | null;
   old_text: string | null;
   new_text: string | null;
+  context?: {
+    offset_unit: "UNICODE_CODE_POINT";
+    before: ContextSpan;
+    after: ContextSpan;
+    source_snapshot_id: string;
+    native_snapshot_sha256: string;
+  } | null;
   structural_location: Record<string, unknown> | null;
   operation_count: number;
   operation_types: string[];
@@ -255,6 +270,12 @@ export interface DryRunView {
   reason: string | null;
   candidate_count: number | null;
   cloud_mutation_performed: false;
+}
+
+export interface ContextSpan {
+  text: string;
+  highlight_start: number;
+  highlight_end: number;
 }
 
 export type WriteBackStatus =

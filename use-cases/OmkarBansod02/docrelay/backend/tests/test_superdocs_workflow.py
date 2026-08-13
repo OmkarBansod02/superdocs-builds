@@ -91,6 +91,8 @@ class FakeSuperDocs:
         self.start_entered = asyncio.Event()
         self.block_job_read: asyncio.Event | None = None
         self.job_read_entered = asyncio.Event()
+        self.job_read_calls = 0
+        self.job_read_timeouts_remaining = 0
         self.job = self.processing_job()
 
     def processing_job(self) -> JobSnapshot:
@@ -214,6 +216,15 @@ class FakeSuperDocs:
 
     async def get_job(self, job_id: str) -> JobSnapshot:
         assert job_id == self.job_id
+        self.job_read_calls += 1
+        if self.job_read_timeouts_remaining:
+            self.job_read_timeouts_remaining -= 1
+            raise SuperDocsRequestError(
+                "SuperDocs request timed out",
+                outcome_unknown=False,
+                retryable=True,
+                timed_out=True,
+            )
         observed = self.job
         self.job_read_entered.set()
         if self.block_job_read is not None:
@@ -410,6 +421,117 @@ async def test_in_flight_upload_and_job_start_are_not_retried_by_concurrent_resu
     assert completed_start.provider_job_id == provider.job_id
     assert provider.upload_calls == 1
     assert provider.start_calls == 1
+
+
+async def test_jobs_get_timeouts_remain_recoverable_and_retry_only_the_status_read(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=InMemoryArtifactStore(),
+        owner_subject="owner-1",
+    )
+    started = await service.start_run(
+        baseline=baseline(document_id), instruction="Change 45 days to 30 days only."
+    )
+    provider.job_read_timeouts_remaining = 2
+
+    first = await service.resume(started.run_id)
+    second = await service.resume(started.run_id)
+
+    assert first.state is SyncRunState.EDITING
+    assert second.state is SyncRunState.EDITING
+    assert first.attention_code == "SUPERDOCS_STATUS_READ_TIMEOUT"
+    assert second.provider_read_error is not None
+    assert second.provider_read_error.operation == "jobs.get"
+    assert second.provider_read_error.occurrence_count == 2
+    assert provider.job_read_calls == 2
+    assert provider.upload_calls == 1
+    assert provider.start_calls == 1
+    assert provider.decision_calls == []
+    assert provider.continue_calls == []
+    assert provider.focus_calls == []
+    assert provider.export_calls == 0
+
+    async with sessions() as session:
+        run = await session.get(SyncRun, started.run_id)
+        effects = tuple(
+            await session.scalars(
+                select(ExternalEffect).where(ExternalEffect.sync_run_id == started.run_id)
+            )
+        )
+    assert run is not None and run.state is SyncRunState.EDITING
+    assert all(
+        effect.effect_type not in {EffectType.GOOGLE_BACKUP_COPY, EffectType.GOOGLE_BATCH_UPDATE}
+        for effect in effects
+    )
+    assert sum(effect.attempt_count for effect in effects) == 2
+
+    recovered = await service.resume(started.run_id)
+
+    assert recovered.state is SyncRunState.EDITING
+    assert recovered.attention_code is None
+    assert recovered.provider_read_error is None
+    assert provider.job_read_calls == 3
+    assert provider.upload_calls == 1
+    assert provider.start_calls == 1
+    assert provider.focus_calls == []
+    assert provider.export_calls == 0
+
+    provider.job = provider.review_job(
+        proposal(
+            "replacement-1",
+            "chunk-1",
+            "<p>Payment is due within 45 days.</p>",
+            "<p>Payment is due within 30 days.</p>",
+            "Shorten the payment term.",
+        )
+    )
+    awaiting = await service.resume(started.run_id)
+    assert awaiting.state is SyncRunState.AWAITING_REVIEW
+    assert awaiting.provider_read_error is None
+    assert provider.upload_calls == 1
+    assert provider.start_calls == 1
+    assert provider.decision_calls == []
+
+
+async def test_jobs_get_timeout_does_not_erase_existing_unknown_attention(
+    workflow_database: tuple[AsyncEngine, async_sessionmaker[AsyncSession], UUID],
+) -> None:
+    _, sessions, document_id = workflow_database
+    provider = FakeSuperDocs()
+    service = SuperDocsWorkflow(
+        sessions=sessions,
+        superdocs=provider,
+        artifacts=InMemoryArtifactStore(),
+        owner_subject="owner-1",
+    )
+    started = await service.start_run(
+        baseline=baseline(document_id), instruction="Change 45 days to 30 days only."
+    )
+    async with sessions() as session:
+        run = await session.get(SyncRun, started.run_id)
+        assert run is not None
+        run.failure_code = "SUPERDOCS_REVIEW_SUBMISSION_OUTCOME_UNKNOWN"
+        run.failure_detail = {"effect_key": "review-round:preserved", "outcome": "UNKNOWN"}
+        await session.commit()
+    provider.job_read_timeouts_remaining = 1
+
+    delayed = await service.resume(started.run_id)
+
+    assert delayed.state is SyncRunState.EDITING
+    assert delayed.attention_code == "SUPERDOCS_REVIEW_SUBMISSION_OUTCOME_UNKNOWN"
+    assert delayed.provider_read_error is not None
+    assert delayed.provider_read_error.code == "SUPERDOCS_STATUS_READ_TIMEOUT"
+    async with sessions() as session:
+        run = await session.get(SyncRun, started.run_id)
+    assert run is not None
+    assert run.failure_detail is not None
+    assert run.failure_detail["effect_key"] == "review-round:preserved"
+    assert run.failure_detail["outcome"] == "UNKNOWN"
 
 
 async def test_baseline_artifact_is_rehashed_before_superdocs_upload(

@@ -91,7 +91,7 @@ export function Workspace() {
 
       setWorkspaceState(result);
 
-      if (result.stage === "processing" && runNeedsPolling(run.state)) {
+      if (result.stage === "processing" && runNeedsPolling(run.state) && !run.provider_read_error) {
         const poll = setInterval(async () => {
           try {
             const updated = await resumeRun(run.run_id);
@@ -138,6 +138,13 @@ export function Workspace() {
   const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
     setWorkspaceState((s) => ({ ...s, connection: conn, loading: false }) as WorkspaceState);
   }, [setWorkspaceState]);
+
+  const handleCheckProviderStatus = useCallback(async () => {
+    const current = stateRef.current;
+    if (current.stage !== "processing") return;
+    const updated = await resumeRun(current.run.run_id);
+    await processRun(current.connection, current.source, updated);
+  }, [processRun]);
 
   const handleSourceSelected = useCallback(
     (conn: GoogleConnection, source: SourceRegistration) => {
@@ -305,7 +312,7 @@ export function Workspace() {
           )}
 
           {state.stage === "processing" && (
-            <ProcessingState source={state.source} run={state.run} />
+            <ProcessingState source={state.source} run={state.run} onCheckStatus={handleCheckProviderStatus} />
           )}
 
           {state.stage === "review" && (
