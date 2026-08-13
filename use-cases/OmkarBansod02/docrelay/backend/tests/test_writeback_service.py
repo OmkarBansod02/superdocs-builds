@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -68,6 +69,7 @@ from docrelay.persistence.models import (
     WritePlan,
 )
 from docrelay.services.artifacts import InMemoryArtifactStore
+from docrelay.services.superdocs_workflow import get_write_back_summary
 from docrelay.services.write_planning import DryRunStatus, WritePlanningService
 from docrelay.services.writeback import (
     ConflictChoice,
@@ -76,6 +78,7 @@ from docrelay.services.writeback import (
     WriteBackNotEligible,
     WriteBackService,
     WriteBackStatus,
+    _shift_body_indexes,
 )
 
 GOOGLE_DOC_MIME = "application/vnd.google-apps.document"
@@ -170,6 +173,79 @@ def _canonical(token: str, *, neighbor: str = "Unchanged neighbor.\n") -> dict[s
                 "inlineObjects": {},
                 "positionedObjects": {},
                 "childTabs": [],
+            }
+        ],
+    }
+
+
+def _fresh_live_canonical(token: str) -> dict[str, Any]:
+    """Sanitized structural fixture from live run 85919382 on 2026-08-13."""
+    target_text = f"Payment is due within {token} days.\n"
+    target_end = 34 + len(target_text.encode("utf-16-le")) // 2
+    return {
+        "schema": "docrelay.google-native-canonical.v1",
+        "tabs": [
+            {
+                "tabProperties": {
+                    "tabId": "t.0",
+                    "title": "Tab 1",
+                    "index": 0,
+                    "nestingLevel": None,
+                    "parentTabId": None,
+                },
+                "body": [
+                    {
+                        "startIndex": None,
+                        "endIndex": 1,
+                        "type": "sectionBreak",
+                        "sectionStyle": {
+                            "sectionType": "CONTINUOUS",
+                            "contentDirection": "LEFT_TO_RIGHT",
+                            "columnSeparatorStyle": "NONE",
+                        },
+                    },
+                    _plain_paragraph(1, "Vendor Agreement\n"),
+                    _plain_paragraph(18, "\n"),
+                    _plain_paragraph(19, "Payment Terms\n"),
+                    _plain_paragraph(33, "\n"),
+                    _plain_paragraph(34, target_text),
+                    _plain_paragraph(target_end, "\n"),
+                    _plain_paragraph(target_end + 1, "Support\n"),
+                ],
+                "headers": {},
+                "footers": {},
+                "footnotes": {},
+                "documentStyle": {},
+                "namedStyles": {},
+                "lists": {},
+                "namedRanges": {},
+                "inlineObjects": {},
+                "positionedObjects": {},
+                "childTabs": [],
+            }
+        ],
+    }
+
+
+def _plain_paragraph(start: int, text: str) -> dict[str, Any]:
+    end = start + len(text.encode("utf-16-le")) // 2
+    return {
+        "startIndex": start,
+        "endIndex": end,
+        "type": "paragraph",
+        "paragraphStyle": {
+            "direction": "LEFT_TO_RIGHT",
+            "namedStyleType": "NORMAL_TEXT",
+        },
+        "bullet": None,
+        "positionedObjectIds": [],
+        "runs": [
+            {
+                "kind": "text",
+                "startIndex": start,
+                "endIndex": end,
+                "text": text,
+                "style": {},
             }
         ],
     }
@@ -343,6 +419,7 @@ async def _environment(
     old_token: str = "45",
     new_token: str = "30",
     tamper_export_after_plan: bool = False,
+    fresh_live_snapshot: bool = False,
 ) -> AsyncIterator[
     tuple[
         async_sessionmaker[Any],
@@ -365,7 +442,7 @@ async def _environment(
         await connection.run_sync(Base.metadata.create_all)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(UTC)
-    baseline = _canonical(old_token)
+    baseline = _fresh_live_canonical(old_token) if fresh_live_snapshot else _canonical(old_token)
     baseline_hash = sha256_json(baseline)
     export_content = b"PK\x03\x04reviewed write-back evidence"
     export_sha256 = hashlib.sha256(export_content).hexdigest()
@@ -650,7 +727,9 @@ async def _environment(
 
         plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run_id))
         assert plan is not None
-        expected = _canonical(new_token)
+        expected = (
+            _fresh_live_canonical(new_token) if fresh_live_snapshot else _canonical(new_token)
+        )
         assert sha256_json(expected) == plan.expected_postimage_sha256
 
     provider = FakeGoogleWriteProvider(baseline, expected)
@@ -678,6 +757,141 @@ async def test_stale_revision_before_backup_is_conflict_with_zero_mutations() ->
         assert result.conflict is not None
         assert result.conflict.detection_stage == "BEFORE_BACKUP"
         assert provider.copy_calls == provider.commit_calls == 0
+
+
+async def test_fresh_live_omitted_zero_section_break_passes_writeback_eligibility() -> None:
+    async with _environment(
+        old_token="30",
+        new_token="35",
+        fresh_live_snapshot=True,
+    ) as (sessions, service, provider, run_id, baseline, expected):
+        result = await service.execute(run_id)
+
+        assert baseline["tabs"][0]["body"][0] == {
+            "startIndex": None,
+            "endIndex": 1,
+            "type": "sectionBreak",
+            "sectionStyle": {
+                "sectionType": "CONTINUOUS",
+                "contentDirection": "LEFT_TO_RIGHT",
+                "columnSeparatorStyle": "NONE",
+            },
+        }
+        assert expected["tabs"][0]["body"][0]["startIndex"] is None
+        assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert provider.copy_calls == provider.commit_calls == 1
+        async with sessions() as session:
+            plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run_id))
+            proof = await session.scalar(
+                select(MappingProof).where(MappingProof.sync_run_id == run_id)
+            )
+            persisted_run = await session.get(SyncRun, run_id)
+            assert persisted_run is not None
+            summary = await get_write_back_summary(session, persisted_run)
+        assert plan is not None
+        assert proof is not None
+        assert summary is not None
+        assert summary.write_plan_id == plan.id
+        assert summary.write_plan_sha256 == plan.integrity_sha256
+        assert summary.preview is not None
+        assert summary.preview.old_text == "0"
+        assert summary.preview.new_text == "5"
+        assert summary.preview.context is not None
+        assert summary.preview.context.source_snapshot_id == plan.source_snapshot_id
+        assert summary.preview.context.before.model_dump() == {
+            "text": "Payment is due within 30 days.",
+            "highlight_start": 23,
+            "highlight_end": 24,
+        }
+        assert summary.preview.context.after.model_dump() == {
+            "text": "Payment is due within 35 days.",
+            "highlight_start": 23,
+            "highlight_end": 24,
+        }
+        assert plan.source_snapshot_id == proof.source_snapshot_id
+        assert plan.mapping_proof_id == proof.id
+        assert proof.proof_payload["location"] == {
+            "tab_id": "t.0",
+            "segment_id": "",
+            "structural_element_index": 5,
+            "paragraph_start_index": 34,
+            "paragraph_end_index": 65,
+            "text_run_index": 0,
+            "text_run_start_index": 34,
+            "text_run_end_index": 65,
+            "edit_start_index": 57,
+            "edit_end_index": 58,
+        }
+        assert plan.payload["expected_replacement"] == {
+            "old_text": "0",
+            "new_text": "5",
+            "old_paragraph_sha256": proof.proof_payload["old_paragraph_sha256"],
+            "new_paragraph_sha256": proof.proof_payload["new_paragraph_sha256"],
+        }
+        assert plan.provider_operations["operations"][0]["requests"] == [
+            {
+                "deleteContentRange": {
+                    "range": {
+                        "segmentId": "",
+                        "tabId": "t.0",
+                        "startIndex": 57,
+                        "endIndex": 58,
+                    }
+                }
+            },
+            {
+                "insertText": {
+                    "location": {"segmentId": "", "tabId": "t.0", "index": 57},
+                    "text": "5",
+                }
+            },
+        ]
+
+
+@pytest.mark.parametrize(
+    ("start_index", "end_index", "element_type"),
+    [
+        (None, 2, "sectionBreak"),
+        (None, 1, "paragraph"),
+        ("0", 1, "sectionBreak"),
+        ({}, 1, "sectionBreak"),
+        (-1, 1, "sectionBreak"),
+        (2, 1, "sectionBreak"),
+    ],
+)
+def test_writeback_eligibility_does_not_generalize_omitted_provider_indexes(
+    start_index: object,
+    end_index: int,
+    element_type: str,
+) -> None:
+    body = deepcopy(_fresh_live_canonical("30")["tabs"][0]["body"])
+    body[0]["startIndex"] = start_index
+    body[0]["endIndex"] = end_index
+    body[0]["type"] = element_type
+
+    with pytest.raises(
+        WriteBackNotEligible,
+        match=r"provider (startIndex|structural range) is malformed",
+    ):
+        _shift_body_indexes(
+            body,
+            replaced_start=57,
+            replaced_end=58,
+            delta=0,
+        )
+
+
+def test_writeback_eligibility_requires_persisted_null_zero_marker() -> None:
+    body = deepcopy(_fresh_live_canonical("30")["tabs"][0]["body"])
+    del body[0]["startIndex"]
+
+    with pytest.raises(WriteBackNotEligible, match="provider startIndex is malformed"):
+        _shift_body_indexes(
+            body,
+            replaced_start=57,
+            replaced_end=58,
+            delta=0,
+        )
 
 
 async def test_definitive_commit_preflight_failure_reuses_checkpoint_without_second_backup() -> (

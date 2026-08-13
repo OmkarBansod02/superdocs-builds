@@ -179,7 +179,7 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
   if (!loaded) return <RunLoadFailure error={error} onRetry={() => { setLoading(true); void load(); }} />;
 
   const { run, summary, proposals } = loaded;
-  const terminal = writeResult ?? writeBackViewFromPersisted(run, summary, dryRun);
+  const terminal = writeResult ?? writeBackViewFromPersisted(run, summary);
   const approvedProposal = proposals.find((proposal) => proposal.decision === "APPROVE");
   const approvedChange = approvedProposal ? { oldText: extractText(approvedProposal.old_html), newText: extractText(approvedProposal.new_html) } : undefined;
 
@@ -213,14 +213,14 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
   );
 }
 
-function writeBackViewFromPersisted(run: RunView, summary: RunSummary, dryRun: DryRunView | null): WriteBackView | null {
+export function writeBackViewFromPersisted(run: RunView, summary: RunSummary): WriteBackView | null {
   const persisted = run.write_back;
   if (!persisted) return null;
   return {
     run_id: run.run_id,
     status: persisted.status,
-    write_plan_id: dryRun?.write_plan_id ?? "",
-    write_plan_sha256: dryRun?.write_plan_sha256 ?? "",
+    write_plan_id: persisted.write_plan_id ?? "",
+    write_plan_sha256: persisted.write_plan_sha256 ?? "",
     backup_created: persisted.backup_created,
     backup_verified: persisted.backup_verified,
     source_revision_verified: false,
@@ -229,6 +229,7 @@ function writeBackViewFromPersisted(run: RunView, summary: RunSummary, dryRun: D
     baseline_revision_id: summary.conflict?.baseline_revision_id ?? summary.source_revision_id,
     resulting_revision_id: persisted.resulting_revision_id,
     attention_code: run.attention_code,
+    preview: persisted.preview,
     conflict: summary.conflict ? {
       baseline_revision_id: summary.conflict.baseline_revision_id,
       latest_revision_id: summary.conflict.latest_revision_id,

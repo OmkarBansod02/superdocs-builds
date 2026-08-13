@@ -853,6 +853,7 @@ def _shift_provider_indexes(
     implicit_zero_start = (
         allow_implicit_zero_section_break
         and value.get("type") == "sectionBreak"
+        and "startIndex" in value
         and value.get("startIndex") is None
         and value.get("endIndex") == 1
     )

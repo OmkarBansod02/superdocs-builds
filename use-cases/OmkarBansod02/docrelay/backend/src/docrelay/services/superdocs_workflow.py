@@ -40,6 +40,8 @@ from docrelay.persistence.models import (
     CloudConnection,
     CloudDocument,
     ExternalEffect,
+    GoogleBaselineCapture,
+    MappingProof,
     ProposedChange,
     ReviewDecision,
     ReviewRound,
@@ -207,6 +209,9 @@ class RunView(_WorkflowModel):
 
 class WriteBackRunSummary(_WorkflowModel):
     status: str
+    write_plan_id: UUID
+    write_plan_sha256: str
+    preview: "VerifiedWritePreview | None"
     backup_created: bool
     backup_verified: bool
     write_applied: bool
@@ -214,6 +219,26 @@ class WriteBackRunSummary(_WorkflowModel):
     resulting_revision_id: str | None
     conflict_detection_stage: str | None
     conflict_decision: ConflictChoice | None
+
+
+class PreviewContextSpan(_WorkflowModel):
+    text: str
+    highlight_start: int = Field(ge=0)
+    highlight_end: int = Field(gt=0)
+
+
+class PreviewContext(_WorkflowModel):
+    offset_unit: Literal["UNICODE_CODE_POINT"] = "UNICODE_CODE_POINT"
+    before: PreviewContextSpan
+    after: PreviewContextSpan
+    source_snapshot_id: UUID
+    native_snapshot_sha256: str
+
+
+class VerifiedWritePreview(_WorkflowModel):
+    old_text: str
+    new_text: str
+    context: PreviewContext | None
 
 
 async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBackRunSummary | None:
@@ -260,8 +285,12 @@ async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBa
         status = "FAILED"
     else:
         status = "READY"
+    preview = await _verified_write_preview(session, plan) if status == "WRITE_VERIFIED" else None
     return WriteBackRunSummary(
         status=status,
+        write_plan_id=plan.id,
+        write_plan_sha256=plan.integrity_sha256,
+        preview=preview,
         backup_created=(
             backup is not None and backup.status in {BackupStatus.CREATED, BackupStatus.VERIFIED}
         ),
@@ -276,6 +305,123 @@ async def get_write_back_summary(session: AsyncSession, run: SyncRun) -> WriteBa
         conflict_detection_stage=conflict.detection_stage if conflict else None,
         conflict_decision=conflict.decision if conflict else None,
     )
+
+
+async def _verified_write_preview(
+    session: AsyncSession,
+    plan: WritePlan,
+) -> VerifiedWritePreview | None:
+    replacement = plan.payload.get("expected_replacement")
+    if not isinstance(replacement, dict):
+        return None
+    old_text = replacement.get("old_text")
+    new_text = replacement.get("new_text")
+    if not isinstance(old_text, str) or not isinstance(new_text, str):
+        return None
+    preview = VerifiedWritePreview(old_text=old_text, new_text=new_text, context=None)
+    snapshot = await session.get(SourceSnapshot, plan.source_snapshot_id)
+    proof = await session.get(MappingProof, plan.mapping_proof_id)
+    if snapshot is None or proof is None or proof.source_snapshot_id != snapshot.id:
+        return preview
+    try:
+        capture_id = UUID(str(snapshot.provider_evidence["selected_baseline_capture_id"]))
+    except (KeyError, TypeError, ValueError):
+        return preview
+    capture = await session.get(GoogleBaselineCapture, capture_id)
+    if (
+        capture is None
+        or capture.native_canonical_sha256 != snapshot.native_canonical_sha256
+        or capture.provider_revision_id != snapshot.provider_revision_id
+    ):
+        return preview
+    context = _preview_context_from_frozen_lineage(
+        capture.canonical_payload,
+        proof.proof_payload,
+        old_text=old_text,
+        new_text=new_text,
+        source_snapshot_id=snapshot.id,
+        native_snapshot_sha256=snapshot.native_canonical_sha256,
+    )
+    return preview.model_copy(update={"context": context})
+
+
+def _preview_context_from_frozen_lineage(
+    canonical_payload: dict[str, JsonValue],
+    proof_payload: dict[str, JsonValue],
+    *,
+    old_text: str,
+    new_text: str,
+    source_snapshot_id: UUID,
+    native_snapshot_sha256: str,
+) -> PreviewContext | None:
+    try:
+        location = proof_payload["location"]
+        assert isinstance(location, dict)
+        tabs = canonical_payload["tabs"]
+        assert isinstance(tabs, list) and len(tabs) == 1
+        tab = tabs[0]
+        assert isinstance(tab, dict)
+        body = tab["body"]
+        assert isinstance(body, list)
+        structural_element_index = location["structural_element_index"]
+        text_run_index = location["text_run_index"]
+        run_start = location["text_run_start_index"]
+        edit_start = location["edit_start_index"]
+        edit_end = location["edit_end_index"]
+        assert all(
+            isinstance(value, int) and not isinstance(value, bool)
+            for value in (
+                structural_element_index,
+                text_run_index,
+                run_start,
+                edit_start,
+                edit_end,
+            )
+        )
+        structural_element_index = cast(int, structural_element_index)
+        text_run_index = cast(int, text_run_index)
+        run_start = cast(int, run_start)
+        edit_start = cast(int, edit_start)
+        edit_end = cast(int, edit_end)
+        paragraph = body[structural_element_index]
+        assert isinstance(paragraph, dict)
+        runs = paragraph["runs"]
+        assert isinstance(runs, list)
+        run = runs[text_run_index]
+        assert isinstance(run, dict)
+        frozen_text = run["text"]
+        assert isinstance(frozen_text, str) and frozen_text.endswith("\n")
+        before = frozen_text[:-1]
+        start = _code_point_offset(before, edit_start - run_start)
+        end = _code_point_offset(before, edit_end - run_start)
+    except (AssertionError, IndexError, KeyError, TypeError, ValueError):
+        return None
+    if start is None or end is None or before[start:end] != old_text:
+        return None
+    after = f"{before[:start]}{new_text}{before[end:]}"
+    return PreviewContext(
+        before=PreviewContextSpan(text=before, highlight_start=start, highlight_end=end),
+        after=PreviewContextSpan(
+            text=after,
+            highlight_start=start,
+            highlight_end=start + len(new_text),
+        ),
+        source_snapshot_id=source_snapshot_id,
+        native_snapshot_sha256=native_snapshot_sha256,
+    )
+
+
+def _code_point_offset(text: str, utf16_offset: int) -> int | None:
+    if utf16_offset < 0:
+        return None
+    consumed = 0
+    for index, character in enumerate(text):
+        if consumed == utf16_offset:
+            return index
+        consumed += len(character.encode("utf-16-le")) // 2
+        if consumed > utf16_offset:
+            return None
+    return len(text) if consumed == utf16_offset else None
 
 
 class SuperDocsWorkflow:

@@ -6,7 +6,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { contextRange, DiffView } from "../app/components/diff-view";
 import { ProcessingState } from "../app/components/processing-state";
-import type { RunSummary, RunView } from "../app/lib/api";
+import { WriteBackResult } from "../app/components/write-back-result";
+import { writeBackViewFromPersisted } from "../app/components/run-detail-workspace";
+import type { DryRunView, RunSummary, RunView, WriteBackView } from "../app/lib/api";
 import { runStatusDisplay } from "../app/components/run-status";
 
 function run(overrides: Partial<RunSummary>): RunSummary {
@@ -108,7 +110,189 @@ describe("contextual write preview", () => {
       }),
     ).toEqual({ start: 10, end: 12 });
   });
+
+  it("reuses matching frozen WritePlan context on verified success", () => {
+    const html = renderToStaticMarkup(
+      createElement(WriteBackResult, {
+        document: { name: "Agreement", revision: "revision-1" },
+        result: verifiedWrite({
+          preview: {
+            old_text: "0",
+            new_text: "eight",
+            context: {
+              offset_unit: "UNICODE_CODE_POINT",
+              before: {
+                text: "Payment is due within 0 days after receipt.",
+                highlight_start: 22,
+                highlight_end: 23,
+              },
+              after: {
+                text: "Payment is due within eight days after receipt.",
+                highlight_start: 22,
+                highlight_end: 27,
+              },
+              source_snapshot_id: "snapshot-1",
+              native_snapshot_sha256: "a".repeat(64),
+            },
+          },
+        }),
+        deciding: false,
+        onDecision: vi.fn(),
+      }),
+    );
+
+    expect(html).toContain("What changed");
+    expect(html).toContain("Payment is due within ");
+    expect(html).toContain(">0</mark>");
+    expect(html).toContain(">eight</mark>");
+    expect(html).toContain(" days after receipt.");
+    expect(html).toContain("Context is read-only");
+  });
+
+  it("falls back to exact values when context is absent or belongs to another plan", () => {
+    const olderRun = renderToStaticMarkup(
+      createElement(WriteBackResult, {
+        document: { name: "Agreement", revision: "revision-1" },
+        dryRun: dryRun({ context: null }),
+        result: verifiedWrite(),
+        deciding: false,
+        onDecision: vi.fn(),
+      }),
+    );
+    expect(olderRun).toContain(">0</mark>");
+    expect(olderRun).toContain(">8</mark>");
+    expect(olderRun).not.toContain("Context is read-only");
+
+    const mismatchedPlan = renderToStaticMarkup(
+      createElement(WriteBackResult, {
+        document: { name: "Agreement", revision: "revision-1" },
+        change: { oldText: "0", newText: "8" },
+        dryRun: dryRun({
+          write_plan_id: "other-plan",
+          context: {
+            offset_unit: "UNICODE_CODE_POINT",
+            before: { text: "Unrelated frozen context 0", highlight_start: 25, highlight_end: 26 },
+            after: { text: "Unrelated frozen context 8", highlight_start: 25, highlight_end: 26 },
+            source_snapshot_id: "snapshot-other",
+            native_snapshot_sha256: "b".repeat(64),
+          },
+        }),
+        result: verifiedWrite(),
+        deciding: false,
+        onDecision: vi.fn(),
+      }),
+    );
+    expect(mismatchedPlan).not.toContain("Unrelated frozen context");
+    expect(mismatchedPlan).toContain(">0</mark>");
+    expect(mismatchedPlan).toContain(">8</mark>");
+  });
+
+  it("retains authoritative plan identity and preview on a persisted verified result", () => {
+    const summary = run({
+      workflow_state: "SUCCEEDED",
+      dry_run_status: "READY",
+      write_back_status: "WRITE_VERIFIED",
+      verification_status: "PASSED",
+      ready_for_dry_run: false,
+      ready_for_write_back: false,
+    });
+    const verifiedRun = persistedRun({
+      status: "WRITE_VERIFIED",
+      write_plan_id: "plan-1",
+      write_plan_sha256: "d".repeat(64),
+      preview: {
+        old_text: "0",
+        new_text: "8",
+        context: null,
+      },
+      backup_created: true,
+      backup_verified: true,
+      write_applied: true,
+      structurally_verified: true,
+      resulting_revision_id: "revision-2",
+      conflict_detection_stage: null,
+      conflict_decision: null,
+    });
+
+    expect(writeBackViewFromPersisted(verifiedRun, summary)).toMatchObject({
+      write_plan_id: "plan-1",
+      write_plan_sha256: "d".repeat(64),
+      preview: { old_text: "0", new_text: "8", context: null },
+    });
+  });
 });
+
+function dryRun(overrides: Partial<DryRunView> = {}): DryRunView {
+  return {
+    run_id: "run-1",
+    proposal_id: "proposal-1",
+    status: "READY",
+    source: {
+      provider: "GOOGLE",
+      file_id: "file-1",
+      baseline_revision_id: "revision-1",
+      native_snapshot_sha256: "a".repeat(64),
+    },
+    old_text: "0",
+    new_text: "8",
+    context: null,
+    structural_location: {},
+    operation_count: 1,
+    operation_types: ["batchUpdate"],
+    provider_operation: {},
+    why_safe: [],
+    mapping_proof_id: "proof-1",
+    mapping_proof_sha256: "c".repeat(64),
+    write_plan_id: "plan-1",
+    write_plan_sha256: "d".repeat(64),
+    reason_code: null,
+    reason: null,
+    candidate_count: 1,
+    cloud_mutation_performed: false,
+    ...overrides,
+  };
+}
+
+function verifiedWrite(overrides: Partial<WriteBackView> = {}): WriteBackView {
+  return {
+    run_id: "run-1",
+    status: "WRITE_VERIFIED",
+    write_plan_id: "plan-1",
+    write_plan_sha256: "d".repeat(64),
+    backup_created: true,
+    backup_verified: true,
+    source_revision_verified: true,
+    write_applied: true,
+    structurally_verified: true,
+    baseline_revision_id: "revision-1",
+    resulting_revision_id: "revision-2",
+    attention_code: null,
+    conflict: null,
+    ...overrides,
+  };
+}
+
+function persistedRun(writeBack: RunView["write_back"]): RunView {
+  return {
+    run_id: "run-1",
+    source_id: "source-1",
+    provider_revision_id: "revision-1",
+    state: writeBack?.status === "WRITE_VERIFIED" ? "SUCCEEDED" : "VERIFICATION_FAILED",
+    attention_code: null,
+    provider_read_error: null,
+    session_id: "session-1",
+    session_document_id: "document-1",
+    durable_document_id: "durable-1",
+    upload_version_id: "upload-1",
+    final_version_id: "final-1",
+    provider_job_id: "job-1",
+    provider_job_status: "completed",
+    awaiting_kind: null,
+    pending_proposals: [],
+    export: null,
+    write_back: writeBack,
+  };
+}
 
 describe("provider status timeout recovery", () => {
   it("shows a truthful read-only retry action and invokes it once", async () => {

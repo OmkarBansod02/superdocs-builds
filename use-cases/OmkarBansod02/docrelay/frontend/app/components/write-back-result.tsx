@@ -38,6 +38,10 @@ export function WriteBackResult({
 }
 
 function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnother }: { identity: DocumentIdentityData; fileId: string | null; dryRun?: DryRunView | null; change?: { oldText: string | null; newText: string | null }; result: WriteBackView; onStartAnother?: () => void }) {
+  const verifiedDryRun = dryRun?.write_plan_id === result.write_plan_id && dryRun.write_plan_sha256 === result.write_plan_sha256
+    ? dryRun
+    : null;
+  const preview = verifiedDryRun ?? result.preview;
   const checks = [
     result.backup_created ? "Versioned backup created" : null,
     result.backup_verified ? "Backup verified" : null,
@@ -55,10 +59,10 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
           <p className="mt-2 text-[15px] text-muted">The approved change is now in Google Drive.</p>
           <p className="mt-5 text-[17px] font-semibold text-success">Write-back verified</p>
 
-          {dryRun?.old_text || dryRun?.new_text || change?.oldText || change?.newText ? (
+          {preview?.old_text || preview?.new_text || change?.oldText || change?.newText ? (
             <div className="mt-9">
               <h3 className="text-[18px] font-semibold text-ink">What changed</h3>
-              <div className="mt-5"><DiffView oldText={dryRun?.old_text ?? change?.oldText ?? null} newText={dryRun?.new_text ?? change?.newText ?? null} /></div>
+              <div className="mt-5"><DiffView oldText={preview?.old_text ?? change?.oldText ?? null} newText={preview?.new_text ?? change?.newText ?? null} context={preview?.context} /></div>
             </div>
           ) : null}
 

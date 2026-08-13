@@ -225,6 +225,13 @@ export interface RunView {
 
 export interface WriteBackRunSummary {
   status: WriteBackStatus;
+  write_plan_id?: string;
+  write_plan_sha256?: string;
+  preview?: {
+    old_text: string;
+    new_text: string;
+    context: DryRunView["context"];
+  } | null;
   backup_created: boolean;
   backup_verified: boolean;
   write_applied: boolean;
@@ -314,6 +321,7 @@ export interface WriteBackView {
   resulting_revision_id: string | null;
   attention_code: string | null;
   conflict: WriteConflictView | null;
+  preview?: WriteBackRunSummary["preview"];
 }
 
 class ApiError extends Error {

@@ -1806,8 +1806,27 @@ def _shift_body_indexes(
     delta: int,
 ) -> None:
     if isinstance(value, list):
+        for offset, child in enumerate(value):
+            _shift_provider_indexes(
+                child,
+                replaced_start=replaced_start,
+                replaced_end=replaced_end,
+                delta=delta,
+                allow_implicit_zero_section_break=offset == 0,
+            )
+
+
+def _shift_provider_indexes(
+    value: Any,
+    *,
+    replaced_start: int,
+    replaced_end: int,
+    delta: int,
+    allow_implicit_zero_section_break: bool = False,
+) -> None:
+    if isinstance(value, list):
         for child in value:
-            _shift_body_indexes(
+            _shift_provider_indexes(
                 child,
                 replaced_start=replaced_start,
                 replaced_end=replaced_end,
@@ -1816,8 +1835,37 @@ def _shift_body_indexes(
         return
     if not isinstance(value, dict):
         return
+    implicit_zero_start = (
+        allow_implicit_zero_section_break
+        and value.get("type") == "sectionBreak"
+        and "startIndex" in value
+        and value.get("startIndex") is None
+        and value.get("endIndex") == 1
+    )
+    if "startIndex" in value or "endIndex" in value:
+        start = 0 if implicit_zero_start else value.get("startIndex")
+        end = value.get("endIndex")
+        if (
+            not isinstance(start, int)
+            or isinstance(start, bool)
+            or start < 0
+            or not isinstance(end, int)
+            or isinstance(end, bool)
+            or end < 0
+            or end < start
+        ):
+            if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+                raise WriteBackNotEligible("provider startIndex is malformed")
+            if not isinstance(end, int) or isinstance(end, bool) or end < 0:
+                raise WriteBackNotEligible("provider endIndex is malformed")
+            raise WriteBackNotEligible("provider structural range is malformed")
     for key, child in value.items():
         if key in {"startIndex", "endIndex"}:
+            if key == "startIndex" and implicit_zero_start:
+                # Google omits the zero-valued startIndex on the mandatory leading
+                # body section break. Preserve that frozen omission; it is never
+                # used as the writable range.
+                continue
             if not isinstance(child, int) or isinstance(child, bool):
                 raise WriteBackNotEligible(f"provider {key} is malformed")
             if replaced_start < child < replaced_end:
@@ -1827,7 +1875,7 @@ def _shift_body_indexes(
             if child >= replaced_end:
                 value[key] = child + delta
             continue
-        _shift_body_indexes(
+        _shift_provider_indexes(
             child,
             replaced_start=replaced_start,
             replaced_end=replaced_end,
