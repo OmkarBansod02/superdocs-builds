@@ -10,12 +10,14 @@ import type {
 } from "../lib/api";
 import {
   createDryRun,
+  registerSource,
   resumeRun,
   startRun,
   submitDecisions,
   decideWriteConflict,
   writeBackSafely,
 } from "../lib/api";
+import { mapImportFailure, type SelectedDriveFile } from "../lib/import-state";
 import {
   buildReviewDecisionSubmission,
   routeRun,
@@ -25,7 +27,9 @@ import { canWriteBack } from "../lib/write-back-state";
 import type { WorkspaceState } from "../lib/workspace-state";
 
 import { SourceChooser } from "./source-chooser";
+import { ImportingDocument } from "./importing-document";
 import { InstructionComposer } from "./instruction-composer";
+import { MotionPanel } from "./motion-panel";
 import { ProcessingState } from "./processing-state";
 import { ReviewPanel } from "./review-panel";
 import { DryRunSummary } from "./dry-run-summary";
@@ -46,6 +50,7 @@ export function Workspace() {
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const writeInFlightRef = useRef(false);
+  const importAbortRef = useRef<AbortController | null>(null);
 
   const setWorkspaceState = useCallback((update: WorkspaceStateUpdate): WorkspaceState => {
     const next = typeof update === "function" ? update(stateRef.current) : update;
@@ -61,7 +66,10 @@ export function Workspace() {
     }
   }, []);
 
-  useEffect(() => () => stopPolling(), [stopPolling]);
+  useEffect(() => () => {
+    stopPolling();
+    importAbortRef.current?.abort();
+  }, [stopPolling]);
 
   const processRun = useCallback(
     async (conn: GoogleConnection, source: SourceRegistration, run: RunView) => {
@@ -136,7 +144,11 @@ export function Workspace() {
   );
 
   const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
-    setWorkspaceState((s) => ({ ...s, connection: conn, loading: false }) as WorkspaceState);
+    setWorkspaceState((s) => (
+      s.stage === "source"
+        ? { ...s, connection: conn, loading: false }
+        : s
+    ));
   }, [setWorkspaceState]);
 
   const handleCheckProviderStatus = useCallback(async () => {
@@ -146,9 +158,35 @@ export function Workspace() {
     await processRun(current.connection, current.source, updated);
   }, [processRun]);
 
-  const handleSourceSelected = useCallback(
-    (conn: GoogleConnection, source: SourceRegistration) => {
-      setWorkspaceState({ stage: "edit", connection: conn, source, submitting: false });
+  const beginImport = useCallback(
+    (conn: GoogleConnection, file: SelectedDriveFile) => {
+      importAbortRef.current?.abort();
+      const controller = new AbortController();
+      importAbortRef.current = controller;
+      setWorkspaceState({
+        stage: "importing",
+        connection: conn,
+        selectedFile: file,
+        error: null,
+      });
+
+      void (async () => {
+        try {
+          const source = await registerSource(conn.connection_id, file.fileId, controller.signal);
+          if (controller.signal.aborted) return;
+          setWorkspaceState({ stage: "edit", connection: conn, source, submitting: false });
+        } catch (err) {
+          if (controller.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
+            return;
+          }
+          setWorkspaceState({
+            stage: "importing",
+            connection: conn,
+            selectedFile: file,
+            error: mapImportFailure(err),
+          });
+        }
+      })();
     },
     [setWorkspaceState],
   );
@@ -223,11 +261,13 @@ export function Workspace() {
 
   const handleReset = useCallback(() => {
     stopPolling();
+    importAbortRef.current?.abort();
     setWorkspaceState({ stage: "source", connection: null, loading: true });
   }, [setWorkspaceState, stopPolling]);
 
   const handleChangeSource = useCallback(() => {
     stopPolling();
+    importAbortRef.current?.abort();
     setWorkspaceState((s) => {
       const conn = "connection" in s ? (s as { connection: GoogleConnection | null }).connection : null;
       return { stage: "source", connection: conn, loading: false };
@@ -293,23 +333,43 @@ export function Workspace() {
     }
   }, [setWorkspaceState]);
 
+  const entryKey =
+    state.stage === "importing"
+      ? state.error
+        ? "import-error"
+        : "importing"
+      : state.stage;
+
   return (
     <div>
-          {state.stage === "source" && (
-            <SourceChooser
-              onSourceSelected={handleSourceSelected}
-              onConnectionChange={handleConnectionChange}
-            />
-          )}
-
-          {state.stage === "edit" && (
-            <InstructionComposer
-              source={state.source}
-              submitting={state.submitting}
-              onSubmit={handleSubmitInstruction}
-              onChangeSource={handleChangeSource}
-            />
-          )}
+          {(state.stage === "source" || state.stage === "importing" || state.stage === "edit") ? (
+            <MotionPanel key={entryKey}>
+              {state.stage === "source" ? (
+                <SourceChooser
+                  initialConnection={state.connection}
+                  onDocumentPicked={beginImport}
+                  onConnectionChange={handleConnectionChange}
+                />
+              ) : null}
+              {state.stage === "importing" ? (
+                <ImportingDocument
+                  documentName={state.selectedFile.name}
+                  phase={state.error ? "FAILED" : "READING_SOURCE"}
+                  error={state.error}
+                  onRetry={() => beginImport(state.connection, state.selectedFile)}
+                  onChooseAnother={handleChangeSource}
+                />
+              ) : null}
+              {state.stage === "edit" ? (
+                <InstructionComposer
+                  source={state.source}
+                  submitting={state.submitting}
+                  onSubmit={handleSubmitInstruction}
+                  onChangeSource={handleChangeSource}
+                />
+              ) : null}
+            </MotionPanel>
+          ) : null}
 
           {state.stage === "processing" && (
             <ProcessingState source={state.source} run={state.run} onCheckStatus={handleCheckProviderStatus} />

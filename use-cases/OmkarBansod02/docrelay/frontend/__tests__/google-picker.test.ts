@@ -11,6 +11,11 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EXPIRY_SKEW_MS, PickerTokenManager } from "../app/google-drive/picker-token";
+import {
+  buildRegistrationPayload,
+  extractSelectedFile,
+  type SelectedDriveFile,
+} from "../app/lib/import-state";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -18,59 +23,12 @@ afterEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Extract the pure logic that we test independently of React rendering.
-// These mirror the logic in google-drive-panel.tsx.
-// ---------------------------------------------------------------------------
-
-interface PickerDocument {
-  id: string;
-  name: string;
-  mimeType: string;
-  url: string;
-}
-
-interface PickerResponse {
-  action: "cancel" | "picked";
-  docs?: PickerDocument[];
-}
-
-interface SelectedFile {
-  fileId: string;
-  name: string;
-  mimeType: string;
-}
-
-/**
- * Extracts a SelectedFile from a Picker response, or null if cancelled/empty.
- */
-function extractSelectedFile(data: PickerResponse): SelectedFile | null {
-  if (data.action === "cancel") return null;
-  if (data.action !== "picked") return null;
-  if (!data.docs || data.docs.length === 0) return null;
-
-  const doc = data.docs[0];
-  return {
-    fileId: doc.id,
-    name: doc.name,
-    mimeType: doc.mimeType,
-  };
-}
-
-/**
- * Builds the request body for source registration.
- * Verifies that no token is included.
- */
-function buildRegistrationPayload(file: SelectedFile): Record<string, unknown> {
-  return { file_id: file.fileId };
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("Picker callback extraction", () => {
   it("extracts file ID from a successful pick", () => {
-    const response: PickerResponse = {
+    const response = {
       action: "picked",
       docs: [
         {
@@ -90,19 +48,19 @@ describe("Picker callback extraction", () => {
   });
 
   it("returns null on cancel — no source registration triggered", () => {
-    const response: PickerResponse = { action: "cancel" };
+    const response = { action: "cancel" };
     const result = extractSelectedFile(response);
     expect(result).toBeNull();
   });
 
   it("returns null when no documents in response", () => {
-    const response: PickerResponse = { action: "picked", docs: [] };
+    const response = { action: "picked", docs: [] };
     const result = extractSelectedFile(response);
     expect(result).toBeNull();
   });
 
   it("handles spreadsheet MIME type (unsupported by backend)", () => {
-    const response: PickerResponse = {
+    const response = {
       action: "picked",
       docs: [
         {
@@ -124,7 +82,7 @@ describe("Picker callback extraction", () => {
 
 describe("Source registration payload security", () => {
   it("sends only file_id — no token field", () => {
-    const file: SelectedFile = {
+    const file: SelectedDriveFile = {
       fileId: "some-opaque-file-id",
       name: "My Doc",
       mimeType: "application/vnd.google-apps.document",
@@ -143,7 +101,7 @@ describe("Source registration payload security", () => {
 
   it("does not include browser token in any field", () => {
     const browserToken = "ya29.a0ARrdaM...fake-token-value";
-    const file: SelectedFile = {
+    const file: SelectedDriveFile = {
       fileId: "file-123",
       name: "doc",
       mimeType: "application/vnd.google-apps.document",
@@ -160,7 +118,7 @@ describe("Source registration payload security", () => {
 
 describe("Unsupported file selection and backend validation", () => {
   it("frontend does not filter unsupported types — backend remains authoritative", () => {
-    const sheetFile: SelectedFile = {
+    const sheetFile: SelectedDriveFile = {
       fileId: "sheet-id-456",
       name: "Budget Sheet",
       mimeType: "application/vnd.google-apps.spreadsheet",
@@ -399,6 +357,14 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     expect(source).toContain("browserPickerTokenManager");
     expect(source).not.toContain("new PickerTokenManager");
     expect(source).toContain(".setOAuthToken(token)");
+    expect(source).toContain("extractSelectedFile");
+    expect(source).not.toContain("registerSource(");
+
+    const workspace = fs.readFileSync(
+      new URL("../app/components/workspace.tsx", import.meta.url),
+      "utf-8",
+    );
+    expect(workspace).toContain("registerSource(");
   });
 
   it("component source never calls revoke during normal Picker use", async () => {
@@ -418,6 +384,7 @@ describe("PickerTokenManager — browser token lifecycle", () => {
     const source = [
       "../app/google-drive/picker-token.ts",
       "../app/components/source-chooser.tsx",
+      "../app/components/workspace.tsx",
       "../app/components/write-authorization.tsx",
       "../app/google-drive/google-drive-panel.tsx",
     ].map((path) => fs.readFileSync(new URL(path, import.meta.url), "utf-8")).join("\n");

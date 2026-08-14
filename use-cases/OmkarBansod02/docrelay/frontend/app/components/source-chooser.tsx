@@ -1,11 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Cloud, FileText, Loader2, Triangle } from "lucide-react";
-import type { GoogleConnection, SourceRegistration } from "../lib/api";
-import { getAuthorizeUrl, getConnections, registerSource } from "../lib/api";
+
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+import type { GoogleConnection } from "../lib/api";
+import { getAuthorizeUrl, getConnections, listRuns } from "../lib/api";
 import { browserPickerTokenManager } from "../google-drive/picker-token";
-import { Button, InlineNotice, StateMark } from "./ui";
+import {
+  extractSelectedFile,
+  formatRelativeTime,
+  mapPickerFailure,
+  recentDocumentsFromRuns,
+  type RecentDocument,
+  type SelectedDriveFile,
+} from "../lib/import-state";
+import { ICON_STROKE, icons } from "../lib/icons";
+import { Button } from "./ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
@@ -55,40 +68,72 @@ function loadPickerLibrary(): Promise<void> {
 }
 
 export function SourceChooser({
-  onSourceSelected,
+  initialConnection,
+  onDocumentPicked,
   onConnectionChange,
 }: {
-  onSourceSelected: (conn: GoogleConnection, source: SourceRegistration) => void;
+  initialConnection: GoogleConnection | null;
+  onDocumentPicked: (conn: GoogleConnection, file: SelectedDriveFile) => void;
   onConnectionChange: (conn: GoogleConnection | null) => void;
 }) {
-  const [connection, setConnection] = useState<GoogleConnection | null>(null);
+  const [connection, setConnection] = useState<GoogleConnection | null>(initialConnection);
   const [loading, setLoading] = useState(true);
+  const [apiUnavailable, setApiUnavailable] = useState(false);
+  const [oauthConfigured, setOauthConfigured] = useState(true);
   const [pickerBusy, setPickerBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [recent, setRecent] = useState<RecentDocument[]>([]);
+
+  const loadWorkspace = useCallback(async (signal?: AbortSignal) => {
+    setLoading(true);
+    setApiUnavailable(false);
+    setError(null);
+    try {
+      const data = await getConnections(signal);
+      if (signal?.aborted) return;
+      if (!data.oauth_configured) {
+        setOauthConfigured(false);
+        setConnection(null);
+        onConnectionChange(null);
+        setRecent([]);
+        return;
+      }
+      setOauthConfigured(true);
+      const active = data.connections.find((item) => item.status === "CONNECTED") ?? null;
+      setConnection(active);
+      onConnectionChange(active);
+
+      if (!active) {
+        setRecent([]);
+        return;
+      }
+
+      try {
+        const runData = await listRuns(signal);
+        if (signal?.aborted) return;
+        setRecent(recentDocumentsFromRuns(runData.runs));
+      } catch (reason) {
+        if (reason instanceof DOMException && reason.name === "AbortError") return;
+        if (reason instanceof Error && reason.name === "AbortError") return;
+        setRecent([]);
+      }
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (err instanceof Error && err.name === "AbortError") return;
+      setApiUnavailable(true);
+      setConnection(null);
+      onConnectionChange(null);
+      setRecent([]);
+    } finally {
+      if (!signal?.aborted) setLoading(false);
+    }
+  }, [onConnectionChange]);
 
   useEffect(() => {
     const controller = new AbortController();
-    async function load() {
-      try {
-        const data = await getConnections(controller.signal);
-        if (!data.oauth_configured) {
-          setError("Google OAuth is not configured on the backend.");
-          setLoading(false);
-          return;
-        }
-        const active = data.connections.find((c) => c.status === "CONNECTED") ?? null;
-        setConnection(active);
-        onConnectionChange(active);
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setError("Could not reach the DocRelay API.");
-      } finally {
-        setLoading(false);
-      }
-    }
-    void load();
+    queueMicrotask(() => void loadWorkspace(controller.signal));
     return () => controller.abort();
-  }, [onConnectionChange]);
+  }, [loadWorkspace]);
 
   const handleConnect = useCallback(() => {
     window.location.assign(getAuthorizeUrl());
@@ -97,7 +142,7 @@ export function SourceChooser({
   const openPicker = useCallback(async () => {
     if (!connection || pickerBusy) return;
     if (!GOOGLE_CLIENT_ID || !PICKER_API_KEY || !CLOUD_PROJECT_NUMBER) {
-      setError("Frontend Google configuration is incomplete.");
+      setError("Google Drive is not fully configured in this environment.");
       return;
     }
     setPickerBusy(true);
@@ -143,88 +188,191 @@ export function SourceChooser({
             setPickerBusy(false);
             return;
           }
-          if (data.action === "picked" && data.docs?.length) {
-            const doc = data.docs[0];
-            void doRegister(doc.id);
-          } else {
+          const file = extractSelectedFile(data);
+          if (file) {
             setPickerBusy(false);
+            onDocumentPicked(connection, file);
+            return;
           }
+          setPickerBusy(false);
         })
         .build();
       picker.setVisible(true);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Picker failed to open";
-      if (msg.includes("popup_closed") || msg.includes("access_denied")) {
-        setPickerBusy(false);
-      } else {
-        setError(msg);
-        setPickerBusy(false);
-      }
+      const mapped = mapPickerFailure(err);
+      if (mapped) setError(mapped);
+      setPickerBusy(false);
     }
+  }, [connection, pickerBusy, onDocumentPicked]);
 
-    async function doRegister(fileId: string) {
-      try {
-        const result = await registerSource(connection!.connection_id, fileId);
-        onSourceSelected(connection!, result);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Source registration failed.");
-      } finally {
-        setPickerBusy(false);
-      }
-    }
-  }, [connection, pickerBusy, onSourceSelected]);
+  return (
+    <section className="px-5 py-8 sm:px-8 lg:px-10 lg:py-12">
+      <div className="mx-auto w-full max-w-[840px]">
+        <h1 className="type-page-title">Workspace</h1>
+        <p className="type-body-muted mt-2 max-w-[36rem]">
+          Choose a Google Doc to review and safely update with AI.
+        </p>
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[calc(100dvh-156px)] items-center justify-center text-[14px] text-muted">
-        <Loader2 className="mr-2 size-5 animate-spin" />
-        Checking connection…
+        {apiUnavailable ? (
+          <Alert variant="warning" className="mt-6 max-w-[28rem] rounded-md">
+            <icons.warning className="size-4" strokeWidth={ICON_STROKE} />
+            <AlertTitle>DocRelay API is unavailable</AlertTitle>
+            <AlertDescription>Start the backend or try again.</AlertDescription>
+            <AlertAction>
+              <Button
+                variant="secondary"
+                onClick={() => void loadWorkspace()}
+                className="min-h-8 px-2.5"
+              >
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
+        ) : null}
+
+        {!apiUnavailable && !oauthConfigured ? (
+          <Alert variant="warning" className="mt-6 max-w-[28rem] rounded-md">
+            <icons.warning className="size-4" strokeWidth={ICON_STROKE} />
+            <AlertTitle>Google Drive is not configured</AlertTitle>
+            <AlertDescription>OAuth is not available on this backend.</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {error ? (
+          <Alert variant="warning" className="mt-6 max-w-[28rem] rounded-md">
+            <icons.warning className="size-4" strokeWidth={ICON_STROKE} />
+            <AlertTitle>Could not open Google Drive</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="mt-8 rounded-lg border border-border bg-surface px-6 py-8 sm:px-8 sm:py-9">
+          {loading ? (
+            <SelectorSkeleton />
+          ) : (
+            <>
+              <div className="flex flex-col items-start gap-4 sm:items-center sm:text-center">
+                <DriveMark />
+                <div>
+                  <h2 className="type-document-title">Choose a Google Doc</h2>
+                  <p className="type-body-muted mt-1.5 max-w-[28rem]">
+                    Connect a document to start a reviewed edit.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 flex flex-col items-start gap-3 sm:items-center">
+                <DriveConnectionStatus connected={Boolean(connection)} />
+
+                {!connection ? (
+                  <Button onClick={handleConnect} className="min-h-11 min-w-[14rem] px-5">
+                    <icons.drive className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                    Connect Google Drive
+                  </Button>
+                ) : (
+                  <Button
+                    onClick={() => void openPicker()}
+                    busy={pickerBusy}
+                    disabled={pickerBusy}
+                    aria-busy={pickerBusy}
+                    className="min-h-11 min-w-[14rem] px-5"
+                  >
+                    {pickerBusy ? null : <icons.drive className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />}
+                    {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
+                  </Button>
+                )}
+
+                <p className="type-caption">Google Docs supported</p>
+              </div>
+            </>
+          )}
+        </div>
+
+        {recent.length > 0 ? (
+          <div className="mt-8">
+            <h2 className="type-section-heading">Recent documents</h2>
+            <ul className="mt-2 divide-y divide-border border-y border-border">
+              {recent.map((document) => (
+                <li key={document.providerFileId}>
+                  <button
+                    type="button"
+                    onClick={() => connection && onDocumentPicked(connection, {
+                      fileId: document.providerFileId,
+                      name: document.name,
+                      mimeType: "application/vnd.google-apps.document",
+                    })}
+                    aria-label={`Import ${document.name}`}
+                    disabled={!connection || pickerBusy}
+                    className={cn(
+                      "flex min-h-12 w-full items-center gap-3 px-1 py-3 text-left transition-colors duration-[180ms]",
+                      "hover:bg-surface-muted/70 focus-visible:bg-surface-muted/70",
+                      "disabled:pointer-events-none disabled:opacity-50",
+                    )}
+                  >
+                    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#e8f0fe] text-[#2878ed]">
+                      <icons.document className="size-4" strokeWidth={ICON_STROKE} />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[14px] font-medium text-foreground">
+                        {document.name}
+                      </span>
+                      <span className="type-caption">
+                        {formatRelativeTime(document.updatedAt)}
+                      </span>
+                    </span>
+                    <icons.chevronRight className="size-4 shrink-0 text-muted" aria-hidden="true" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
+    </section>
+  );
+}
+
+function DriveMark() {
+  return (
+    <span
+      className="grid size-10 place-items-center rounded-md border border-border bg-surface-muted text-muted"
+      aria-hidden="true"
+    >
+      <icons.drive className="size-5" strokeWidth={ICON_STROKE} />
+    </span>
+  );
+}
+
+function DriveConnectionStatus({ connected }: { connected: boolean }) {
+  if (connected) {
+    return (
+      <p className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+        <icons.drive className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
+        Google Drive
+        <span aria-hidden="true">·</span>
+        <span className="inline-flex items-center gap-1 text-success">
+          Connected
+          <icons.check className="size-3" strokeWidth={2.25} aria-hidden="true" />
+        </span>
+      </p>
     );
   }
 
   return (
-    <section className="flex min-h-[calc(100dvh-156px)] items-center justify-center px-5 py-14 sm:px-8">
-      <div className="w-full max-w-[720px] text-center">
-        <div className="mx-auto mb-7 grid size-12 place-items-center rounded-lg bg-accent-soft text-accent" aria-hidden="true">
-          <FileText className="size-6" strokeWidth={1.8} />
-        </div>
-        <h1 className="text-[30px] font-semibold tracking-[-0.035em] text-ink sm:text-[36px]">Choose a Google Drive document</h1>
-        <p className="mx-auto mt-4 max-w-[610px] text-[15px] leading-7 text-muted sm:text-[16px]">
-          Connect a document, ask SuperDocs to prepare a change, review exactly what will change, then write it back safely.
-        </p>
+    <p className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+      <icons.drive className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
+      Google Drive
+    </p>
+  );
+}
 
-        {error ? <div className="mx-auto mt-7 max-w-lg text-left"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
-
-        <div className="relative mx-auto mt-10 max-w-[670px] border-x border-t border-border px-6 pb-2 pt-0 sm:px-10">
-          <div className="-translate-y-1/2 bg-background px-4">
-            {!connection ? (
-              <Button onClick={handleConnect} className="min-w-[220px]">
-                <Cloud className="size-4" aria-hidden="true" />
-                Connect Google Drive
-              </Button>
-            ) : (
-              <Button onClick={openPicker} busy={pickerBusy} className="min-w-[220px]">
-                <Triangle className="size-4 fill-current" aria-hidden="true" />
-                {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
-              </Button>
-            )}
-          </div>
-          <p className="-mt-2 text-[13px] text-muted">Only Google Docs are supported.</p>
-        </div>
-
-        <ol className="mx-auto mt-14 flex max-w-[620px] items-start" aria-label="Safe write-back overview">
-          {["Select", "Propose", "Review", "Verify & write"].map((label, index, items) => (
-            <li key={label} className="flex flex-1 items-start last:flex-none">
-              <div className="flex flex-col items-center gap-3 text-[13px] text-muted">
-                <StateMark />
-                <span className="whitespace-nowrap">{label}</span>
-              </div>
-              {index < items.length - 1 ? <span className="mx-3 mt-2.5 h-px flex-1 bg-border sm:mx-5" aria-hidden="true" /> : null}
-            </li>
-          ))}
-        </ol>
-      </div>
-    </section>
+function SelectorSkeleton() {
+  return (
+    <div className="flex flex-col items-center gap-4 py-2" aria-hidden="true">
+      <Skeleton className="size-10 rounded-md" />
+      <Skeleton className="h-5 w-40" />
+      <Skeleton className="h-4 w-56" />
+      <Skeleton className="mt-2 h-11 w-[12.5rem] rounded-md" />
+    </div>
   );
 }

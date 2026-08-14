@@ -423,10 +423,11 @@ export function getAuthorizeUrl(): string {
 export function registerSource(
   connectionId: string,
   fileId: string,
+  signal?: AbortSignal,
 ): Promise<SourceRegistration> {
   return request<SourceRegistration>(
     `/api/v1/google/connections/${connectionId}/sources`,
-    { method: "POST", body: JSON.stringify({ file_id: fileId }) },
+    { method: "POST", body: JSON.stringify({ file_id: fileId }), signal },
   );
 }
 

@@ -1,9 +1,16 @@
 import type { DryRunView, GoogleConnection, ProposalView, RunView, SourceRegistration, WriteBackView } from "./api";
+import type { ImportFailure, SelectedDriveFile } from "./import-state";
 
 export type WorkflowStage = "source" | "edit" | "review" | "dry-run" | "complete";
 
 export type WorkspaceState =
   | { stage: "source"; connection: GoogleConnection | null; loading: boolean }
+  | {
+      stage: "importing";
+      connection: GoogleConnection;
+      selectedFile: SelectedDriveFile;
+      error: ImportFailure | null;
+    }
   | {
       stage: "source-selected";
       connection: GoogleConnection;
