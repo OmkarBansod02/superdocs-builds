@@ -193,6 +193,15 @@
     color: var(--foreground);
   }
 
+  .type-conversation-title {
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    font-size: 1.0625rem;
+    line-height: 1.3;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    color: var(--foreground);
+  }
+
   .type-section-heading {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     font-size: 0.6875rem;

@@ -30,9 +30,8 @@ export function Button({
     <PrimitiveButton
       {...props}
       variant={variantMap[variant]}
-      size="lg"
       disabled={disabled || busy}
-      className={cn("type-button min-h-11 px-4", className)}
+      className={cn(className)}
     >
       {busy ? <Spinner className="size-4" /> : null}
       {children}
