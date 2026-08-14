@@ -786,7 +786,7 @@ function ReopenSourceFailure({
         </div>
         <section
           aria-label="Current Google document"
-          className="hidden min-h-0 min-w-0 flex-1 place-items-center bg-document-canvas px-8 lg:grid"
+          className="hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 lg:grid"
         >
           <div className="max-w-sm rounded-lg border border-border bg-surface p-5">
             <h2 className="text-[14px] font-medium text-foreground">Current document unavailable</h2>

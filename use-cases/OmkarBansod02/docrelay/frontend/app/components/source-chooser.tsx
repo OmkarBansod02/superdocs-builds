@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
 
 import type { GoogleConnection } from "../lib/api";
@@ -14,6 +13,7 @@ import {
   type SelectedDriveFile,
 } from "../lib/import-state";
 import { ICON_STROKE, icons } from "@/lib/icons";
+import { cn } from "@/lib/utils";
 import { Button } from "./ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
@@ -185,84 +185,117 @@ export function SourceChooser({
 
   return (
     <section className="flex h-full min-h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center justify-between px-6 lg:px-8">
-        <h1 className="text-[15px] font-semibold tracking-[-0.02em] text-foreground">Workspace</h1>
+      <header className="flex h-12 shrink-0 items-center justify-between px-6 lg:px-10">
+        <h1 className="type-chrome-title">Workspace</h1>
         <DriveConnectionStatus connected={Boolean(connection)} loading={loading} />
       </header>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center px-6 py-8">
-        <div className="flex w-full max-w-[30rem] flex-col items-center gap-4">
-          {apiUnavailable ? (
-            <Alert variant="warning" className="w-full rounded-md">
-              <icons.warning strokeWidth={ICON_STROKE} />
-              <AlertTitle>DocRelay API is unavailable</AlertTitle>
-              <AlertDescription>Start the backend or try again.</AlertDescription>
-              <AlertAction>
-                <Button
-                  variant="secondary"
-                  onClick={() => void loadWorkspace()}
-                  className="min-h-8 px-2.5"
-                >
-                  Retry
-                </Button>
-              </AlertAction>
-            </Alert>
-          ) : null}
-
-          {!apiUnavailable && !oauthConfigured ? (
-            <Alert variant="warning" className="w-full rounded-md">
-              <icons.warning strokeWidth={ICON_STROKE} />
-              <AlertTitle>Google Drive is not configured</AlertTitle>
-              <AlertDescription>OAuth is not available on this backend.</AlertDescription>
-            </Alert>
-          ) : null}
-
-          {error ? (
-            <Alert variant="warning" className="w-full rounded-md">
-              <icons.warning strokeWidth={ICON_STROKE} />
-              <AlertTitle>Could not open Google Drive</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          ) : null}
-
-          <div className="flex w-full flex-col items-center rounded-[10px] border border-border bg-surface px-10 py-11">
-            {loading ? (
-              <SelectorSkeleton />
-            ) : (
-              <div className="flex w-full flex-col items-center text-center">
-                <GoogleDriveMark className="h-10 w-11" />
-                <h2 className="type-document-title mt-5">Choose a Google Doc</h2>
-                <p className="type-body-muted mt-2 max-w-[22rem]">
-                  Connect a document and ask DocRelay to make changes.
-                </p>
-                {!connection ? (
-                  <Button onClick={handleConnect} className="mt-6 min-h-11 min-w-[15.5rem] px-5">
-                    Connect Google Drive
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => void openPicker()}
-                    busy={pickerBusy}
-                    disabled={pickerBusy}
-                    aria-busy={pickerBusy}
-                    className="mt-6 min-h-11 min-w-[15.5rem] px-5"
-                  >
-                    {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
-                    {pickerBusy ? null : (
-                      <>
-                        <span className="h-4 w-px bg-primary-foreground/30" aria-hidden="true" />
-                        <icons.chevronDown data-icon="inline-end" strokeWidth={ICON_STROKE} aria-hidden="true" />
-                      </>
-                    )}
-                  </Button>
-                )}
-                <p className="type-caption mt-4">Only Google Docs are supported.</p>
-              </div>
-            )}
+      {/* Editorial composition: content sits in a measured column near the top
+          of the page rather than floating in the middle of the canvas. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-20 lg:px-10">
+        <div className="mx-auto w-full max-w-[960px] pt-12 lg:pt-[84px]">
+          <div className="max-w-[34rem]">
+            <h2 className="type-hero-title">Start with a document</h2>
+            <p className="type-hero-body mt-3">
+              Connect a Google Doc and ask DocRelay to make reviewed, verifiable changes.
+            </p>
           </div>
+
+          <div className="mt-8 flex w-full max-w-[468px] flex-col gap-3">
+            {apiUnavailable ? (
+              <InlineStatus
+                title="DocRelay API is unavailable"
+                description="Start the backend or try again."
+                action={
+                  <Button variant="secondary" onClick={() => void loadWorkspace()} className="h-8 px-2.5">
+                    Retry
+                  </Button>
+                }
+              />
+            ) : null}
+
+            {!apiUnavailable && !oauthConfigured ? (
+              <InlineStatus
+                title="Google Drive is not configured"
+                description="OAuth is not available on this backend."
+              />
+            ) : null}
+
+            {error ? (
+              <InlineStatus title="Could not open Google Drive" description={error} />
+            ) : null}
+
+            <div className="w-full rounded-[11px] border border-border bg-surface p-6 shadow-[var(--shadow-subtle)]">
+              {loading ? (
+                <SelectorSkeleton />
+              ) : (
+                <div className="flex w-full flex-col">
+                  <GoogleDriveMark className="h-7 w-8" />
+                  <h3 className="mt-4 text-[15.5px] font-semibold tracking-[-0.02em] text-foreground">
+                    Choose a Google Doc
+                  </h3>
+                  <p className="mt-1.5 text-[13.5px] leading-[1.55] text-muted">
+                    DocRelay reads the document you select and freezes its revision before
+                    anything changes.
+                  </p>
+                  {!connection ? (
+                    <Button onClick={handleConnect} className="mt-5 w-fit">
+                      Connect Google Drive
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => void openPicker()}
+                      busy={pickerBusy}
+                      disabled={pickerBusy}
+                      aria-busy={pickerBusy}
+                      className="mt-5 w-fit"
+                    >
+                      {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
+                    </Button>
+                  )}
+                  <p className="type-caption mt-5 border-t border-border-light pt-3">
+                    Only Google Docs are supported.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <p className="type-caption mt-6 max-w-[468px]">
+            Every change is reviewed before write-back.
+          </p>
         </div>
       </div>
     </section>
+  );
+}
+
+/** Compact inline status surface — deliberately quieter than a full banner. */
+function InlineStatus({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: ReactNode;
+}) {
+  return (
+    <div
+      role="status"
+      className="flex w-full items-start gap-2.5 rounded-[9px] border border-border bg-surface px-3.5 py-3"
+    >
+      <icons.warning
+        className="mt-px size-4 shrink-0 text-warning"
+        strokeWidth={ICON_STROKE}
+        aria-hidden="true"
+      />
+      <div className="min-w-0 flex-1">
+        <p className="text-[13.5px] font-medium text-foreground">{title}</p>
+        <p className="mt-0.5 text-[13px] leading-[1.5] text-muted">{description}</p>
+      </div>
+      {action ? <div className="shrink-0">{action}</div> : null}
+    </div>
   );
 }
 
@@ -274,23 +307,16 @@ function DriveConnectionStatus({
   loading: boolean;
 }) {
   if (loading && !connected) return null;
-  if (!connected) {
-    return (
-      <p className="inline-flex items-center gap-1.5 text-[12.5px] text-muted">
-        Google Drive
-      </p>
-    );
-  }
 
   return (
     <p className="inline-flex items-center gap-1.5 text-[12.5px] text-muted">
+      <span
+        className={cn("size-1.5 rounded-full", connected ? "bg-success" : "bg-border")}
+        aria-hidden="true"
+      />
       Google Drive
-      <span className="inline-flex items-center gap-1 text-success">
-        <span className="grid size-3.5 place-items-center rounded-full bg-success text-primary-foreground">
-          <icons.check className="size-2.5" strokeWidth={2.5} aria-hidden="true" />
-        </span>
-        Connected
-      </span>
+      <span className="text-muted">·</span>
+      {connected ? "Connected" : "Not connected"}
     </p>
   );
 }
@@ -310,12 +336,13 @@ function GoogleDriveMark({ className }: { className?: string }) {
 
 function SelectorSkeleton() {
   return (
-    <div className="flex w-full flex-col items-center gap-3 py-1" aria-hidden="true">
-      <Skeleton className="size-10 rounded-md" />
-      <Skeleton className="h-5 w-44" />
-      <Skeleton className="h-4 w-64" />
-      <Skeleton className="mt-3 h-11 w-[15.5rem] rounded-md" />
-      <Skeleton className="h-3 w-40" />
+    <div className="flex w-full flex-col" aria-hidden="true">
+      <Skeleton className="size-7 rounded-md" />
+      <Skeleton className="mt-4 h-4 w-40" />
+      <Skeleton className="mt-2.5 h-3.5 w-full" />
+      <Skeleton className="mt-2 h-3.5 w-3/4" />
+      <Skeleton className="mt-5 h-9 w-[10.5rem] rounded-[8px]" />
+      <Skeleton className="mt-6 h-3 w-44" />
     </div>
   );
 }
