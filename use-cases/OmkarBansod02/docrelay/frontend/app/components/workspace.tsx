@@ -418,9 +418,9 @@ export function Workspace() {
   const submitting = state.stage === "edit" && state.submitting;
 
   return (
-    <div className={sourced ? "h-full min-h-0" : undefined}>
+    <div className="h-full min-h-0">
           {(state.stage === "source" || state.stage === "importing") ? (
-            <MotionPanel key={entryKey}>
+            <MotionPanel key={entryKey} className="h-full">
               {state.stage === "source" ? (
                 <SourceChooser
                   initialConnection={state.connection}
