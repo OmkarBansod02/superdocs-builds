@@ -10,6 +10,8 @@ import type {
 } from "../lib/api";
 import {
   createDryRun,
+  getRun,
+  listRuns,
   registerSource,
   resumeRun,
   startRun,
@@ -23,6 +25,7 @@ import {
   acceptInstruction,
   appendPendingInstruction,
   documentReviewMarks,
+  documentConversationFromRuns,
   failInstruction,
   frozenPreviewBlocks,
   peekQueuedRecentDocument,
@@ -47,11 +50,13 @@ import type { WorkspaceState } from "../lib/workspace-state";
 import { SourceChooser } from "./source-chooser";
 import { ImportingDocument } from "./importing-document";
 import { DocumentWorkbench } from "./document-workbench";
+import { ConversationPanel } from "./conversation-panel";
 import { extractText } from "./diff-view";
 import { MotionPanel } from "./motion-panel";
 import { ErrorState } from "./error-state";
 import {
   ConversationErrorEvent,
+  DocRelayEvent,
   DryRunEvent,
   ProcessingEvent,
   ReviewEvent,
@@ -61,6 +66,15 @@ import {
 
 const POLL_INTERVAL_MS = 4000;
 type WorkspaceStateUpdate = WorkspaceState | ((current: WorkspaceState) => WorkspaceState);
+
+type ReopenThreadState = {
+  file: RecentDocumentSelection;
+  historyLoading: boolean;
+  activeRunLoading: boolean;
+  historyError: string | null;
+  sourceError: ReturnType<typeof mapImportFailure> | null;
+  canContinue: boolean;
+};
 
 export function Workspace() {
   const stateRef = useRef<WorkspaceState>({
@@ -73,9 +87,11 @@ export function Workspace() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const writeInFlightRef = useRef(false);
   const importAbortRef = useRef<AbortController | null>(null);
+  const reopenRequestRef = useRef(0);
   const submitInFlightRef = useRef(false);
   const [draft, setDraft] = useState("");
   const [conversation, setConversation] = useState<UserInstructionTurn[]>([]);
+  const [reopenThread, setReopenThread] = useState<ReopenThreadState | null>(null);
 
   const setWorkspaceState = useCallback((update: WorkspaceStateUpdate): WorkspaceState => {
     const next = typeof update === "function" ? update(stateRef.current) : update;
@@ -180,6 +196,7 @@ export function Workspace() {
       importAbortRef.current?.abort();
       const controller = new AbortController();
       importAbortRef.current = controller;
+      setReopenThread(null);
       setWorkspaceState({
         stage: "importing",
         connection: conn,
@@ -208,6 +225,106 @@ export function Workspace() {
     [setWorkspaceState],
   );
 
+  const reopenRecent = useCallback((conn: GoogleConnection, file: RecentDocumentSelection) => {
+    stopPolling();
+    importAbortRef.current?.abort();
+    const controller = new AbortController();
+    importAbortRef.current = controller;
+    const requestId = reopenRequestRef.current + 1;
+    reopenRequestRef.current = requestId;
+    const selectedFile = {
+      fileId: file.fileId,
+      name: file.name,
+      mimeType: file.mimeType || "application/vnd.google-apps.document",
+    };
+
+    setDraft("");
+    setConversation([]);
+    setReopenThread({
+      file,
+      historyLoading: true,
+      activeRunLoading: false,
+      historyError: null,
+      sourceError: null,
+      canContinue: false,
+    });
+    setWorkspaceState({ stage: "importing", connection: conn, selectedFile, error: null });
+
+    let currentSource: SourceRegistration | null = null;
+    let history: ReturnType<typeof documentConversationFromRuns> | null = null;
+    let activeRunPromise: Promise<RunView> | null = null;
+
+    const isCurrentRequest = () => (
+      !controller.signal.aborted && reopenRequestRef.current === requestId
+    );
+    const activatePersistedRun = async () => {
+      if (!currentSource || !history || !isCurrentRequest()) return;
+      if (!history.activeRunId) {
+        setWorkspaceState({ stage: "edit", connection: conn, source: currentSource, submitting: false });
+        return;
+      }
+      activeRunPromise ??= getRun(history.activeRunId, controller.signal);
+      setReopenThread((thread) => thread?.file.fileId === file.fileId
+        ? { ...thread, activeRunLoading: true }
+        : thread);
+      try {
+        const activeRun = await activeRunPromise;
+        if (!isCurrentRequest()) return;
+        setReopenThread((thread) => thread?.file.fileId === file.fileId
+          ? { ...thread, activeRunLoading: false }
+          : thread);
+        await processRun(conn, currentSource, activeRun);
+      } catch {
+        if (!isCurrentRequest()) return;
+        setReopenThread((thread) => thread?.file.fileId === file.fileId
+          ? {
+              ...thread,
+              activeRunLoading: false,
+              historyError: "Could not load the active workflow status.",
+            }
+          : thread);
+      }
+    };
+
+    // History and the current Google capture are deliberately independent.
+    void listRuns(controller.signal).then((response) => {
+      if (!isCurrentRequest()) return;
+      const projection = documentConversationFromRuns(response.runs, file.fileId);
+      history = projection;
+      setConversation(projection.turns);
+      setReopenThread((thread) => thread?.file.fileId === file.fileId
+        ? {
+            ...thread,
+            historyLoading: false,
+            activeRunLoading: Boolean(projection.activeRunId),
+            canContinue: projection.canContinue,
+          }
+        : thread);
+      void activatePersistedRun();
+    }).catch(() => {
+      if (!isCurrentRequest()) return;
+      setReopenThread((thread) => thread?.file.fileId === file.fileId
+        ? {
+            ...thread,
+            historyLoading: false,
+            historyError: "Could not load this document's saved workflow history.",
+          }
+        : thread);
+    });
+
+    void registerSource(conn.connection_id, file.fileId, controller.signal).then((source) => {
+      if (!isCurrentRequest()) return;
+      currentSource = source;
+      setWorkspaceState({ stage: "edit", connection: conn, source, submitting: false });
+      void activatePersistedRun();
+    }).catch((error) => {
+      if (!isCurrentRequest()) return;
+      setReopenThread((thread) => thread?.file.fileId === file.fileId
+        ? { ...thread, sourceError: mapImportFailure(error), canContinue: false }
+        : thread);
+    });
+  }, [processRun, setWorkspaceState, stopPolling]);
+
   const openRecentFile = useCallback((file: RecentDocumentSelection | null, conn: GoogleConnection | null) => {
     if (!file || !conn || conn.status !== "CONNECTED") return false;
     const current = stateRef.current;
@@ -215,13 +332,9 @@ export function Workspace() {
       ?? (current.stage === "importing" ? current.selectedFile.fileId : null);
     takeQueuedRecentDocument();
     if (openId === file.fileId) return true;
-    beginImport(conn, {
-      fileId: file.fileId,
-      name: file.name,
-      mimeType: file.mimeType || "application/vnd.google-apps.document",
-    });
+    reopenRecent(conn, file);
     return true;
-  }, [beginImport]);
+  }, [reopenRecent]);
 
   const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
     setWorkspaceState((s) => (
@@ -344,6 +457,7 @@ export function Workspace() {
     submitInFlightRef.current = false;
     setDraft("");
     setConversation([]);
+    setReopenThread(null);
     setWorkspaceState({ stage: "source", connection: null, loading: true });
   }, [setWorkspaceState, stopPolling]);
 
@@ -353,6 +467,7 @@ export function Workspace() {
     submitInFlightRef.current = false;
     setDraft("");
     setConversation([]);
+    setReopenThread(null);
     setWorkspaceState((s) => {
       const conn = "connection" in s ? (s as { connection: GoogleConnection | null }).connection : null;
       return { stage: "source", connection: conn, loading: false };
@@ -386,6 +501,9 @@ export function Workspace() {
           writeApplied: result.write_applied,
           structurallyVerified: true,
         }));
+        setReopenThread((thread) => thread
+          ? { ...thread, canContinue: true, activeRunLoading: false }
+          : thread);
       }
       setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun, result, deciding: false, startingNext: false });
     } catch (err) {
@@ -446,11 +564,12 @@ export function Workspace() {
   }, [openRecentFile]);
 
   const sourced = workbenchSource(state);
+  const reopeningFileId = reopenThread?.file.fileId ?? null;
 
   useEffect(() => {
-    setActiveDocumentId(sourced?.source.provider_file_id ?? null);
+    setActiveDocumentId(sourced?.source.provider_file_id ?? reopeningFileId);
     return () => setActiveDocumentId(null);
-  }, [sourced?.source.provider_file_id]);
+  }, [reopeningFileId, sourced?.source.provider_file_id]);
 
   const entryKey =
     state.stage === "importing"
@@ -463,6 +582,19 @@ export function Workspace() {
     && isVerifiedWriteSuccess(state.result.status, state.result.structurally_verified);
   const submitting = (state.stage === "edit" && state.submitting)
     || (state.stage === "write-result" && state.startingNext);
+  const matchingThread = reopenThread?.file.fileId === sourced?.source.provider_file_id
+    ? reopenThread
+    : null;
+  const threadBusy = Boolean(matchingThread?.historyLoading || matchingThread?.activeRunLoading);
+  const threadBlocked = Boolean(
+    matchingThread
+    && (threadBusy || matchingThread.historyError || !matchingThread.canContinue),
+  );
+  const retryReopen = () => {
+    if (!reopenThread) return;
+    const connection = "connection" in state ? state.connection : null;
+    if (connection) reopenRecent(connection, reopenThread.file);
+  };
 
   const previewBlocks = frozenPreviewBlocks(sourced?.preview);
   const reviewMarks = state.stage === "review"
@@ -477,7 +609,15 @@ export function Workspace() {
 
   return (
     <div className="h-full min-h-0">
-          {(state.stage === "source" || state.stage === "importing") ? (
+          {reopenThread?.sourceError && !sourced ? (
+            <ReopenSourceFailure
+              thread={reopenThread}
+              turns={conversation}
+              onRetry={retryReopen}
+            />
+          ) : null}
+
+          {!reopenThread?.sourceError && (state.stage === "source" || state.stage === "importing") ? (
             <MotionPanel key={entryKey} className="h-full">
               {state.stage === "source" ? (
                 <SourceChooser
@@ -503,9 +643,13 @@ export function Workspace() {
               source={sourced}
               turns={conversation}
               draft={draft}
-              busy={submitting}
-              composerEnabled={state.stage === "edit" || verifiedWrite}
-              stateLabel={workbenchStateLabel(state)}
+              busy={submitting || threadBusy}
+              composerEnabled={(state.stage === "edit" || verifiedWrite) && !threadBlocked}
+              stateLabel={matchingThread?.historyError
+                ? "Needs attention"
+                : threadBusy
+                  ? "Loading"
+                  : workbenchStateLabel(state)}
               onDraftChange={setDraft}
               onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
               onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
@@ -520,6 +664,19 @@ export function Workspace() {
                   ?? undefined
                 : undefined}
             >
+              {matchingThread?.historyLoading ? (
+                <DocRelayEvent title="Loading saved document history…" />
+              ) : null}
+              {matchingThread?.activeRunLoading ? (
+                <DocRelayEvent title="Loading the active workflow…" />
+              ) : null}
+              {matchingThread?.historyError ? (
+                <ConversationErrorEvent
+                  message={matchingThread.historyError}
+                  recoverable
+                  onRetry={retryReopen}
+                />
+              ) : null}
               {state.stage === "processing" ? (
                 <ProcessingEvent
                   run={state.run}
@@ -587,5 +744,58 @@ export function Workspace() {
             />
           ) : null}
     </div>
+  );
+}
+
+function ReopenSourceFailure({
+  thread,
+  turns,
+  onRetry,
+}: {
+  thread: ReopenThreadState;
+  turns: UserInstructionTurn[];
+  onRetry: () => void;
+}) {
+  return (
+    <MotionPanel className="flex h-full min-h-0 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden lg:w-[420px] lg:min-w-[360px] lg:max-w-[470px] lg:shrink-0">
+          <ConversationPanel
+            title={thread.file.name}
+            stateLabel="Needs attention"
+            turns={turns}
+            draft=""
+            busy={thread.historyLoading}
+            composerEnabled={false}
+            onDraftChange={() => undefined}
+            onSubmit={() => undefined}
+            onRetry={() => undefined}
+          >
+            {thread.historyLoading ? (
+              <DocRelayEvent title="Loading saved document history…" />
+            ) : null}
+            {thread.historyError ? (
+              <DocRelayEvent title="Saved workflow history could not be loaded." />
+            ) : null}
+            <ConversationErrorEvent
+              message={thread.sourceError?.title ?? "The current Google document could not be loaded."}
+              recoverable
+              onRetry={onRetry}
+            />
+          </ConversationPanel>
+        </div>
+        <section
+          aria-label="Current Google document"
+          className="hidden min-h-0 min-w-0 flex-1 place-items-center bg-document-canvas px-8 lg:grid"
+        >
+          <div className="max-w-sm rounded-lg border border-border bg-surface p-5">
+            <h2 className="text-[14px] font-medium text-foreground">Current document unavailable</h2>
+            <p className="mt-1.5 text-[13px] leading-5 text-muted">
+              DocRelay could not refresh the Google source, so no current document content is shown and new edits are disabled.
+            </p>
+          </div>
+        </section>
+      </div>
+    </MotionPanel>
   );
 }

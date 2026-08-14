@@ -80,6 +80,8 @@ export interface RunSummary {
   source_id: string;
   provider_file_id: string;
   document_name: string;
+  instruction: string | null;
+  proposal_count: number;
   provider_version: string | null;
   source_revision_id: string;
   matched_rule_id: string | null;
@@ -96,6 +98,7 @@ export interface RunSummary {
   ready_for_write_back: boolean;
   export: ExportView | null;
   started_at: string | null;
+  created_at: string;
   updated_at: string;
   finished_at: string | null;
   duration_ms: number | null;

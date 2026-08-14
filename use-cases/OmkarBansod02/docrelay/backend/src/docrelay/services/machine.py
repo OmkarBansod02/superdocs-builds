@@ -4,7 +4,7 @@ from typing import cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, JsonValue
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from docrelay.core.config import Settings
@@ -30,6 +30,7 @@ from docrelay.persistence.models import (
     CloudConnection,
     CloudDocument,
     ExternalEffect,
+    ProposedChange,
     ReviewDecision,
     ReviewRound,
     SuperDocsExport,
@@ -109,6 +110,8 @@ class RunSummary(MachineModel):
     source_id: UUID
     provider_file_id: str
     document_name: str
+    instruction: str | None
+    proposal_count: int
     provider_version: str | None
     source_revision_id: str
     matched_rule_id: UUID | None
@@ -125,6 +128,7 @@ class RunSummary(MachineModel):
     ready_for_write_back: bool
     export: ExportView | None
     started_at: datetime | None
+    created_at: datetime
     updated_at: datetime
     finished_at: datetime | None
     duration_ms: int | None
@@ -350,6 +354,9 @@ class MultiDocumentQueryService:
                 select(ReviewDecision).where(ReviewDecision.sync_run_id == run.id)
             )
         ).all()
+        proposal_count = await session.scalar(
+            select(func.count(ProposedChange.id)).where(ProposedChange.sync_run_id == run.id)
+        )
         plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run.id))
         export = await session.scalar(
             select(SuperDocsExport).where(SuperDocsExport.sync_run_id == run.id)
@@ -404,6 +411,12 @@ class MultiDocumentQueryService:
                 if origin_item is not None
                 else document.display_name or "Google document"
             ),
+            instruction=(
+                instruction
+                if isinstance((instruction := run.rule_snapshot.get("instruction")), str)
+                else None
+            ),
+            proposal_count=proposal_count or 0,
             provider_version=version.provider_version if version is not None else None,
             source_revision_id=run.baseline_revision_id or "",
             matched_rule_id=run.folder_rule_id,
@@ -440,6 +453,7 @@ class MultiDocumentQueryService:
             ),
             export=export_view,
             started_at=run.started_at,
+            created_at=run.created_at,
             updated_at=run.updated_at,
             finished_at=run.finished_at,
             duration_ms=duration_ms,

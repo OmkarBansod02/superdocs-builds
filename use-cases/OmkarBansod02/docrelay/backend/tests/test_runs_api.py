@@ -51,6 +51,8 @@ async def test_phase3_machine_routes_exist_and_unconfigured_error_is_safe() -> N
         "/api/v1/runs/{run_id}/summary",
     }
     assert expected_paths.issubset(openapi["paths"])
+    summary_properties = openapi["components"]["schemas"]["RunSummary"]["properties"]
+    assert {"instruction", "proposal_count", "created_at"}.issubset(summary_properties)
 
 
 async def test_phase6_routes_accept_no_browser_provider_operations() -> None:
