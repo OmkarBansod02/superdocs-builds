@@ -84,9 +84,11 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("resume → review → submit decisions", () => {
   it("sends every explicit safety retry through the dry-run API", async () => {
-    const fetchMock = vi.fn(async (_url: string, _options?: RequestInit) => (
-      jsonResponse({ status: "UNSUPPORTED" })
-    ));
+    const fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
+      void url;
+      void options;
+      return jsonResponse({ status: "UNSUPPORTED" });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     await createDryRun(runId);

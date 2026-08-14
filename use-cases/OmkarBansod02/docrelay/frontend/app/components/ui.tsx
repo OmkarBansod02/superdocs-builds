@@ -1,5 +1,19 @@
-import { Check, Loader2 } from "lucide-react";
+import { Check } from "lucide-react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+
+import { Button as PrimitiveButton } from "@/components/ui/button";
+import { Skeleton as PrimitiveSkeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { cn } from "@/lib/utils";
+
+import { StatusBanner } from "./feedback";
+
+const variantMap = {
+  primary: "default",
+  secondary: "outline",
+  ghost: "ghost",
+  danger: "destructive",
+} as const;
 
 export function Button({
   variant = "primary",
@@ -12,49 +26,54 @@ export function Button({
   variant?: "primary" | "secondary" | "ghost" | "danger";
   busy?: boolean;
 }) {
-  const variants = {
-    primary: "border-accent bg-accent text-white hover:bg-accent-strong",
-    secondary: "border-accent bg-surface text-accent hover:bg-accent-soft",
-    ghost: "border-transparent bg-transparent text-accent hover:bg-accent-soft",
-    danger: "border-error/40 bg-surface text-error hover:bg-error-soft",
-  };
   return (
-    <button
+    <PrimitiveButton
       {...props}
+      variant={variantMap[variant]}
+      size="lg"
       disabled={disabled || busy}
-      className={`inline-flex min-h-11 items-center justify-center gap-2 rounded-md border px-4 text-[14px] font-semibold transition-colors disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-muted disabled:text-muted/60 ${variants[variant]} ${className}`}
+      className={cn("type-button min-h-11 px-4", className)}
     >
-      {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : null}
+      {busy ? <Spinner className="size-4" /> : null}
       {children}
-    </button>
+    </PrimitiveButton>
   );
 }
 
-export function StateMark({ state = "idle", label }: { state?: "idle" | "current" | "complete" | "warning" | "info"; label?: string }) {
+export function StateMark({
+  state = "idle",
+  label,
+}: {
+  state?: "idle" | "current" | "complete" | "warning" | "info";
+  label?: string;
+}) {
   const styles = {
-    idle: "border-muted/60 bg-surface text-transparent",
-    current: "border-accent bg-accent text-white",
+    idle: "border-muted/40 bg-surface text-transparent",
+    current: "border-primary bg-primary text-primary-foreground",
     complete: "border-success bg-surface text-success",
     warning: "border-warning bg-surface text-warning",
     info: "border-info bg-surface text-info",
   };
   return (
-    <span className={`grid size-5 shrink-0 place-items-center border ${styles[state]}`} aria-label={label}>
-      {state === "complete" ? <Check className="size-3.5" strokeWidth={2.4} /> : null}
+    <span className={cn("grid size-5 shrink-0 place-items-center rounded-sm border", styles[state])} aria-label={label}>
+      {state === "complete" ? <Check className="size-3.5" strokeWidth={2.25} /> : null}
     </span>
   );
 }
 
-export function InlineNotice({ tone = "neutral", children }: { tone?: "neutral" | "success" | "warning" | "info"; children: ReactNode }) {
-  const styles = {
-    neutral: "border-border text-ink",
-    success: "border-success/30 text-success",
-    warning: "border-warning/35 bg-warning-soft/70 text-warning",
-    info: "border-info/25 bg-info-soft text-info",
-  };
-  return <div className={`border-l-2 px-4 py-3 text-[14px] leading-6 ${styles[tone]}`}>{children}</div>;
+export function InlineNotice({
+  tone = "neutral",
+  children,
+}: {
+  tone?: "neutral" | "success" | "warning" | "info";
+  children: ReactNode;
+}) {
+  if (tone === "neutral") {
+    return <div className="border-l-2 border-border px-4 py-3 text-[14px] leading-6 text-ink">{children}</div>;
+  }
+  return <StatusBanner tone={tone}>{children}</StatusBanner>;
 }
 
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`animate-pulse rounded bg-surface-muted ${className}`} aria-hidden="true" />;
+  return <PrimitiveSkeleton className={className} />;
 }
