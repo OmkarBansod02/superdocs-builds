@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import secrets
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
@@ -37,10 +38,28 @@ class GoogleAuthorizationProfile(StrEnum):
     WATCH = "watch"
 
 
+OAUTH_RETURN_COOKIE = "docrelay_google_oauth_return"
+OAUTH_ALLOWED_RETURN_PATHS = frozenset({"/", "/watch"})
+DEFAULT_FRONTEND_ORIGIN = "http://localhost:3000"
+
+
 def scopes_for_profile(profile: GoogleAuthorizationProfile) -> tuple[str, ...]:
     if profile is GoogleAuthorizationProfile.WATCH:
         return GOOGLE_WATCH_SCOPES
     return GOOGLE_SINGLE_FILE_SCOPES
+
+
+def oauth_return_path_for_profile(profile: GoogleAuthorizationProfile) -> str:
+    return "/watch" if profile is GoogleAuthorizationProfile.WATCH else "/"
+
+
+def safe_oauth_return_path(value: str | None) -> str:
+    return value if value in OAUTH_ALLOWED_RETURN_PATHS else "/"
+
+
+def frontend_oauth_redirect_url(*, origins: Sequence[str], path: str | None) -> str:
+    origin = origins[0] if origins else DEFAULT_FRONTEND_ORIGIN
+    return f"{origin.rstrip('/')}{safe_oauth_return_path(path)}"
 
 
 class OAuthContract(BaseModel):

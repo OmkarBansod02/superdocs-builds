@@ -13,7 +13,10 @@ from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrati
 from docrelay.integrations.google.oauth import (
     GOOGLE_OAUTH_SCOPES,
     GOOGLE_WATCH_SCOPES,
+    OAUTH_RETURN_COOKIE,
     GoogleAuthorizationProfile,
+    frontend_oauth_redirect_url,
+    oauth_return_path_for_profile,
 )
 from docrelay.integrations.google.runtime import GoogleRuntime
 from docrelay.integrations.google.services import (
@@ -58,11 +61,6 @@ class GoogleConnectionsResponse(SafeAPIModel):
     selected_scopes: tuple[str, ...] = GOOGLE_OAUTH_SCOPES
     watch_scopes: tuple[str, ...] = GOOGLE_WATCH_SCOPES
     connections: tuple[GoogleConnectionResponse, ...]
-
-
-class GoogleOAuthCallbackResponse(SafeAPIModel):
-    message: Literal["Google connection established"] = "Google connection established"
-    connection: GoogleConnectionResponse
 
 
 class RegisterGoogleSourceRequest(SafeAPIModel):
@@ -184,52 +182,56 @@ async def authorize_google(
         ).start_authorization(profile)
     response = RedirectResponse(started.authorization_url, status_code=status.HTTP_302_FOUND)
     settings: Settings = request.app.state.settings
-    response.set_cookie(
+    _set_oauth_browser_cookie(
+        response,
         OAUTH_BROWSER_COOKIE,
         started.browser_nonce,
         max_age=started.max_age_seconds,
-        httponly=True,
-        secure=settings.app_env == "production",
-        samesite="lax",
-        path="/api/v1/google/oauth/callback",
+        settings=settings,
+    )
+    _set_oauth_browser_cookie(
+        response,
+        OAUTH_RETURN_COOKIE,
+        oauth_return_path_for_profile(profile),
+        max_age=started.max_age_seconds,
+        settings=settings,
     )
     return response
 
 
 @router.get(
     "/oauth/callback",
-    response_model=GoogleOAuthCallbackResponse,
+    response_class=RedirectResponse,
     responses={400: {"model": GoogleErrorResponse}, 403: {"model": GoogleErrorResponse}},
 )
 async def google_oauth_callback(
     request: Request,
-    response: Response,
     state: Annotated[str | None, Query()] = None,
     code: Annotated[str | None, Query()] = None,
     error: Annotated[str | None, Query()] = None,
     browser_nonce: Annotated[str | None, Cookie(alias=OAUTH_BROWSER_COOKIE)] = None,
-) -> GoogleOAuthCallbackResponse:
+) -> RedirectResponse:
     runtime = _runtime(request)
     database: Database = request.app.state.database
-    try:
-        async with database.sessions() as session:
-            connection = await _service(
-                request=request, session=session, runtime=runtime
-            ).complete_authorization(
-                state=state,
-                browser_nonce=browser_nonce,
-                code=code,
-                oauth_error=error,
-            )
-    finally:
-        response.delete_cookie(
-            OAUTH_BROWSER_COOKIE,
-            path="/api/v1/google/oauth/callback",
-            httponly=True,
-            secure=request.app.state.settings.app_env == "production",
-            samesite="lax",
+    settings: Settings = request.app.state.settings
+    async with database.sessions() as session:
+        await _service(
+            request=request, session=session, runtime=runtime
+        ).complete_authorization(
+            state=state,
+            browser_nonce=browser_nonce,
+            code=code,
+            oauth_error=error,
         )
-    return GoogleOAuthCallbackResponse(connection=_connection_response(connection))
+    redirect = RedirectResponse(
+        frontend_oauth_redirect_url(
+            origins=settings.cors_origins,
+            path=request.cookies.get(OAUTH_RETURN_COOKIE),
+        ),
+        status_code=status.HTTP_302_FOUND,
+    )
+    clear_oauth_callback_cookies(redirect, settings)
+    return redirect
 
 
 @router.post(
@@ -263,6 +265,40 @@ async def register_google_source(
             request=request, session=session, runtime=runtime
         ).register_and_capture(connection_id=connection_id, file_id=payload.file_id)
     return _registered_response(connection_id, registered)
+
+
+def _oauth_cookie_secure(settings: Settings) -> bool:
+    return settings.app_env == "production"
+
+
+def _set_oauth_browser_cookie(
+    response: Response,
+    name: str,
+    value: str,
+    *,
+    max_age: int,
+    settings: Settings,
+) -> None:
+    response.set_cookie(
+        name,
+        value,
+        max_age=max_age,
+        httponly=True,
+        secure=_oauth_cookie_secure(settings),
+        samesite="lax",
+        path="/api/v1/google/oauth/callback",
+    )
+
+
+def clear_oauth_callback_cookies(response: Response, settings: Settings) -> None:
+    for name in (OAUTH_BROWSER_COOKIE, OAUTH_RETURN_COOKIE):
+        response.delete_cookie(
+            name,
+            path="/api/v1/google/oauth/callback",
+            httponly=True,
+            secure=_oauth_cookie_secure(settings),
+            samesite="lax",
+        )
 
 
 def _registered_response(

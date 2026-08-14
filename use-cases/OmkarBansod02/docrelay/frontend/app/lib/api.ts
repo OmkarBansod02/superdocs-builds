@@ -435,8 +435,10 @@ export function getConnections(signal?: AbortSignal): Promise<ConnectionsRespons
   return request<ConnectionsResponse>("/api/v1/google/connections", { signal, cache: "no-store" });
 }
 
-export function getAuthorizeUrl(): string {
-  return `${API_BASE}/api/v1/google/oauth/authorize`;
+export function getAuthorizeUrl(profile: "single_file" | "watch" = "single_file"): string {
+  const url = new URL(`${API_BASE}/api/v1/google/oauth/authorize`);
+  if (profile === "watch") url.searchParams.set("profile", "watch");
+  return url.toString();
 }
 
 export function registerSource(
@@ -595,6 +597,10 @@ export function listWatchScanRuns(
   signal?: AbortSignal,
 ): Promise<{ runs: RunSummary[] }> {
   return request<{ runs: RunSummary[] }>(`/api/v1/watches/${watchId}/scans/${scanId}/runs`, { signal, cache: "no-store" });
+}
+
+export function listWatchRuns(watchId: string, signal?: AbortSignal): Promise<{ runs: RunSummary[] }> {
+  return request<{ runs: RunSummary[] }>(`/api/v1/watches/${watchId}/runs`, { signal, cache: "no-store" });
 }
 
 export { ApiError };

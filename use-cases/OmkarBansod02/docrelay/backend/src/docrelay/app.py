@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from mcp.server.transport_security import TransportSecuritySettings
 
 from docrelay import __version__
-from docrelay.api.google import GoogleErrorBody, GoogleErrorResponse
+from docrelay.api.google import GoogleErrorBody, GoogleErrorResponse, clear_oauth_callback_cookies
 from docrelay.api.google import router as google_router
 from docrelay.api.health import router as health_router
 from docrelay.api.middleware import RequestIdMiddleware
@@ -17,7 +17,6 @@ from docrelay.core.config import Settings, get_settings
 from docrelay.core.logging import configure_logging
 from docrelay.integrations.google.errors import GoogleErrorCode, GoogleIntegrationError
 from docrelay.integrations.google.runtime import GoogleRuntime
-from docrelay.integrations.google.services import OAUTH_BROWSER_COOKIE
 from docrelay.integrations.superdocs.client import (
     SuperDocsError,
     SuperDocsInvalidResponse,
@@ -150,13 +149,7 @@ def create_app(
             media_type="application/json",
         )
         if request.url.path == "/api/v1/google/oauth/callback":
-            response.delete_cookie(
-                OAUTH_BROWSER_COOKIE,
-                path="/api/v1/google/oauth/callback",
-                httponly=True,
-                secure=app_settings.app_env == "production",
-                samesite="lax",
-            )
+            clear_oauth_callback_cookies(response, app_settings)
         return response
 
     @app.exception_handler(SuperDocsWorkflowError)

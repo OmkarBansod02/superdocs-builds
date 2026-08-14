@@ -3,6 +3,7 @@ import logging
 from datetime import UTC, datetime
 from uuid import uuid4
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 
 from docrelay.api.google import GoogleConnectionResponse, GoogleConnectionsResponse
@@ -103,3 +104,46 @@ def test_oauth_callback_access_log_filter_redacts_code_and_state() -> None:
     assert "secret-code" not in formatted
     assert "secret-state" not in formatted
     assert "[REDACTED]" in formatted
+
+
+class _SessionContext:
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *_args: object) -> bool:
+        return False
+
+
+class CallbackDatabase:
+    async def dispose(self) -> None:
+        return None
+
+    def sessions(self) -> _SessionContext:
+        return _SessionContext()
+
+
+async def test_successful_watch_oauth_callback_redirects_to_watch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from docrelay.api import google as google_api
+
+    class Service:
+        async def complete_authorization(self, **_kwargs: object) -> object:
+            return object()
+
+    monkeypatch.setattr(google_api, "_runtime", lambda _request: object())
+    monkeypatch.setattr(google_api, "_service", lambda **_kwargs: Service())
+
+    app = create_app(settings=_settings(), database=CallbackDatabase())  # type: ignore[arg-type]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get(
+            "/api/v1/google/oauth/callback",
+            params={"code": "ok", "state": "ok"},
+            cookies={
+                "docrelay_google_oauth_return": "/watch",
+                "docrelay_google_oauth_nonce": "nonce",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "http://localhost:3000/watch"
+    assert "Google connection established" not in response.text

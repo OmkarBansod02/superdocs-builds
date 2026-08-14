@@ -5,7 +5,7 @@
 
 declare namespace google.picker {
   // String literal constants instead of const enum for isolatedModules compatibility
-  type ActionType = "cancel" | "picked";
+  type ActionType = "cancel" | "error" | "loaded" | "picked";
   type ResponseKey = "action" | "docs";
   type DocumentKey = "id" | "name" | "mimeType" | "url";
   type ViewIdType = "all" | "documents" | "spreadsheets";
@@ -14,6 +14,8 @@ declare namespace google.picker {
   // Namespaced constants as objects
   const Action: {
     readonly CANCEL: "cancel";
+    readonly ERROR: "error";
+    readonly LOADED: "loaded";
     readonly PICKED: "picked";
   };
 
@@ -56,6 +58,8 @@ declare namespace google.picker {
     constructor(viewId?: ViewIdType);
     setMimeTypes(mimeTypes: string): DocsView;
     setMode(mode: unknown): DocsView;
+    setIncludeFolders(included: boolean): DocsView;
+    setSelectFolderEnabled(enabled: boolean): DocsView;
   }
 
   class PickerBuilder {

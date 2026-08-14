@@ -14,7 +14,10 @@ from docrelay.integrations.google.oauth import (
     GoogleAuthorizationProfile,
     GoogleOAuthHTTPClient,
     build_authorization_url,
+    frontend_oauth_redirect_url,
     new_pkce_verifier,
+    oauth_return_path_for_profile,
+    safe_oauth_return_path,
 )
 
 
@@ -54,6 +57,22 @@ def test_watch_authorization_is_an_explicit_restricted_scope_upgrade() -> None:
     assert GOOGLE_DRIVE_READONLY_SCOPE in query["scope"][0]
     assert query["include_granted_scopes"] == ["true"]
     assert GoogleAuthorizationProfile.WATCH.value == "watch"
+
+
+def test_successful_watch_oauth_callback_returns_to_watch_page() -> None:
+    assert oauth_return_path_for_profile(GoogleAuthorizationProfile.WATCH) == "/watch"
+    assert oauth_return_path_for_profile(GoogleAuthorizationProfile.SINGLE_FILE) == "/"
+    assert frontend_oauth_redirect_url(
+        origins=["http://localhost:3000"],
+        path="/watch",
+    ) == "http://localhost:3000/watch"
+    assert frontend_oauth_redirect_url(
+        origins=["http://localhost:3000"],
+        path="/",
+    ) == "http://localhost:3000/"
+    assert safe_oauth_return_path("https://evil.example/watch") == "/"
+    assert safe_oauth_return_path("//localhost:3000/watch") == "/"
+    assert safe_oauth_return_path(None) == "/"
 
 
 async def test_refresh_accepts_unchanged_scope_omission() -> None:

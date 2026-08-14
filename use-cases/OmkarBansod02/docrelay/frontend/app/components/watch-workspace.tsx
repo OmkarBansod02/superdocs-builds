@@ -1,20 +1,24 @@
 "use client";
 
-import Link from "next/link";
-import { Clock, FileText, Folder, FolderOpen, Plus } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ICON_STROKE, icons } from "@/lib/icons";
+import { browserPickerTokenManager } from "../google-drive/picker-token";
 import {
   configureWatch,
   configureWatchRule,
   getAuthorizeUrl,
   getConnections,
   listWatchRules,
+  listWatchRuns,
   listWatchScanItems,
-  listWatchScanRuns,
   listWatchScans,
   listWatches,
   triggerWatchScan,
   updateWatchSchedule,
+  verifyWriteAuthorization,
   type GoogleConnection,
   type RunSummary,
   type WatchRoot,
@@ -22,24 +26,54 @@ import {
   type WatchScan,
   type WatchScanItem,
 } from "../lib/api";
-import { runActionLabel, RunStatus } from "./run-status";
-import { Button, InlineNotice, Skeleton, StateMark } from "./ui";
+import { requestOpenRecentDocument } from "../lib/conversation";
+import { extractSelectedFile, type SelectedDriveFile } from "../lib/import-state";
+import {
+  actionableWatchRuns,
+  exactFilePickMatches,
+  isGoogleFolder,
+  proposalCountLabel,
+  scanProgressLabel,
+  scheduleLabel,
+  watchActivityLabel,
+  watchDocumentAction,
+  watchDocumentSelection,
+  watchErrorCopy,
+} from "../lib/watch-state";
+import { Button, InlineNotice, Skeleton } from "./ui";
+
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
+const PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
+const CLOUD_PROJECT_NUMBER = process.env.NEXT_PUBLIC_GOOGLE_CLOUD_PROJECT_NUMBER ?? "";
+const DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
+const FOLDER_MIME = "application/vnd.google-apps.folder";
+
+const INTERVALS = [
+  { value: 3600, label: "Every hour" },
+  { value: 21600, label: "Every 6 hours" },
+  { value: 86400, label: "Every 24 hours" },
+  { value: 900, label: "Every 15 min" },
+  { value: 300, label: "Every 5 min" },
+] as const;
 
 type WatchData = {
   watch: WatchRoot;
   rules: WatchRule[];
   scans: WatchScan[];
   latestItems: WatchScanItem[];
-  latestRuns: RunSummary[];
+  runs: RunSummary[];
 };
 
 export function WatchWorkspace() {
+  const router = useRouter();
   const [connection, setConnection] = useState<GoogleConnection | null>(null);
   const [data, setData] = useState<WatchData | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [pickerBusy, setPickerBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSchedule, setShowSchedule] = useState(false);
+  const [editing, setEditing] = useState(false);
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [editingRule, setEditingRule] = useState<WatchRule | null>(null);
 
@@ -50,18 +84,28 @@ export function WatchWorkspace() {
       const [connections, watches] = await Promise.all([getConnections(signal), listWatches(signal)]);
       const active = connections.connections.find((item) => item.status === "CONNECTED") ?? null;
       setConnection(active);
-      const watch = watches.watches[0];
+      const watch = watches.watches.at(-1);
       if (!watch) {
         setData(null);
         return;
       }
-      const [rulesResponse, scansResponse] = await Promise.all([listWatchRules(watch.watch_id, signal), listWatchScans(watch.watch_id, signal)]);
-      const scans = [...scansResponse.scans].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
+      const [rulesResponse, scansResponse, runsResponse] = await Promise.all([
+        listWatchRules(watch.watch_id, signal),
+        listWatchScans(watch.watch_id, signal),
+        listWatchRuns(watch.watch_id, signal),
+      ]);
+      const scans = [...scansResponse.scans].sort((left, right) => Date.parse(right.started_at) - Date.parse(left.started_at));
       const latest = scans[0];
-      const [itemsResponse, runsResponse] = latest
-        ? await Promise.all([listWatchScanItems(watch.watch_id, latest.scan_id, signal), listWatchScanRuns(watch.watch_id, latest.scan_id, signal)])
-        : [{ items: [] }, { runs: [] }];
-      setData({ watch, rules: rulesResponse.rules, scans, latestItems: itemsResponse.items, latestRuns: runsResponse.runs });
+      const itemsResponse = latest
+        ? await listWatchScanItems(watch.watch_id, latest.scan_id, signal)
+        : { items: [] };
+      setData({
+        watch,
+        rules: rulesResponse.rules,
+        scans,
+        latestItems: itemsResponse.items,
+        runs: runsResponse.runs,
+      });
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === "AbortError") return;
       setError(reason instanceof Error ? reason.message : "Watch could not be loaded.");
@@ -82,6 +126,11 @@ export function WatchWorkspace() {
     return () => window.clearInterval(timer);
   }, [data?.scans, load]);
 
+  const openConversation = useCallback((run: RunSummary) => {
+    requestOpenRecentDocument(watchDocumentSelection(run));
+    router.push("/");
+  }, [router]);
+
   async function scanNow() {
     if (!data || busy) return;
     setBusy(true);
@@ -96,111 +145,308 @@ export function WatchWorkspace() {
     }
   }
 
+  async function chooseFolder() {
+    if (!connection || pickerBusy) return;
+    setPickerBusy(true);
+    setError(null);
+    try {
+      const folder = await pickDriveFolder("Choose a Drive folder to watch");
+      if (!folder) return;
+      await configureWatch({
+        connection_id: connection.connection_id,
+        root_folder_id: folder.fileId,
+        interval_seconds: data?.watch.interval_seconds ?? 3600,
+        enabled: data?.watch.enabled ?? true,
+      });
+      setEditing(false);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The folder could not be selected.");
+    } finally {
+      setPickerBusy(false);
+    }
+  }
+
   if (loading && !data) return <WatchSkeleton />;
 
   if (!data) {
-    return <WatchEmpty connection={connection} error={error} onCreated={() => void load()} />;
+    return (
+      <WatchEmpty
+        connection={connection}
+        error={error}
+        pickerBusy={pickerBusy}
+        onEnableWatch={() => window.location.assign(getAuthorizeUrl("watch"))}
+        onChooseFolder={() => void chooseFolder()}
+      />
+    );
   }
 
-  const { watch, rules, scans, latestItems, latestRuns } = data;
+  const { watch, rules, scans, latestItems, runs } = data;
   const latest = scans[0] ?? null;
-  const runsById = new Map(latestRuns.map((run) => [run.run_id, run]));
-  const rulesById = new Map(rules.map((rule) => [rule.rule_id, rule]));
+  const scanning = busy || latest?.status === "RUNNING";
+  const pending = actionableWatchRuns(runs);
+  const runsById = new Map(runs.map((run) => [run.run_id, run]));
+  const watchError = watchErrorCopy(watch.last_error_code ?? latest?.failure_code ?? null);
+  const progress = scanProgressLabel(latest, busy);
 
   return (
-    <div>
-      <header className="border-b border-border px-5 py-7 sm:px-8 lg:px-10">
-        <h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink sm:text-[34px]">{watch.root_name}</h1>
-        <div className="mt-6 flex flex-wrap items-center gap-x-6 gap-y-4 text-[13px] text-muted">
-          <div className="flex min-w-[220px] items-center gap-3"><span className="grid size-9 place-items-center rounded-md bg-[#2878ed] text-white"><FolderOpen className="size-4" /></span><span><span className="block text-[12px]">Google Drive folder</span><strong className="block font-medium text-ink">{watch.root_name}/</strong></span></div>
-          <span className="hidden h-10 w-px bg-border sm:block" />
-          <span className="flex items-center gap-2"><StateMark state={connection?.watch_authorized ? "complete" : "info"} />{connection?.watch_authorized ? "Watch access enabled" : "Watch access needs attention"}</span>
-          <span className="hidden h-10 w-px bg-border xl:block" />
-          <span className="flex items-center gap-2"><Clock className="size-4" />{watch.enabled ? intervalLabel(watch.interval_seconds) : "Schedule disabled"}</span>
-          <span className="ml-auto grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-[12px]"><span>Last scan</span><strong className="font-medium text-ink">{formatTime(watch.last_scan_at)}</strong><span>Next scan</span><strong className="font-medium text-ink">{watch.enabled ? formatTime(watch.next_scan_at) : "—"}</strong></span>
-          <Button variant="secondary" onClick={() => setShowSchedule((value) => !value)}>Edit schedule</Button>
-          <Button busy={busy || latest?.status === "RUNNING"} onClick={() => void scanNow()}>{latest?.status === "RUNNING" ? "Scanning…" : "Scan now"}</Button>
-        </div>
-        {showSchedule ? <ScheduleEditor watch={watch} onSaved={() => { setShowSchedule(false); void load(); }} /> : null}
-        {error ? <div className="mt-5"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
+    <div className="px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
+      <header className="max-w-[40rem]">
+        <h1 className="type-page-title">Watch</h1>
+        <p className="type-body-muted mt-2">Keep selected Drive folders in sync with DocRelay.</p>
+        <WatchAccessStatus
+          connection={connection}
+          onEnable={() => window.location.assign(getAuthorizeUrl("watch"))}
+        />
       </header>
 
-      <div className="grid xl:grid-cols-[335px_minmax(0,1fr)]">
-        <aside className="border-b border-border px-5 py-8 sm:px-8 xl:min-h-[calc(100dvh-260px)] xl:border-b-0 xl:border-r lg:px-10 xl:px-8">
-          <div className="flex items-center justify-between"><h2 className="text-[19px] font-semibold text-ink">Folder rules</h2><button type="button" onClick={() => { setEditingRule(null); setShowRuleForm(true); }} aria-label="Add folder rule" className="grid size-11 place-items-center rounded-md text-accent hover:bg-accent-soft"><Plus className="size-5" /></button></div>
-          <div className="mt-7 flex items-center gap-2 text-[14px] font-medium text-ink"><Folder className="size-5" />{watch.root_name}/</div>
-          <div className="ml-2 mt-4 border-l border-border pl-5">
-            {rules.length === 0 ? <p className="py-4 text-[13px] leading-5 text-muted">No folder rules are configured yet.</p> : rules.map((rule) => (
-              <div key={rule.rule_id} className="relative pb-8 last:pb-3">
-                <span className="absolute -left-[21px] top-3 w-4 border-t border-border" aria-hidden="true" />
-                <div className="flex items-center gap-2 text-[14px] font-medium text-ink"><Folder className="size-4" />{rule.folder_name}/</div>
-                <div className="mt-3 flex items-start gap-2"><StateMark state={rule.enabled ? "complete" : "idle"} /><p className="text-[13px] leading-5 text-ink">{rule.instruction}</p><span className="ml-auto text-[11px] text-muted">v{rule.version}</span></div>
-                <button type="button" onClick={() => { setEditingRule(rule); setShowRuleForm(true); }} className="ml-7 mt-2 min-h-8 text-[12px] font-semibold text-accent hover:underline">Edit</button>
+      {error ? (
+        <div className="mt-6 max-w-[40rem]">
+          <InlineNotice tone="warning">{error}</InlineNotice>
+        </div>
+      ) : null}
+
+      {watchError ? (
+        <div className="mt-6 max-w-[40rem]">
+          <Alert variant="warning" className="rounded-md">
+            <icons.warning strokeWidth={ICON_STROKE} />
+            <AlertTitle>{watchError.title}</AlertTitle>
+            <AlertDescription>{watchError.detail}</AlertDescription>
+            {watch.last_error_code === "GOOGLE_WATCH_AUTHORIZATION_REQUIRED" ? (
+              <AlertAction>
+                <Button variant="secondary" onClick={() => window.location.assign(getAuthorizeUrl("watch"))}>
+                  Enable watch access
+                </Button>
+              </AlertAction>
+            ) : null}
+          </Alert>
+        </div>
+      ) : null}
+
+      <section className="mt-10 max-w-[40rem]" aria-labelledby="watching-heading">
+        <h2 id="watching-heading" className="type-section-heading">Watching</h2>
+        <div className="mt-4 border-t border-border pt-5">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid size-8 shrink-0 place-items-center text-muted" aria-hidden="true">
+              <icons.folderOpen className="size-4" strokeWidth={ICON_STROKE} />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[15px] font-medium tracking-[-0.015em] text-ink">{watch.root_name}</p>
+              <p className="type-caption mt-0.5">Google Drive</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void chooseFolder()}
+              disabled={pickerBusy}
+              className="type-caption min-h-8 shrink-0 text-accent hover:underline"
+            >
+              {pickerBusy ? "Opening Drive…" : "Change folder"}
+            </button>
+          </div>
+
+          <p className="mt-5 text-[13px] text-muted">{scheduleLabel(watch.enabled, watch.interval_seconds)}</p>
+          {progress ? <p className="mt-1 text-[13px] text-ink">{progress}</p> : null}
+
+          <div className="mt-6 space-y-5">
+            {rules.length === 0 ? (
+              <p className="text-[14px] leading-6 text-muted">Add a rule so discovered documents know what to do.</p>
+            ) : rules.map((rule) => (
+              <div key={rule.rule_id}>
+                <p className="text-[14px] font-medium text-ink">{rule.folder_name}</p>
+                <p className="mt-1 text-[14px] leading-6 text-muted">“{rule.instruction}”</p>
+                {editing ? (
+                  <button
+                    type="button"
+                    onClick={() => { setEditingRule(rule); setShowRuleForm(true); }}
+                    className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
+                  >
+                    Edit
+                  </button>
+                ) : null}
               </div>
             ))}
           </div>
-          <Button variant="secondary" className="mt-5" onClick={() => { setEditingRule(null); setShowRuleForm(true); }}><Plus className="size-4" />Add folder rule</Button>
-          <p className="mt-7 text-[12px] leading-5 text-muted">Nearest enabled folder rule applies.</p>
-          {showRuleForm ? <RuleEditor watchId={watch.watch_id} rule={editingRule} onClose={() => { setShowRuleForm(false); setEditingRule(null); }} onSaved={() => { setShowRuleForm(false); setEditingRule(null); void load(); }} /> : null}
-        </aside>
 
-        <section className="min-w-0 px-5 py-8 sm:px-8 lg:px-10">
-          <h2 className="text-[21px] font-semibold text-ink">Latest scan</h2>
-          {!latest ? <p className="mt-5 text-[14px] text-muted">No scans have run yet. Use Scan now to discover documents.</p> : (
-            <>
-              <p className="mt-3 text-[14px] text-ink">{titleCase(latest.trigger)} scan · {formatTime(latest.started_at)}</p>
-              <p className="mt-2 text-[13px] text-muted">{latest.discovered_count} discovered · {latestRuns.length} runs · {latest.unchanged_count} unchanged · {latest.skipped_count} skipped</p>
-              <div className="mt-6 overflow-x-auto border-y border-border">
-                <table className="w-full min-w-[760px] border-collapse text-left">
-                  <thead><tr className="border-b border-border text-[12px] font-semibold text-muted"><th className="px-3 py-3">Document</th><th className="px-3 py-3">Matched rule</th><th className="px-3 py-3">State</th><th className="px-3 py-3 text-right">Action</th></tr></thead>
-                  <tbody>
-                    {latestItems.map((item) => {
-                      const run = item.run_id ? runsById.get(item.run_id) : undefined;
-                      const rule = item.matched_rule_id ? rulesById.get(item.matched_rule_id) : undefined;
-                      const conflict = run?.write_back_status === "CONFLICT";
-                      return (
-                        <tr key={item.provider_file_id} className={`border-b border-border last:border-b-0 ${conflict ? "border-l-2 border-l-warning" : ""}`}>
-                          <td className="px-3 py-4"><span className="flex items-center gap-2.5 text-[14px] font-medium text-ink"><FileText className="size-4 text-[#2878ed]" />{item.name}</span></td>
-                          <td className="px-3 py-4 text-[13px] text-muted">{rule ? `${rule.folder_name}/` : "—"}</td>
-                          <td className="px-3 py-4">{run ? <><RunStatus run={run} />{run.write_back_status === "WRITE_AUTHORIZATION_REQUIRED" ? <p className="ml-7 mt-1 max-w-[250px] text-[11px] leading-4 text-muted">Google requires permission for this exact file before write-back.</p> : null}</> : <ItemOutcome item={item} />}</td>
-                          <td className="px-3 py-4 text-right">{run ? <Link href={`/runs/${run.run_id}`} className="inline-flex min-h-11 items-center px-2 text-[13px] font-semibold text-accent hover:underline">{runActionLabel(run)}</Link> : <span className="text-muted">—</span>}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+          <div className="mt-6 flex flex-wrap gap-2">
+            <Button busy={scanning} disabled={scanning} onClick={() => void scanNow()}>
+              {latest?.status === "RUNNING" ? "Scanning…" : "Scan now"}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setEditing((value) => !value);
+                if (editing) {
+                  setShowRuleForm(false);
+                  setEditingRule(null);
+                }
+              }}
+            >
+              {editing ? "Done" : "Edit setup"}
+            </Button>
+          </div>
+
+          {editing ? (
+            <div className="mt-6 border-t border-border pt-5">
+              <ScheduleEditor
+                watch={watch}
+                onSaved={() => { void load(); }}
+              />
+              <Button
+                variant="ghost"
+                className="mt-4"
+                onClick={() => { setEditingRule(null); setShowRuleForm(true); }}
+              >
+                <icons.plus className="size-4" strokeWidth={ICON_STROKE} />
+                Add rule
+              </Button>
+              {showRuleForm ? (
+                <RuleEditor
+                  watchId={watch.watch_id}
+                  rule={editingRule}
+                  onClose={() => { setShowRuleForm(false); setEditingRule(null); }}
+                  onSaved={() => { setShowRuleForm(false); setEditingRule(null); void load(); }}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="mt-12 max-w-[40rem]" aria-labelledby="needs-review-heading">
+        <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
+        <div className="mt-4 border-t border-border">
+          {pending.length === 0 ? (
+            <p className="py-5 text-[14px] leading-6 text-muted">
+              {latest ? "Nothing needs review." : "Scan to discover documents."}
+            </p>
+          ) : pending.map((run) => {
+            const action = watchDocumentAction(run);
+            return (
+              <article key={run.run_id} className="flex items-start gap-3 border-b border-border py-4 last:border-b-0">
+                <icons.document className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[14.5px] font-medium tracking-[-0.012em] text-ink">{run.document_name}</p>
+                  {action.kind === "review" ? (
+                    <p className="mt-0.5 text-[13px] text-muted">{proposalCountLabel(run.proposal_count)}</p>
+                  ) : null}
+                  {action.kind === "authorize" && action.detail ? (
+                    <p className="mt-2 max-w-[34rem] text-[13px] leading-5 text-muted">{action.detail}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {action.kind === "authorize" ? (
+                      <AuthorizeExactFileButton
+                        run={run}
+                        onAuthorized={() => void load()}
+                        onError={setError}
+                      />
+                    ) : null}
+                    <Button variant={action.kind === "authorize" ? "secondary" : "primary"} onClick={() => openConversation(run)}>
+                      Open conversation
+                    </Button>
+                  </div>
+                </div>
+                <span className="type-caption shrink-0 pt-0.5">{action.statusLabel}</span>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="mt-12 max-w-[40rem]" aria-labelledby="activity-heading">
+        <h2 id="activity-heading" className="type-section-heading">Recent activity</h2>
+        <div className="mt-4 border-t border-border">
+          {latestItems.length === 0 ? (
+            <p className="py-5 text-[14px] leading-6 text-muted">
+              {latest?.status === "RUNNING" ? "Scan in progress." : "No recent Watch activity."}
+            </p>
+          ) : latestItems.map((item) => {
+            const run = item.run_id ? runsById.get(item.run_id) : undefined;
+            return (
+              <div key={`${item.provider_file_id}-${item.outcome}`} className="flex items-center gap-3 border-b border-border py-3.5 last:border-b-0">
+                <icons.document className="size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                <p className="min-w-0 flex-1 truncate text-[14px] text-ink">{item.name}</p>
+                <p className="type-caption shrink-0">{watchActivityLabel(item, run)}</p>
               </div>
-            </>
-          )}
-        </section>
-      </div>
+            );
+          })}
+        </div>
+      </section>
     </div>
   );
 }
 
-function WatchEmpty({ connection, error, onCreated }: { connection: GoogleConnection | null; error: string | null; onCreated: () => void }) {
-  const [folderId, setFolderId] = useState("");
-  const [interval, setIntervalValue] = useState(900);
-  const [busy, setBusy] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
-  async function create() {
-    if (!connection || !folderId.trim()) return;
-    setBusy(true); setLocalError(null);
-    try { await configureWatch({ connection_id: connection.connection_id, root_folder_id: folderId.trim(), interval_seconds: interval, enabled: true }); onCreated(); }
-    catch (reason) { setLocalError(reason instanceof Error ? reason.message : "The watched folder could not be configured."); }
-    finally { setBusy(false); }
+function WatchAccessStatus({
+  connection,
+  onEnable,
+}: {
+  connection: GoogleConnection | null;
+  onEnable: () => void;
+}) {
+  if (connection?.watch_authorized) {
+    return (
+      <p className="mt-5 inline-flex items-center gap-1.5 text-[13px] text-muted">
+        Google Drive
+        <span className="inline-flex items-center gap-1 text-success">
+          <span className="grid size-3.5 place-items-center rounded-full bg-success text-primary-foreground">
+            <icons.check className="size-2.5" strokeWidth={2.5} />
+          </span>
+          Watch access enabled
+        </span>
+      </p>
+    );
   }
+
   return (
-    <section className="flex min-h-[calc(100dvh-156px)] items-center justify-center px-5 py-14 sm:px-8">
-      <div className="w-full max-w-[620px]">
-        <FolderOpen className="size-10 text-accent" /><h1 className="mt-6 text-[30px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Watch a Google Drive folder</h1>
-        <p className="mt-3 text-[15px] leading-7 text-muted">Discover changed Google Docs on a schedule, apply the nearest folder rule, and send each document through the same review and safe-write pipeline.</p>
-        {error || localError ? <div className="mt-6"><InlineNotice tone="warning">{localError ?? error}</InlineNotice></div> : null}
-        {!connection ? <Button className="mt-7" onClick={() => window.location.assign(getAuthorizeUrl())}>Connect Google Drive</Button> : !connection.watch_authorized ? <div className="mt-7"><InlineNotice tone="info">Watch needs read access to discover documents in the selected folder.</InlineNotice><Button className="mt-4" onClick={() => window.location.assign(getAuthorizeUrl())}>Enable watch access</Button></div> : (
-          <div className="mt-8 grid gap-5 border-t border-border pt-7">
-            <label className="grid gap-2 text-[13px] font-medium text-ink">Google Drive folder ID<input value={folderId} onChange={(event) => setFolderId(event.target.value)} placeholder="Paste the folder ID" className="min-h-11 rounded-md border border-border bg-surface px-3 text-[14px] outline-none focus:border-accent" /></label>
-            <label className="grid gap-2 text-[13px] font-medium text-ink">Scan interval<select value={interval} onChange={(event) => setIntervalValue(Number(event.target.value))} className="min-h-11 rounded-md border border-border bg-surface px-3 text-[14px] outline-none focus:border-accent"><option value={300}>Every 5 minutes</option><option value={900}>Every 15 minutes</option><option value={3600}>Every hour</option></select></label>
-            <Button disabled={!folderId.trim()} busy={busy} onClick={() => void create()}>Configure watch</Button>
+    <div className="mt-6">
+      <p className="text-[14px] font-medium text-ink">Watch access required</p>
+      <p className="mt-1 text-[14px] leading-6 text-muted">
+        DocRelay needs read access to discover files in the selected folder.
+      </p>
+      <Button className="mt-4" onClick={onEnable}>Enable watch access</Button>
+    </div>
+  );
+}
+
+function WatchEmpty({
+  connection,
+  error,
+  pickerBusy,
+  onEnableWatch,
+  onChooseFolder,
+}: {
+  connection: GoogleConnection | null;
+  error: string | null;
+  pickerBusy: boolean;
+  onEnableWatch: () => void;
+  onChooseFolder: () => void;
+}) {
+  const watchReady = Boolean(connection?.watch_authorized);
+  return (
+    <section className="flex min-h-[calc(100dvh-156px)] items-center justify-center px-6 py-14">
+      <div className="w-full max-w-[28rem]">
+        <h1 className="type-page-title">Watch</h1>
+        <p className="type-body-muted mt-2">
+          Keep a Drive folder in sync with human-reviewed AI changes.
+        </p>
+        {error ? <div className="mt-6"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
+        {!connection || !watchReady ? (
+          <div className="mt-7">
+            <p className="text-[14px] font-medium text-ink">Watch access required</p>
+            <p className="mt-1 text-[14px] leading-6 text-muted">
+              DocRelay needs read access to discover files in the selected folder.
+            </p>
+            <Button className="mt-5" onClick={onEnableWatch}>Enable Watch access</Button>
+          </div>
+        ) : (
+          <div className="mt-8 space-y-6">
+            <div>
+              <p className="text-[14px] font-medium text-ink">Choose folder</p>
+              <p className="mt-1 text-[13px] leading-5 text-muted">Select the Drive folder DocRelay should watch.</p>
+              <Button className="mt-3" busy={pickerBusy} onClick={onChooseFolder}>
+                {pickerBusy ? "Opening Drive…" : "Choose folder"}
+              </Button>
+            </div>
+            <p className="text-[13px] leading-5 text-muted">Then add a rule and set a schedule.</p>
           </div>
         )}
       </div>
@@ -209,17 +455,341 @@ function WatchEmpty({ connection, error, onCreated }: { connection: GoogleConnec
 }
 
 function ScheduleEditor({ watch, onSaved }: { watch: WatchRoot; onSaved: () => void }) {
-  const [interval, setIntervalValue] = useState(watch.interval_seconds); const [enabled, setEnabled] = useState(watch.enabled); const [busy, setBusy] = useState(false);
-  return <div className="mt-6 flex flex-wrap items-end gap-4 border-t border-border pt-5"><label className="grid gap-1.5 text-[12px] text-muted">Interval<select value={interval} onChange={(event) => setIntervalValue(Number(event.target.value))} className="min-h-11 rounded-md border border-border bg-surface px-3 text-[13px] text-ink"><option value={300}>5 minutes</option><option value={900}>15 minutes</option><option value={3600}>1 hour</option><option value={21600}>6 hours</option><option value={86400}>24 hours</option></select></label><label className="flex min-h-11 items-center gap-2 text-[13px] text-ink"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />Enabled</label><Button busy={busy} onClick={async () => { setBusy(true); await updateWatchSchedule(watch.watch_id, { enabled, interval_seconds: interval }); setBusy(false); onSaved(); }}>Save schedule</Button></div>;
+  const [interval, setIntervalValue] = useState(watch.interval_seconds);
+  const [enabled, setEnabled] = useState(watch.enabled);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-wrap items-end gap-4">
+      <label className="grid gap-1.5 text-[12px] text-muted">
+        Schedule
+        <select
+          value={enabled ? interval : 0}
+          onChange={(event) => {
+            const next = Number(event.target.value);
+            if (next === 0) {
+              setEnabled(false);
+              return;
+            }
+            setEnabled(true);
+            setIntervalValue(next);
+          }}
+          className="min-h-9 rounded-md border border-border bg-surface px-3 text-[13px] text-ink"
+        >
+          <option value={0}>Manual</option>
+          {INTERVALS.map((item) => (
+            <option key={item.value} value={item.value}>{item.label}</option>
+          ))}
+        </select>
+      </label>
+      <Button
+        busy={busy}
+        onClick={async () => {
+          setBusy(true);
+          setError(null);
+          try {
+            await updateWatchSchedule(watch.watch_id, { enabled, interval_seconds: enabled ? interval : watch.interval_seconds });
+            onSaved();
+          } catch (reason) {
+            setError(reason instanceof Error ? reason.message : "Schedule could not be saved.");
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        Save schedule
+      </Button>
+      {error ? <p className="w-full text-[13px] text-warning">{error}</p> : null}
+    </div>
+  );
 }
 
-function RuleEditor({ watchId, rule, onClose, onSaved }: { watchId: string; rule: WatchRule | null; onClose: () => void; onSaved: () => void }) {
-  const [folderId, setFolderId] = useState(rule?.folder_id ?? ""); const [instruction, setInstruction] = useState(rule?.instruction ?? ""); const [enabled, setEnabled] = useState(rule?.enabled ?? true); const [busy, setBusy] = useState(false); const [error, setError] = useState<string | null>(null);
-  return <div className="mt-6 border-t border-border pt-5"><h3 className="text-[15px] font-semibold text-ink">{rule ? `Edit ${rule.folder_name}/` : "Add folder rule"}</h3><div className="mt-4 grid gap-4"><label className="grid gap-1.5 text-[12px] text-muted">Folder ID<input value={folderId} readOnly={Boolean(rule)} onChange={(event) => setFolderId(event.target.value)} className="min-h-11 rounded-md border border-border bg-surface px-3 text-[13px] text-ink read-only:bg-surface-muted" /></label><label className="grid gap-1.5 text-[12px] text-muted">Instruction<textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} rows={4} className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] leading-5 text-ink" /></label><label className="flex items-center gap-2 text-[13px] text-ink"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />Enabled</label>{error ? <InlineNotice tone="warning">{error}</InlineNotice> : null}<div className="flex gap-2"><Button busy={busy} disabled={!folderId.trim() || !instruction.trim()} onClick={async () => { setBusy(true); setError(null); try { await configureWatchRule(watchId, { folder_id: folderId.trim(), instruction: instruction.trim(), enabled }); onSaved(); } catch (reason) { setError(reason instanceof Error ? reason.message : "Rule could not be saved."); } finally { setBusy(false); } }}>Save rule</Button><Button variant="ghost" onClick={onClose}>Cancel</Button></div></div></div>;
+function RuleEditor({
+  watchId,
+  rule,
+  onClose,
+  onSaved,
+}: {
+  watchId: string;
+  rule: WatchRule | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [folder, setFolder] = useState<SelectedDriveFile | null>(
+    rule ? { fileId: rule.folder_id, name: rule.folder_name, mimeType: FOLDER_MIME } : null,
+  );
+  const [instruction, setInstruction] = useState(rule?.instruction ?? "");
+  const [enabled, setEnabled] = useState(rule?.enabled ?? true);
+  const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function pickFolder() {
+    if (rule || picking) return;
+    setPicking(true);
+    setError(null);
+    try {
+      const selected = await pickDriveFolder("Choose a folder for this rule");
+      if (selected) setFolder(selected);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "The folder could not be selected.");
+    } finally {
+      setPicking(false);
+    }
+  }
+
+  return (
+    <div className="mt-5">
+      <h3 className="text-[14px] font-medium text-ink">{rule ? `Edit ${rule.folder_name}` : "Add rule"}</h3>
+      <div className="mt-4 grid gap-4">
+        <div>
+          <p className="text-[12px] text-muted">Folder</p>
+          {folder ? (
+            <p className="mt-1 text-[14px] text-ink">{folder.name}</p>
+          ) : (
+            <Button variant="secondary" className="mt-1.5" busy={picking} onClick={() => void pickFolder()}>
+              {picking ? "Opening Drive…" : "Choose folder"}
+            </Button>
+          )}
+        </div>
+        <label className="grid gap-1.5 text-[12px] text-muted">
+          Instruction
+          <textarea
+            value={instruction}
+            onChange={(event) => setInstruction(event.target.value)}
+            rows={4}
+            className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] leading-5 text-ink"
+          />
+        </label>
+        <label className="flex items-center gap-2 text-[13px] text-ink">
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} className="size-4 accent-accent" />
+          Enabled
+        </label>
+        {error ? <InlineNotice tone="warning">{error}</InlineNotice> : null}
+        <div className="flex gap-2">
+          <Button
+            busy={busy}
+            disabled={!folder || !instruction.trim()}
+            onClick={async () => {
+              if (!folder) return;
+              setBusy(true);
+              setError(null);
+              try {
+                await configureWatchRule(watchId, {
+                  folder_id: folder.fileId,
+                  instruction: instruction.trim(),
+                  enabled,
+                });
+                onSaved();
+              } catch (reason) {
+                setError(reason instanceof Error ? reason.message : "Rule could not be saved.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Save rule
+          </Button>
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function ItemOutcome({ item }: { item: WatchScanItem }) { const unchanged = item.outcome === "UNCHANGED"; return <span className="inline-flex items-center gap-2 text-[13px] text-ink"><StateMark state={unchanged ? "idle" : item.outcome === "FAILED" ? "warning" : "info"} />{titleCase(item.outcome)}</span>; }
-function WatchSkeleton() { return <div className="space-y-4 px-5 py-8 sm:px-8 lg:px-10"><Skeleton className="h-10 w-64" /><Skeleton className="h-24 w-full" /><Skeleton className="h-[420px] w-full" /></div>; }
-function intervalLabel(seconds: number): string { if (seconds < 3600) return `Every ${Math.round(seconds / 60)} minutes`; if (seconds === 3600) return "Every hour"; return `Every ${Math.round(seconds / 3600)} hours`; }
-function formatTime(value: string | null): string { if (!value) return "—"; return new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", timeZoneName: "short" }).format(new Date(value)); }
-function titleCase(value: string): string { return value.toLowerCase().replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase()); }
+function AuthorizeExactFileButton({
+  run,
+  onAuthorized,
+  onError,
+}: {
+  run: RunSummary;
+  onAuthorized: () => void;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <Button
+      busy={busy}
+      onClick={() => {
+        void (async () => {
+          if (busy) return;
+          setBusy(true);
+          try {
+            const pickedId = await pickExactDocument(run.document_name);
+            if (!pickedId) return;
+            if (!exactFilePickMatches(pickedId, run.provider_file_id)) {
+              onError(`Choose ${run.document_name}. DocRelay will not transfer permission from another file.`);
+              return;
+            }
+            await verifyWriteAuthorization(run.run_id, pickedId);
+            onAuthorized();
+          } catch (reason) {
+            onError(reason instanceof Error ? reason.message : "Exact-file authorization failed.");
+          } finally {
+            setBusy(false);
+          }
+        })();
+      }}
+    >
+      {busy ? "Opening Google Drive…" : "Authorize document"}
+    </Button>
+  );
+}
+
+function WatchSkeleton() {
+  return (
+    <div className="space-y-4 px-6 py-8 sm:px-8 lg:px-10">
+      <Skeleton className="h-8 w-40" />
+      <Skeleton className="h-4 w-80" />
+      <Skeleton className="mt-8 h-40 w-full max-w-[40rem]" />
+      <Skeleton className="h-32 w-full max-w-[40rem]" />
+    </div>
+  );
+}
+
+async function pickDriveFolder(title: string): Promise<SelectedDriveFile | null> {
+  await ensurePicker();
+  const token = await requestPickerToken(DRIVE_READONLY_SCOPE);
+  return new Promise((resolve, reject) => {
+    try {
+      const view = new window.google!.picker!.DocsView();
+      view.setMimeTypes(FOLDER_MIME);
+      view.setIncludeFolders(true);
+      view.setSelectFolderEnabled(true);
+      const picker = new window.google!.picker!.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(token)
+        .setDeveloperKey(PICKER_API_KEY)
+        .setAppId(CLOUD_PROJECT_NUMBER)
+        .setOrigin(window.location.origin)
+        .setTitle(title)
+        .setCallback((data: google.picker.ResponseObject) => {
+          if (data.action === "cancel") {
+            resolve(null);
+            return;
+          }
+          if (data.action === "error") {
+            reject(new Error("Google Picker could not complete folder selection."));
+            return;
+          }
+          if (data.action !== "picked") return;
+          const file = extractSelectedFile(data);
+          if (!file || (file.mimeType && !isGoogleFolder(file.mimeType))) {
+            resolve(null);
+            return;
+          }
+          resolve({ ...file, mimeType: file.mimeType || FOLDER_MIME });
+        })
+        .build();
+      picker.setVisible(true);
+    } catch (reason) {
+      reject(reason);
+    }
+  });
+}
+
+async function pickExactDocument(documentName: string): Promise<string | null> {
+  await ensurePicker();
+  const token = await browserPickerTokenManager.getToken(
+    (prompt) => requestPickerTokenResponse(DRIVE_FILE_SCOPE, prompt),
+  );
+  return new Promise((resolve, reject) => {
+    try {
+      const view = new window.google!.picker!.DocsView();
+      view.setMimeTypes("application/vnd.google-apps.document");
+      const picker = new window.google!.picker!.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(token)
+        .setDeveloperKey(PICKER_API_KEY)
+        .setAppId(CLOUD_PROJECT_NUMBER)
+        .setOrigin(window.location.origin)
+        .setTitle(`Authorize ${documentName}`)
+        .setCallback((data: google.picker.ResponseObject) => {
+          if (data.action === "cancel") {
+            resolve(null);
+            return;
+          }
+          const file = extractSelectedFile(data);
+          resolve(file?.fileId ?? null);
+        })
+        .build();
+      picker.setVisible(true);
+    } catch (reason) {
+      reject(reason);
+    }
+  });
+}
+
+async function ensurePicker(): Promise<void> {
+  if (!GOOGLE_CLIENT_ID || !PICKER_API_KEY || !CLOUD_PROJECT_NUMBER) {
+    throw new Error("Google Drive is not fully configured in this environment.");
+  }
+  await Promise.all([loadGapiScript(), loadGisScript()]);
+  await loadPickerLibrary();
+}
+
+function requestPickerToken(scope: string): Promise<string> {
+  return requestPickerTokenResponse(scope, "").then((response) => response.accessToken);
+}
+
+function requestPickerTokenResponse(
+  scope: string,
+  prompt: "" | "consent",
+): Promise<{ accessToken: string; expiresIn: number }> {
+  return new Promise((resolve, reject) => {
+    const client = window.google!.accounts!.oauth2!.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope,
+      callback: (response) => {
+        if (response.error) {
+          reject(new Error(response.error_description || response.error));
+          return;
+        }
+        resolve({ accessToken: response.access_token, expiresIn: response.expires_in });
+      },
+      error_callback: (reason) => reject(new Error(reason.message || "OAuth popup was closed or denied")),
+    });
+    client.requestAccessToken({ prompt });
+  });
+}
+
+let gapiLoadPromise: Promise<void> | null = null;
+let gisLoadPromise: Promise<void> | null = null;
+
+function loadGapiScript(): Promise<void> {
+  if (gapiLoadPromise) return gapiLoadPromise;
+  gapiLoadPromise = new Promise((resolve, reject) => {
+    if (window.gapi) { resolve(); return; }
+    const script = document.createElement("script");
+    script.src = "https://apis.google.com/js/api.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google API script"));
+    document.head.appendChild(script);
+  });
+  return gapiLoadPromise;
+}
+
+function loadGisScript(): Promise<void> {
+  if (gisLoadPromise) return gisLoadPromise;
+  gisLoadPromise = new Promise((resolve, reject) => {
+    if (window.google?.accounts?.oauth2) { resolve(); return; }
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+    document.head.appendChild(script);
+  });
+  return gisLoadPromise;
+}
+
+function loadPickerLibrary(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (window.google?.picker) { resolve(); return; }
+    if (!window.gapi) { reject(new Error("GAPI not loaded")); return; }
+    window.gapi.load("picker", () => window.google?.picker ? resolve() : reject(new Error("Picker library failed to initialize")));
+  });
+}
