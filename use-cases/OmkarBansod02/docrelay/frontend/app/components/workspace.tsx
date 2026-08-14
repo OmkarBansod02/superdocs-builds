@@ -19,12 +19,17 @@ import {
 } from "../lib/api";
 import {
   NEW_DOCUMENT_EVENT,
+  OPEN_RECENT_DOCUMENT_EVENT,
   acceptInstruction,
   appendPendingInstruction,
   failInstruction,
+  peekQueuedRecentDocument,
+  setActiveDocumentId,
   startRunRequest,
+  takeQueuedRecentDocument,
   workbenchSource,
   workbenchStateLabel,
+  type RecentDocumentSelection,
   type UserInstructionTurn,
 } from "../lib/conversation";
 import { mapImportFailure, type SelectedDriveFile } from "../lib/import-state";
@@ -159,14 +164,6 @@ export function Workspace() {
     [setWorkspaceState, stopPolling],
   );
 
-  const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
-    setWorkspaceState((s) => (
-      s.stage === "source"
-        ? { ...s, connection: conn, loading: false }
-        : s
-    ));
-  }, [setWorkspaceState]);
-
   const handleCheckProviderStatus = useCallback(async () => {
     const current = stateRef.current;
     if (current.stage !== "processing") return;
@@ -206,6 +203,30 @@ export function Workspace() {
     },
     [setWorkspaceState],
   );
+
+  const openRecentFile = useCallback((file: RecentDocumentSelection | null, conn: GoogleConnection | null) => {
+    if (!file || !conn || conn.status !== "CONNECTED") return false;
+    const current = stateRef.current;
+    const openId = workbenchSource(current)?.source.provider_file_id
+      ?? (current.stage === "importing" ? current.selectedFile.fileId : null);
+    takeQueuedRecentDocument();
+    if (openId === file.fileId) return true;
+    beginImport(conn, {
+      fileId: file.fileId,
+      name: file.name,
+      mimeType: file.mimeType || "application/vnd.google-apps.document",
+    });
+    return true;
+  }, [beginImport]);
+
+  const handleConnectionChange = useCallback((conn: GoogleConnection | null) => {
+    setWorkspaceState((s) => (
+      s.stage === "source"
+        ? { ...s, connection: conn, loading: false }
+        : s
+    ));
+    openRecentFile(peekQueuedRecentDocument(), conn);
+  }, [openRecentFile, setWorkspaceState]);
 
   const handleSubmitInstruction = useCallback(
     async (instruction: string, turnId?: string) => {
@@ -369,6 +390,24 @@ export function Workspace() {
     return () => window.removeEventListener(NEW_DOCUMENT_EVENT, onNewDocument);
   }, [handleChangeSource]);
 
+  useEffect(() => {
+    const onOpen = (event: Event) => {
+      const file = (event as CustomEvent<RecentDocumentSelection>).detail
+        ?? peekQueuedRecentDocument();
+      const conn = "connection" in stateRef.current ? stateRef.current.connection : null;
+      openRecentFile(file, conn);
+    };
+    window.addEventListener(OPEN_RECENT_DOCUMENT_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_RECENT_DOCUMENT_EVENT, onOpen);
+  }, [openRecentFile]);
+
+  const sourced = workbenchSource(state);
+
+  useEffect(() => {
+    setActiveDocumentId(sourced?.source.provider_file_id ?? null);
+    return () => setActiveDocumentId(null);
+  }, [sourced?.source.provider_file_id]);
+
   const entryKey =
     state.stage === "importing"
       ? state.error
@@ -376,7 +415,6 @@ export function Workspace() {
         : "importing"
       : state.stage;
 
-  const sourced = workbenchSource(state);
   const submitting = state.stage === "edit" && state.submitting;
 
   return (

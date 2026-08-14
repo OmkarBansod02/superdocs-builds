@@ -4,33 +4,36 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* Quiet Precision — semantic tokens.
+/* Quiet Editorial — semantic tokens.
    Product classes (text-ink, text-muted, bg-accent, bg-surface) stay stable.
    shadcn primitives use primary / surface-muted / muted-foreground. */
 :root {
-  --background: #f5f6f5;
-  --foreground: #131715;
+  --background: #f8f7f4;
+  --foreground: #1c1b18;
+  --conversation: #f8f7f4;
+  --canvas: #f3f2ee;
   --surface: #ffffff;
   --surface-elevated: #ffffff;
-  --surface-muted: #eef0ef;
-  --border: #e3e6e4;
-  --border-light: #eef0ef;
-  --muted-text: #66706c;
-  --primary: #117a5c;
-  --primary-hover: #0e684e;
-  --primary-foreground: #f4fbf8;
-  --primary-soft: #e8f3ee;
-  --success: #117a5c;
-  --success-soft: #e8f3ee;
-  --warning: #b45309;
-  --warning-soft: #fef6eb;
-  --destructive: #b42318;
-  --destructive-soft: #fdeeee;
-  --info: #3d5a73;
-  --info-soft: #eef3f7;
-  --ring: #117a5c;
-  --radius: 0.5rem;
-  --shadow-subtle: 0 1px 2px rgb(15 20 18 / 0.04);
+  --surface-muted: #f1efe9;
+  --border: #e7e4dc;
+  --border-light: #efece6;
+  --muted-text: #736f68;
+  --primary: #2d6a4f;
+  --primary-hover: #245a42;
+  --primary-foreground: #f4faf6;
+  --primary-soft: #e7f0ea;
+  --success: #3d6b52;
+  --success-soft: #e7f0ea;
+  --warning: #9a6b2f;
+  --warning-soft: #f6efe4;
+  --destructive: #a0564e;
+  --destructive-soft: #f6ecea;
+  --info: #5e646c;
+  --info-soft: #eef0f1;
+  --ring: #2d6a4f;
+  --radius: 0.5625rem;
+  --shadow-subtle: 0 1px 2px rgb(28 27 24 / 0.04);
+  --shadow-document: 0 1px 2px rgb(28 27 24 / 0.04), 0 10px 28px rgb(28 27 24 / 0.05);
   --motion-duration: 180ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
@@ -43,15 +46,15 @@
   --muted-foreground: var(--muted-text);
   --input: var(--border);
 
-  --sidebar: #0b0d0c;
-  --sidebar-foreground: #e6e9e7;
-  --sidebar-primary: #3ccf98;
-  --sidebar-primary-foreground: #0b0d0c;
-  --sidebar-accent: #161a18;
-  --sidebar-accent-foreground: #f3f6f4;
-  --sidebar-border: rgb(255 255 255 / 0.07);
-  --sidebar-ring: #3ccf98;
-  --sidebar-muted: #8a928e;
+  --sidebar: #f4f2ee;
+  --sidebar-foreground: #1c1b18;
+  --sidebar-primary: #2d6a4f;
+  --sidebar-primary-foreground: #f4faf6;
+  --sidebar-accent: #ebe8e1;
+  --sidebar-accent-foreground: #1c1b18;
+  --sidebar-border: #e7e4dc;
+  --sidebar-ring: #2d6a4f;
+  --sidebar-muted: #736f68;
 }
 
 @theme inline {
@@ -62,6 +65,8 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-ink: var(--foreground);
+  --color-conversation: var(--conversation);
+  --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-surface-muted: var(--surface-muted);
@@ -112,10 +117,10 @@
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.2);
-  --radius-4xl: calc(var(--radius) * 2.6);
+  --radius-xl: calc(var(--radius) * 1.25);
+  --radius-2xl: calc(var(--radius) * 1.5);
+  --radius-3xl: calc(var(--radius) * 1.7);
+  --radius-4xl: calc(var(--radius) * 1.9);
 }
 
 @layer base {
@@ -141,8 +146,8 @@
 
   body {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.875rem;
-    line-height: 1.55;
+    font-size: 0.9375rem;
+    line-height: 1.6;
     overflow-x: hidden;
   }
 
@@ -164,7 +169,7 @@
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--primary) 18%, white);
+    background: color-mix(in srgb, var(--primary) 16%, white);
     color: var(--foreground);
   }
 }
@@ -172,10 +177,10 @@
 @layer components {
   .type-page-title {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 1.5rem;
-    line-height: 1.25;
+    font-size: 1.625rem;
+    line-height: 1.28;
     font-weight: 600;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.028em;
     color: var(--foreground);
   }
 
@@ -184,31 +189,32 @@
     font-size: 1.125rem;
     line-height: 1.35;
     font-weight: 600;
-    letter-spacing: -0.022em;
+    letter-spacing: -0.02em;
     color: var(--foreground);
   }
 
   .type-section-heading {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.8125rem;
+    font-size: 0.6875rem;
     line-height: 1.4;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--foreground);
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted-text);
   }
 
   .type-body {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.875rem;
-    line-height: 1.55;
+    font-size: 0.9375rem;
+    line-height: 1.6;
     font-weight: 400;
     color: var(--foreground);
   }
 
   .type-body-muted {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.875rem;
-    line-height: 1.55;
+    font-size: 0.9375rem;
+    line-height: 1.6;
     font-weight: 400;
     color: var(--muted-text);
   }
@@ -216,7 +222,7 @@
   .type-label {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
     font-size: 0.75rem;
-    line-height: 1.35;
+    line-height: 1.4;
     font-weight: 500;
     letter-spacing: -0.005em;
     color: var(--muted-text);
@@ -232,10 +238,10 @@
 
   .type-nav {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
-    font-size: 0.8125rem;
-    line-height: 1;
+    font-size: 0.84375rem;
+    line-height: 1.25;
     font-weight: 500;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.012em;
   }
 
   .type-caption {

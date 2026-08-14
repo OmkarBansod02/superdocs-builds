@@ -41,7 +41,7 @@ export function RunsWorkspace() {
     <section className="px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
       <div className="flex items-start justify-between gap-5">
         <div>
-          <h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Runs</h1>
+          <h1 className="type-page-title">Activity</h1>
           <p className="mt-2 text-[14px] text-muted">Manual and watched document operations, kept compact and independently actionable.</p>
         </div>
         <Button variant="secondary" onClick={() => void load()} disabled={loading} aria-label="Refresh runs"><RefreshCw className="size-4" />Refresh</Button>
@@ -72,5 +72,5 @@ export function RunsWorkspace() {
 }
 
 function RunsSkeleton() { return <div className="mt-8 space-y-3"><Skeleton className="h-11 w-full" />{[1,2,3,4].map((item) => <Skeleton key={item} className="h-16 w-full" />)}</div>; }
-function EmptyRuns() { return <div className="mt-16 text-center"><FileText className="mx-auto size-8 text-muted" /><h2 className="mt-4 text-[18px] font-semibold">No runs yet</h2><p className="mt-2 text-[14px] text-muted">Choose a document in Workspace or configure Watch to begin.</p></div>; }
+function EmptyRuns() { return <div className="mt-16 text-center"><FileText className="mx-auto size-8 text-muted" /><h2 className="mt-4 text-[18px] font-semibold">No activity yet</h2><p className="mt-2 text-[14px] text-muted">Choose a document in Workspace or configure Watch to begin.</p></div>; }
 function formatDateTime(value: string): string { return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)); }
