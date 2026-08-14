@@ -22,7 +22,9 @@ import {
   OPEN_RECENT_DOCUMENT_EVENT,
   acceptInstruction,
   appendPendingInstruction,
+  documentReviewMarks,
   failInstruction,
+  frozenPreviewBlocks,
   peekQueuedRecentDocument,
   setActiveDocumentId,
   startRunRequest,
@@ -44,6 +46,7 @@ import type { WorkspaceState } from "../lib/workspace-state";
 import { SourceChooser } from "./source-chooser";
 import { ImportingDocument } from "./importing-document";
 import { DocumentWorkbench } from "./document-workbench";
+import { extractText } from "./diff-view";
 import { MotionPanel } from "./motion-panel";
 import { ErrorState } from "./error-state";
 import {
@@ -417,6 +420,17 @@ export function Workspace() {
 
   const submitting = state.stage === "edit" && state.submitting;
 
+  const previewBlocks = frozenPreviewBlocks(sourced?.preview);
+  const reviewMarks = state.stage === "review"
+    ? documentReviewMarks(
+        previewBlocks,
+        state.proposals.map((proposal) => ({
+          oldText: extractText(proposal.old_html),
+          newText: extractText(proposal.new_html),
+        })),
+      )
+    : [];
+
   return (
     <div className="h-full min-h-0">
           {(state.stage === "source" || state.stage === "importing") ? (
@@ -452,6 +466,7 @@ export function Workspace() {
               onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
               onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
               onChangeSource={handleChangeSource}
+              reviewMarks={reviewMarks}
             >
               {state.stage === "processing" ? (
                 <ProcessingEvent
@@ -462,6 +477,7 @@ export function Workspace() {
               {state.stage === "review" ? (
                 <ReviewEvent
                   proposals={state.proposals}
+                  blocks={previewBlocks}
                   decisions={state.decisions}
                   submitting={state.submitting}
                   onDecide={handleDecide}
