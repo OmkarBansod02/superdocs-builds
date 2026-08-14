@@ -18,6 +18,20 @@ export interface ConnectionsResponse {
   connections: GoogleConnection[];
 }
 
+export type FrozenPreviewKind = "paragraph" | "heading";
+
+export interface FrozenPreviewBlock {
+  kind: FrozenPreviewKind;
+  named_style: string | null;
+  text: string;
+}
+
+export interface FrozenDocumentPreview {
+  available: boolean;
+  revision_id: string;
+  blocks: FrozenPreviewBlock[];
+}
+
 export interface SourceRegistration {
   source: {
     source_id: string;
@@ -33,6 +47,7 @@ export interface SourceRegistration {
     docx_sha256: string;
     docx_size_bytes: number;
   };
+  preview?: FrozenDocumentPreview;
 }
 
 export type WriteAuthorizationState = "REQUIRED" | "AUTHORIZED";

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -25,7 +25,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { cn } from "@/lib/utils";
 
 import { getAuthorizeUrl, getConnections, type GoogleConnection } from "../lib/api";
-import { ICON_STROKE, icons } from "../lib/icons";
+import { NEW_DOCUMENT_EVENT } from "../lib/conversation";
+import { ICON_STROKE, icons } from "@/lib/icons";
 
 const SIDEBAR_WIDTH = "220px";
 
@@ -37,6 +38,7 @@ const navigation = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [connection, setConnection] = useState<GoogleConnection | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -52,14 +54,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div
-      className="min-h-dvh overflow-x-hidden bg-background lg:grid"
+      className="h-dvh overflow-hidden bg-background lg:grid"
       style={{ gridTemplateColumns: `${SIDEBAR_WIDTH} minmax(0, 1fr)` }}
     >
-      <aside className="hidden min-h-dvh flex-col bg-sidebar text-sidebar-foreground lg:flex">
-        <SidebarChrome pathname={pathname} connection={connection} />
+      <aside className="hidden h-dvh min-h-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
+        <SidebarChrome pathname={pathname} connection={connection} onNewDocument={() => router.push("/")} />
       </aside>
 
-      <div className="flex min-w-0 flex-col">
+      <div className="flex h-full min-h-0 min-w-0 flex-col">
         <header className="flex h-12 items-center gap-3 border-b border-border bg-surface px-3 lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
@@ -83,6 +85,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 pathname={pathname}
                 connection={connection}
                 onNavigate={() => setMobileOpen(false)}
+                onNewDocument={() => {
+                  setMobileOpen(false);
+                  router.push("/");
+                }}
               />
             </SheetContent>
           </Sheet>
@@ -96,7 +102,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ConnectionIndicator connection={connection} />
         </header>
 
-        <main className="min-h-0 min-w-0 flex-1">{children}</main>
+        <main className="min-h-0 min-w-0 flex-1 overflow-y-auto">{children}</main>
       </div>
     </div>
   );
@@ -106,14 +112,17 @@ function SidebarChrome({
   pathname,
   connection,
   onNavigate,
+  onNewDocument,
 }: {
   pathname: string;
   connection: GoogleConnection | null;
   onNavigate?: () => void;
+  onNewDocument?: () => void;
 }) {
   return (
-    <div className="flex h-full min-h-dvh flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <Brand />
+      <NewDocumentButton pathname={pathname} onNavigate={onNavigate} onNewDocument={onNewDocument} />
       <ScrollArea className="min-h-0 flex-1">
         <PrimaryNavigation pathname={pathname} onNavigate={onNavigate} />
       </ScrollArea>
@@ -143,6 +152,36 @@ function Brand({ compact = false }: { compact?: boolean }) {
       >
         DocRelay
       </span>
+    </div>
+  );
+}
+
+function NewDocumentButton({
+  pathname,
+  onNavigate,
+  onNewDocument,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+  onNewDocument?: () => void;
+}) {
+  return (
+    <div className="px-2 pb-1">
+      <Button
+        type="button"
+        className="h-8 w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-primary-hover"
+        onClick={() => {
+          onNavigate?.();
+          if (pathname === "/") {
+            window.dispatchEvent(new Event(NEW_DOCUMENT_EVENT));
+            return;
+          }
+          onNewDocument?.();
+        }}
+      >
+        <icons.plus className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
+        New document
+      </Button>
     </div>
   );
 }

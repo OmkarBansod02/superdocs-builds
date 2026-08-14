@@ -23,6 +23,7 @@ from docrelay.integrations.google.services import (
 )
 from docrelay.persistence.database import Database
 from docrelay.persistence.models import CloudConnection
+from docrelay.services.document_preview import FrozenDocumentPreview, preview_from_canonical
 
 router = APIRouter(prefix="/api/v1/google", tags=["google"])
 
@@ -112,6 +113,7 @@ class GoogleBaselineResponse(SafeAPIModel):
 class RegisterGoogleSourceResponse(SafeAPIModel):
     source: GoogleSourceResponse
     baseline: GoogleBaselineResponse
+    preview: FrozenDocumentPreview
 
 
 def _connection_response(connection: CloudConnection) -> GoogleConnectionResponse:
@@ -294,5 +296,9 @@ def _registered_response(
             attempt_count=result.attempt_count,
             capture_started_at=result.capture_started_at,
             captured_at=result.captured_at,
+        ),
+        preview=preview_from_canonical(
+            result.canonical_payload,
+            revision_id=result.revision_id,
         ),
     )

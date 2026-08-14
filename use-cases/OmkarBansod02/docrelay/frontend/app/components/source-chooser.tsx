@@ -17,7 +17,7 @@ import {
   type RecentDocument,
   type SelectedDriveFile,
 } from "../lib/import-state";
-import { ICON_STROKE, icons } from "../lib/icons";
+import { ICON_STROKE, icons } from "@/lib/icons";
 import { Button } from "./ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";

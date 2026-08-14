@@ -17,6 +17,16 @@ import {
   decideWriteConflict,
   writeBackSafely,
 } from "../lib/api";
+import {
+  NEW_DOCUMENT_EVENT,
+  acceptInstruction,
+  appendPendingInstruction,
+  failInstruction,
+  startRunRequest,
+  workbenchSource,
+  workbenchStateLabel,
+  type UserInstructionTurn,
+} from "../lib/conversation";
 import { mapImportFailure, type SelectedDriveFile } from "../lib/import-state";
 import {
   buildReviewDecisionSubmission,
@@ -28,14 +38,17 @@ import type { WorkspaceState } from "../lib/workspace-state";
 
 import { SourceChooser } from "./source-chooser";
 import { ImportingDocument } from "./importing-document";
-import { InstructionComposer } from "./instruction-composer";
+import { DocumentWorkbench } from "./document-workbench";
 import { MotionPanel } from "./motion-panel";
-import { ProcessingState } from "./processing-state";
-import { ReviewPanel } from "./review-panel";
-import { DryRunSummary } from "./dry-run-summary";
-import { UnsupportedState } from "./unsupported-state";
 import { ErrorState } from "./error-state";
-import { WriteBackResult } from "./write-back-result";
+import {
+  ConversationErrorEvent,
+  DryRunEvent,
+  ProcessingEvent,
+  ReviewEvent,
+  UnsupportedEvent,
+  WriteResultEvent,
+} from "./conversation-events";
 
 const POLL_INTERVAL_MS = 4000;
 type WorkspaceStateUpdate = WorkspaceState | ((current: WorkspaceState) => WorkspaceState);
@@ -51,6 +64,9 @@ export function Workspace() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const writeInFlightRef = useRef(false);
   const importAbortRef = useRef<AbortController | null>(null);
+  const submitInFlightRef = useRef(false);
+  const [draft, setDraft] = useState("");
+  const [conversation, setConversation] = useState<UserInstructionTurn[]>([]);
 
   const setWorkspaceState = useCallback((update: WorkspaceStateUpdate): WorkspaceState => {
     const next = typeof update === "function" ? update(stateRef.current) : update;
@@ -192,31 +208,39 @@ export function Workspace() {
   );
 
   const handleSubmitInstruction = useCallback(
-    async (instruction: string) => {
-      let conn: GoogleConnection;
-      let source: SourceRegistration;
+    async (instruction: string, turnId?: string) => {
+      const current = stateRef.current;
+      if (current.stage !== "edit" || submitInFlightRef.current) return;
+      const conn = current.connection;
+      const source = current.source;
+      const text = instruction.trim();
+      if (!text) return;
 
-      setWorkspaceState((s) => {
-        if (s.stage !== "edit") return s;
-        conn = s.connection;
-        source = s.source;
-        return { ...s, submitting: true };
+      submitInFlightRef.current = true;
+      const id = turnId ?? `local-${Date.now()}`;
+      setConversation((turns) => {
+        if (turnId) {
+          return turns.map((turn) => (
+            turn.id === turnId
+              ? { ...turn, text, status: "pending", error: undefined }
+              : turn
+          ));
+        }
+        return appendPendingInstruction(turns, text, id);
       });
+      setWorkspaceState((s) => (s.stage === "edit" ? { ...s, submitting: true } : s));
 
       try {
-        const run = await startRun({
-          source_id: source!.source.source_id,
-          baseline_capture_id: source!.baseline.capture_id,
-          instruction,
-        });
-        await processRun(conn!, source!, run);
+        const run = await startRun(startRunRequest(source, text));
+        setConversation((turns) => acceptInstruction(turns, id));
+        setDraft("");
+        await processRun(conn, source, run);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "Failed to start edit";
-        setWorkspaceState((s) => {
-          const c = s.stage !== "source" ? (s as { connection: GoogleConnection }).connection : null;
-          const sr = "source" in s ? (s as { source: SourceRegistration }).source : null;
-          return { stage: "error", connection: c, source: sr, run: null, message: msg, recoverable: true };
-        });
+        const msg = err instanceof Error ? err.message : "The instruction was not sent.";
+        setConversation((turns) => failInstruction(turns, id, msg));
+        setWorkspaceState((s) => (s.stage === "edit" ? { ...s, submitting: false } : s));
+      } finally {
+        submitInFlightRef.current = false;
       }
     },
     [processRun, setWorkspaceState],
@@ -262,12 +286,18 @@ export function Workspace() {
   const handleReset = useCallback(() => {
     stopPolling();
     importAbortRef.current?.abort();
+    submitInFlightRef.current = false;
+    setDraft("");
+    setConversation([]);
     setWorkspaceState({ stage: "source", connection: null, loading: true });
   }, [setWorkspaceState, stopPolling]);
 
   const handleChangeSource = useCallback(() => {
     stopPolling();
     importAbortRef.current?.abort();
+    submitInFlightRef.current = false;
+    setDraft("");
+    setConversation([]);
     setWorkspaceState((s) => {
       const conn = "connection" in s ? (s as { connection: GoogleConnection | null }).connection : null;
       return { stage: "source", connection: conn, loading: false };
@@ -333,6 +363,12 @@ export function Workspace() {
     }
   }, [setWorkspaceState]);
 
+  useEffect(() => {
+    const onNewDocument = () => handleChangeSource();
+    window.addEventListener(NEW_DOCUMENT_EVENT, onNewDocument);
+    return () => window.removeEventListener(NEW_DOCUMENT_EVENT, onNewDocument);
+  }, [handleChangeSource]);
+
   const entryKey =
     state.stage === "importing"
       ? state.error
@@ -340,9 +376,12 @@ export function Workspace() {
         : "importing"
       : state.stage;
 
+  const sourced = workbenchSource(state);
+  const submitting = state.stage === "edit" && state.submitting;
+
   return (
-    <div>
-          {(state.stage === "source" || state.stage === "importing" || state.stage === "edit") ? (
+    <div className={sourced ? "h-full min-h-0" : undefined}>
+          {(state.stage === "source" || state.stage === "importing") ? (
             <MotionPanel key={entryKey}>
               {state.stage === "source" ? (
                 <SourceChooser
@@ -360,79 +399,88 @@ export function Workspace() {
                   onChooseAnother={handleChangeSource}
                 />
               ) : null}
-              {state.stage === "edit" ? (
-                <InstructionComposer
-                  source={state.source}
-                  submitting={state.submitting}
-                  onSubmit={handleSubmitInstruction}
-                  onChangeSource={handleChangeSource}
-                />
-              ) : null}
             </MotionPanel>
           ) : null}
 
-          {state.stage === "processing" && (
-            <ProcessingState source={state.source} run={state.run} onCheckStatus={handleCheckProviderStatus} />
-          )}
+          {sourced ? (
+            <DocumentWorkbench
+              source={sourced}
+              turns={conversation}
+              draft={draft}
+              busy={submitting}
+              composerEnabled={state.stage === "edit"}
+              stateLabel={workbenchStateLabel(state)}
+              onDraftChange={setDraft}
+              onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
+              onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
+              onChangeSource={handleChangeSource}
+            >
+              {state.stage === "processing" ? (
+                <ProcessingEvent
+                  run={state.run}
+                  onCheckStatus={handleCheckProviderStatus}
+                />
+              ) : null}
+              {state.stage === "review" ? (
+                <ReviewEvent
+                  proposals={state.proposals}
+                  decisions={state.decisions}
+                  submitting={state.submitting}
+                  onDecide={handleDecide}
+                  onSubmitAll={handleSubmitDecisions}
+                />
+              ) : null}
+              {state.stage === "dry-run" ? (
+                <DryRunEvent
+                  dryRun={state.dryRun}
+                  writing={state.writing}
+                  onWrite={() => handleWriteBack(
+                    state.connection,
+                    state.source,
+                    state.run,
+                    state.dryRun,
+                  )}
+                />
+              ) : null}
+              {state.stage === "write-result" ? (
+                <WriteResultEvent
+                  fileId={state.source.source.provider_file_id}
+                  result={state.result}
+                  deciding={state.deciding}
+                  onDecision={(choice) => handleConflictDecision(
+                    state.connection,
+                    state.source,
+                    state.run,
+                    choice,
+                  )}
+                  onStartAnother={handleReset}
+                />
+              ) : null}
+              {state.stage === "unsupported" ? (
+                <UnsupportedEvent
+                  dryRun={state.dryRun}
+                  onReturn={state.dryRun.reason_code === "MALFORMED_SNAPSHOT"
+                    ? handleChangeSource
+                    : handleReturnFromUnsupported}
+                />
+              ) : null}
+              {state.stage === "error" ? (
+                <ConversationErrorEvent
+                  message={state.message}
+                  recoverable={state.recoverable}
+                  onRetry={handleReset}
+                />
+              ) : null}
+            </DocumentWorkbench>
+          ) : null}
 
-          {state.stage === "review" && (
-            <ReviewPanel
-              source={state.source}
-              proposals={state.proposals}
-              decisions={state.decisions}
-              submitting={state.submitting}
-              onDecide={handleDecide}
-              onSubmitAll={handleSubmitDecisions}
-            />
-          )}
-
-          {state.stage === "dry-run" && (
-            <DryRunSummary
-              source={state.source}
-              dryRun={state.dryRun}
-              writing={state.writing}
-              onWrite={() => handleWriteBack(
-                state.connection,
-                state.source,
-                state.run,
-                state.dryRun,
-              )}
-            />
-          )}
-
-          {state.stage === "write-result" && (
-            <WriteBackResult
-              source={state.source}
-              dryRun={state.dryRun}
-              result={state.result}
-              deciding={state.deciding}
-              onDecision={(choice) => handleConflictDecision(
-                state.connection,
-                state.source,
-                state.run,
-                choice,
-              )}
-              onStartAnother={handleReset}
-            />
-          )}
-
-          {state.stage === "unsupported" && (
-            <UnsupportedState
-              source={state.source}
-              dryRun={state.dryRun}
-              onReturn={state.dryRun.reason_code === "MALFORMED_SNAPSHOT"
-                ? handleChangeSource
-                : handleReturnFromUnsupported}
-            />
-          )}
-
-          {state.stage === "error" && (
+          {state.stage === "error" && !sourced ? (
             <ErrorState
               message={state.message}
               recoverable={state.recoverable}
               onRetry={handleReset}
             />
-          )}
+          ) : null}
     </div>
   );
 }

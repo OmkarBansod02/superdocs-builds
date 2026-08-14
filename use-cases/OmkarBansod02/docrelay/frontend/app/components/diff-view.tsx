@@ -63,7 +63,7 @@ export function contextRange(text: string | null, exactText: string | null, span
   return { start, end };
 }
 
-function changedSegments(oldText: string, newText: string): { oldChanged: string; newChanged: string } {
+export function changedSegments(oldText: string, newText: string): { oldChanged: string; newChanged: string } {
   let prefix = 0;
   const maxPrefix = Math.min(oldText.length, newText.length);
   while (prefix < maxPrefix && oldText[prefix] === newText[prefix]) prefix += 1;
