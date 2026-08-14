@@ -60,6 +60,7 @@ export type WorkspaceState =
       dryRun: DryRunView;
       result: WriteBackView;
       deciding: boolean;
+      startingNext: boolean;
     }
   | {
       stage: "error";

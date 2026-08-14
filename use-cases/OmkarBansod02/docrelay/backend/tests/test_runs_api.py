@@ -62,6 +62,8 @@ async def test_phase6_routes_accept_no_browser_provider_operations() -> None:
 
     write_path = openapi["paths"]["/api/v1/runs/{run_id}/write-back"]["post"]
     assert "requestBody" not in write_path
+    write_schema = openapi["components"]["schemas"]["WriteBackView"]
+    assert "verified_preview" in write_schema["properties"]
     assert "/api/v1/runs/{run_id}/conflict-decision" in openapi["paths"]
     assert write.status_code == 503
     serialized = write.text.lower()

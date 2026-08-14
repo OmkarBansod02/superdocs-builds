@@ -69,6 +69,10 @@ from docrelay.persistence.models import (
     WritePlanLineage,
 )
 from docrelay.services.artifacts import ArtifactStore, ArtifactStoreError
+from docrelay.services.document_preview import (
+    FrozenDocumentPreview,
+    preview_from_canonical,
+)
 from docrelay.services.superdocs_workflow import RunNotFound
 
 EFFECT_LEASE = timedelta(minutes=15)
@@ -135,6 +139,7 @@ class WriteBackView(_WriteBackModel):
     structurally_verified: bool
     baseline_revision_id: str
     resulting_revision_id: str | None
+    verified_preview: FrozenDocumentPreview | None
     attention_code: str | None
     conflict: ConflictView | None
 
@@ -1366,7 +1371,25 @@ class WriteBackService:
             BackupStatus.VERIFIED,
         }
         backup_verified = backup is not None and backup.status is BackupStatus.VERIFIED
-        write_applied = write_effect is not None and write_effect.outcome is EffectOutcome.SUCCEEDED
+        write_applied = (
+            write_effect is not None and write_effect.outcome is EffectOutcome.SUCCEEDED
+        )
+        verified_preview = None
+        if (
+            verification is not None
+            and verification.status is VerificationStatus.PASSED
+            and verification.actual_revision_id
+        ):
+            baseline_payload = await self._baseline_payload_in_session(
+                session, context.snapshot_id
+            )
+            expected_payload = _apply_provider_operation(
+                baseline_payload, context.plan.payload.provider_operations[0]
+            )
+            verified_preview = preview_from_canonical(
+                expected_payload,
+                revision_id=verification.actual_revision_id,
+            )
         return WriteBackView(
             run_id=context.run_id,
             status=status,
@@ -1381,6 +1404,7 @@ class WriteBackService:
             ),
             baseline_revision_id=context.plan.payload.source.baseline_revision_id,
             resulting_revision_id=run.resulting_revision_id,
+            verified_preview=verified_preview,
             attention_code=run.failure_code,
             conflict=(
                 ConflictView(

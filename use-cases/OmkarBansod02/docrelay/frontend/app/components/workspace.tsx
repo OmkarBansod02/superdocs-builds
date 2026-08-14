@@ -26,6 +26,7 @@ import {
   failInstruction,
   frozenPreviewBlocks,
   peekQueuedRecentDocument,
+  recordVerifiedWrite,
   setActiveDocumentId,
   startRunRequest,
   takeQueuedRecentDocument,
@@ -40,7 +41,7 @@ import {
   routeRun,
   runNeedsPolling,
 } from "../lib/workspace-state";
-import { canWriteBack } from "../lib/write-back-state";
+import { canWriteBack, isVerifiedWriteSuccess } from "../lib/write-back-state";
 import type { WorkspaceState } from "../lib/workspace-state";
 
 import { SourceChooser } from "./source-chooser";
@@ -234,7 +235,12 @@ export function Workspace() {
   const handleSubmitInstruction = useCallback(
     async (instruction: string, turnId?: string) => {
       const current = stateRef.current;
-      if (current.stage !== "edit" || submitInFlightRef.current) return;
+      const verifiedResult = current.stage === "write-result"
+        && isVerifiedWriteSuccess(
+          current.result.status,
+          current.result.structurally_verified,
+        );
+      if ((current.stage !== "edit" && !verifiedResult) || submitInFlightRef.current) return;
       const conn = current.connection;
       const source = current.source;
       const text = instruction.trim();
@@ -252,17 +258,42 @@ export function Workspace() {
         }
         return appendPendingInstruction(turns, text, id);
       });
-      setWorkspaceState((s) => (s.stage === "edit" ? { ...s, submitting: true } : s));
+      setWorkspaceState((s) => {
+        if (s.stage === "edit") return { ...s, submitting: true };
+        if (
+          s.stage === "write-result"
+          && isVerifiedWriteSuccess(s.result.status, s.result.structurally_verified)
+        ) {
+          return { ...s, startingNext: true };
+        }
+        return s;
+      });
 
       try {
-        const run = await startRun(startRunRequest(source, text));
-        setConversation((turns) => acceptInstruction(turns, id));
+        // Every instruction receives a new provider capture. start_run then
+        // recaptures once more and rejects if Google changed in between.
+        const runSource = await registerSource(
+          conn.connection_id,
+          source.source.provider_file_id,
+        );
+        setWorkspaceState({
+          stage: "edit",
+          connection: conn,
+          source: runSource,
+          submitting: true,
+        });
+        const run = await startRun(startRunRequest(runSource, text));
+        setConversation((turns) => acceptInstruction(turns, id, run.run_id));
         setDraft("");
-        await processRun(conn, source, run);
+        await processRun(conn, runSource, run);
       } catch (err) {
         const msg = err instanceof Error ? err.message : "The instruction was not sent.";
         setConversation((turns) => failInstruction(turns, id, msg));
-        setWorkspaceState((s) => (s.stage === "edit" ? { ...s, submitting: false } : s));
+        setWorkspaceState((s) => {
+          if (s.stage === "edit") return { ...s, submitting: false };
+          if (s.stage === "write-result") return { ...s, startingNext: false };
+          return s;
+        });
       } finally {
         submitInFlightRef.current = false;
       }
@@ -346,7 +377,17 @@ export function Workspace() {
     setWorkspaceState({ stage: "dry-run", connection: conn, source, run, dryRun, writing: true });
     try {
       const result = await writeBackSafely(run.run_id);
-      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun, result, deciding: false });
+      if (isVerifiedWriteSuccess(result.status, result.structurally_verified)) {
+        setConversation((turns) => recordVerifiedWrite(turns, {
+          runId: run.run_id,
+          fileId: source.source.provider_file_id,
+          backupCreated: result.backup_created,
+          backupVerified: result.backup_verified,
+          writeApplied: result.write_applied,
+          structurallyVerified: true,
+        }));
+      }
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun, result, deciding: false, startingNext: false });
     } catch (err) {
       setWorkspaceState({
         stage: "error",
@@ -374,7 +415,7 @@ export function Workspace() {
       : current);
     try {
       const result = await decideWriteConflict(run.run_id, choice);
-      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun: current.dryRun, result, deciding: false });
+      setWorkspaceState({ stage: "write-result", connection: conn, source, run, dryRun: current.dryRun, result, deciding: false, startingNext: false });
     } catch (err) {
       setWorkspaceState({
         stage: "error",
@@ -418,7 +459,10 @@ export function Workspace() {
         : "importing"
       : state.stage;
 
-  const submitting = state.stage === "edit" && state.submitting;
+  const verifiedWrite = state.stage === "write-result"
+    && isVerifiedWriteSuccess(state.result.status, state.result.structurally_verified);
+  const submitting = (state.stage === "edit" && state.submitting)
+    || (state.stage === "write-result" && state.startingNext);
 
   const previewBlocks = frozenPreviewBlocks(sourced?.preview);
   const reviewMarks = state.stage === "review"
@@ -460,13 +504,21 @@ export function Workspace() {
               turns={conversation}
               draft={draft}
               busy={submitting}
-              composerEnabled={state.stage === "edit"}
+              composerEnabled={state.stage === "edit" || verifiedWrite}
               stateLabel={workbenchStateLabel(state)}
               onDraftChange={setDraft}
               onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
               onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
               onChangeSource={handleChangeSource}
               reviewMarks={reviewMarks}
+              documentPreview={verifiedWrite
+                ? state.result.verified_preview ?? undefined
+                : undefined}
+              documentRevision={verifiedWrite
+                ? state.result.verified_preview?.revision_id
+                  ?? state.result.resulting_revision_id
+                  ?? undefined
+                : undefined}
             >
               {state.stage === "processing" ? (
                 <ProcessingEvent
@@ -496,7 +548,7 @@ export function Workspace() {
                   )}
                 />
               ) : null}
-              {state.stage === "write-result" ? (
+              {state.stage === "write-result" && !verifiedWrite ? (
                 <WriteResultEvent
                   fileId={state.source.source.provider_file_id}
                   result={state.result}
@@ -507,7 +559,6 @@ export function Workspace() {
                     state.run,
                     choice,
                   )}
-                  onStartAnother={handleReset}
                 />
               ) : null}
               {state.stage === "unsupported" ? (

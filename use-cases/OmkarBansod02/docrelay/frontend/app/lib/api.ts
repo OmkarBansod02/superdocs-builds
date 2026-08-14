@@ -349,6 +349,7 @@ export interface WriteBackView {
   structurally_verified: boolean;
   baseline_revision_id: string;
   resulting_revision_id: string | null;
+  verified_preview?: FrozenDocumentPreview | null;
   attention_code: string | null;
   conflict: WriteConflictView | null;
   preview?: WriteBackRunSummary["preview"];

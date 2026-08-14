@@ -755,6 +755,7 @@ async def test_stale_revision_before_backup_is_conflict_with_zero_mutations() ->
 
         assert result.status is WriteBackStatus.CONFLICT
         assert result.conflict is not None
+        assert result.verified_preview is None
         assert result.conflict.detection_stage == "BEFORE_BACKUP"
         assert provider.copy_calls == provider.commit_calls == 0
 
@@ -779,6 +780,15 @@ async def test_fresh_live_omitted_zero_section_break_passes_writeback_eligibilit
         }
         assert expected["tabs"][0]["body"][0]["startIndex"] is None
         assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert result.verified_preview is not None
+        assert result.verified_preview.revision_id == "revision-B"
+        preview_text = [block.text for block in result.verified_preview.blocks]
+        assert preview_text == [
+            "Vendor Agreement",
+            "Payment Terms",
+            "Payment is due within 35 days.",
+            "Support",
+        ]
         assert provider.copy_calls == provider.commit_calls == 1
         async with sessions() as session:
             plan = await session.scalar(select(WritePlan).where(WritePlan.sync_run_id == run_id))
@@ -1002,6 +1012,10 @@ async def test_watched_run_requires_exact_file_authorization_then_reuses_phase6(
         result = await service.execute(run_id)
 
         assert result.status is WriteBackStatus.WRITE_VERIFIED
+        assert result.verified_preview is not None
+        preview_text = [block.text for block in result.verified_preview.blocks]
+        assert "Payment is due within 14 calendar days." in preview_text
+        assert "Trailing content stays exact." in preview_text
         assert provider.copy_calls == provider.commit_calls == 1
 
 
