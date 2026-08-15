@@ -76,6 +76,81 @@ type ReopenThreadState = {
   canContinue: boolean;
 };
 
+const CONFIRMED_NO_WRITE_RUN_STATES = new Set<RunView["state"]>([
+  "UNSUPPORTED",
+  "SKIPPED",
+  "EXPIRED",
+  "FAILED",
+  "CANCELLED",
+]);
+
+function hasUncertainOutcomeCode(code: string | null): boolean {
+  return code?.includes("UNKNOWN") === true || code?.includes("UNAVAILABLE") === true;
+}
+
+function runHasConfirmedNoWriteOutcome(run: RunView): boolean {
+  return CONFIRMED_NO_WRITE_RUN_STATES.has(run.state)
+    && run.write_back === null
+    && !run.provider_read_error
+    && !hasUncertainOutcomeCode(run.attention_code);
+}
+
+function writeResultHasConfirmedNoWriteOutcome(
+  result: Extract<WorkspaceState, { stage: "write-result" }>["result"],
+): boolean {
+  return (result.status === "FAILED" || result.status === "CANCELLED")
+    && !result.backup_created
+    && !result.backup_verified
+    && !result.write_applied
+    && result.resulting_revision_id === null
+    && result.conflict === null
+    && !hasUncertainOutcomeCode(result.attention_code);
+}
+
+function hasConfirmedNoWriteWorkspaceOutcome(state: WorkspaceState): boolean {
+  if (state.stage === "unsupported") {
+    return state.dryRun.status !== "READY" && !state.dryRun.cloud_mutation_performed;
+  }
+  if (state.stage === "write-result") {
+    return writeResultHasConfirmedNoWriteOutcome(state.result);
+  }
+  return state.stage === "error"
+    && state.run !== null
+    && runHasConfirmedNoWriteOutcome(state.run);
+}
+
+function continuationContext(state: WorkspaceState): {
+  connection: GoogleConnection;
+  source: SourceRegistration;
+} | null {
+  if (state.stage === "edit") return state;
+  if (
+    state.stage === "write-result"
+    && (
+      isVerifiedWriteSuccess(state.result.status, state.result.structurally_verified)
+      || writeResultHasConfirmedNoWriteOutcome(state.result)
+    )
+  ) {
+    return state;
+  }
+  if (
+    state.stage === "unsupported"
+    && state.dryRun.status !== "READY"
+    && !state.dryRun.cloud_mutation_performed
+  ) {
+    return state;
+  }
+  if (state.stage === "error") {
+    return state.run !== null
+      && runHasConfirmedNoWriteOutcome(state.run)
+      && state.connection
+      && state.source
+      ? { connection: state.connection, source: state.source }
+      : null;
+  }
+  return null;
+}
+
 export function Workspace() {
   const stateRef = useRef<WorkspaceState>({
     stage: "source",
@@ -92,6 +167,12 @@ export function Workspace() {
   const [draft, setDraft] = useState("");
   const [conversation, setConversation] = useState<UserInstructionTurn[]>([]);
   const [reopenThread, setReopenThread] = useState<ReopenThreadState | null>(null);
+
+  const markThreadContinuable = useCallback((providerFileId: string) => {
+    setReopenThread((thread) => thread?.file.fileId === providerFileId
+      ? { ...thread, canContinue: true, activeRunLoading: false }
+      : thread);
+  }, []);
 
   const setWorkspaceState = useCallback((update: WorkspaceStateUpdate): WorkspaceState => {
     const next = typeof update === "function" ? update(stateRef.current) : update;
@@ -124,6 +205,7 @@ export function Workspace() {
             setWorkspaceState({ stage: "dry-run", connection: conn, source, run, dryRun: dryRunResult, writing: false });
           } else {
             setWorkspaceState({ stage: "unsupported", connection: conn, source, run, dryRun: dryRunResult });
+            markThreadContinuable(source.source.provider_file_id);
           }
         } catch (err) {
           setWorkspaceState({
@@ -139,6 +221,9 @@ export function Workspace() {
       }
 
       setWorkspaceState(result);
+      if (hasConfirmedNoWriteWorkspaceOutcome(result)) {
+        markThreadContinuable(source.source.provider_file_id);
+      }
 
       if (result.stage === "processing" && runNeedsPolling(run.state) && !run.provider_read_error) {
         const poll = setInterval(async () => {
@@ -155,6 +240,7 @@ export function Workspace() {
                   setWorkspaceState({ stage: "dry-run", connection: conn, source, run: updated, dryRun: dryRunResult, writing: false });
                 } else {
                   setWorkspaceState({ stage: "unsupported", connection: conn, source, run: updated, dryRun: dryRunResult });
+                  markThreadContinuable(source.source.provider_file_id);
                 }
               } catch (err) {
                 setWorkspaceState({
@@ -181,7 +267,7 @@ export function Workspace() {
         pollRef.current = poll;
       }
     },
-    [setWorkspaceState, stopPolling],
+    [markThreadContinuable, setWorkspaceState, stopPolling],
   );
 
   const handleCheckProviderStatus = useCallback(async () => {
@@ -348,14 +434,9 @@ export function Workspace() {
   const handleSubmitInstruction = useCallback(
     async (instruction: string, turnId?: string) => {
       const current = stateRef.current;
-      const verifiedResult = current.stage === "write-result"
-        && isVerifiedWriteSuccess(
-          current.result.status,
-          current.result.structurally_verified,
-        );
-      if ((current.stage !== "edit" && !verifiedResult) || submitInFlightRef.current) return;
-      const conn = current.connection;
-      const source = current.source;
+      const context = continuationContext(current);
+      if (!context || submitInFlightRef.current) return;
+      const { connection: conn, source } = context;
       const text = instruction.trim();
       if (!text) return;
 
@@ -373,11 +454,17 @@ export function Workspace() {
       });
       setWorkspaceState((s) => {
         if (s.stage === "edit") return { ...s, submitting: true };
-        if (
-          s.stage === "write-result"
-          && isVerifiedWriteSuccess(s.result.status, s.result.structurally_verified)
-        ) {
+        if (s.stage === "write-result" && continuationContext(s)) {
           return { ...s, startingNext: true };
+        }
+        const next = continuationContext(s);
+        if (next) {
+          return {
+            stage: "edit",
+            connection: next.connection,
+            source: next.source,
+            submitting: true,
+          };
         }
         return s;
       });
@@ -580,6 +667,8 @@ export function Workspace() {
 
   const verifiedWrite = state.stage === "write-result"
     && isVerifiedWriteSuccess(state.result.status, state.result.structurally_verified);
+  const confirmedNoWrite = hasConfirmedNoWriteWorkspaceOutcome(state);
+  const composerCanContinue = continuationContext(state) !== null;
   const submitting = (state.stage === "edit" && state.submitting)
     || (state.stage === "write-result" && state.startingNext);
   const matchingThread = reopenThread?.file.fileId === sourced?.source.provider_file_id
@@ -588,7 +677,11 @@ export function Workspace() {
   const threadBusy = Boolean(matchingThread?.historyLoading || matchingThread?.activeRunLoading);
   const threadBlocked = Boolean(
     matchingThread
-    && (threadBusy || matchingThread.historyError || !matchingThread.canContinue),
+    && (
+      threadBusy
+      || matchingThread.historyError
+      || (!matchingThread.canContinue && !confirmedNoWrite)
+    ),
   );
   const retryReopen = () => {
     if (!reopenThread) return;
@@ -644,7 +737,7 @@ export function Workspace() {
               turns={conversation}
               draft={draft}
               busy={submitting || threadBusy}
-              composerEnabled={(state.stage === "edit" || verifiedWrite) && !threadBlocked}
+              composerEnabled={composerCanContinue && !threadBlocked}
               stateLabel={matchingThread?.historyError
                 ? "Needs attention"
                 : threadBusy
