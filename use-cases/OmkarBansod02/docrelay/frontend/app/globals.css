@@ -8,34 +8,34 @@
    Product classes (text-ink, text-muted, bg-accent, bg-surface) stay stable.
    shadcn primitives use primary / surface-muted / muted-foreground. */
 :root {
-  --background: #fbfaf7;
-  --foreground: #1a1917;
-  --conversation: #fdfcfa;
-  --canvas: #f4f2ed;
-  --surface: #ffffff;
-  --surface-elevated: #ffffff;
-  --surface-muted: #f2f0ea;
-  --border: #e6e3da;
-  --border-light: #efece5;
-  --muted-text: #6f6b63;
+  --background: #f7f4ee;
+  --foreground: #1d1b18;
+  --conversation: #faf8f3;
+  --canvas: #f0ece5;
+  --surface: #fffdf9;
+  --surface-elevated: #fffefb;
+  --surface-muted: #f1ede5;
+  --border: #ded9cf;
+  --border-light: #e9e4da;
+  --muted-text: #706a61;
   --primary: #2d6a4f;
   --primary-hover: #255943;
-  --primary-foreground: #f6fbf8;
-  --primary-soft: #e8f0ea;
+  --primary-foreground: #f7fbf8;
+  --primary-soft: #e5ede5;
   --success: #3d6b52;
-  --success-soft: #e8f0ea;
+  --success-soft: #e5ede5;
   --warning: #8f6530;
-  --warning-soft: #f7f1e6;
+  --warning-soft: #f4eddf;
   --destructive: #9c554d;
-  --destructive-soft: #f7edeb;
+  --destructive-soft: #f5e9e5;
   --info: #5e646c;
-  --info-soft: #eef0f1;
+  --info-soft: #ecedeb;
   --ring: #2d6a4f;
   --radius: 0.5625rem;
-  --shadow-subtle: 0 1px 2px rgb(26 25 23 / 0.04);
-  --shadow-raised: 0 1px 2px rgb(26 25 23 / 0.05), 0 2px 6px rgb(26 25 23 / 0.04);
-  --shadow-overlay: 0 1px 2px rgb(26 25 23 / 0.06), 0 8px 24px -6px rgb(26 25 23 / 0.12);
-  --shadow-document: 0 1px 2px rgb(26 25 23 / 0.04), 0 10px 28px rgb(26 25 23 / 0.05);
+  --shadow-subtle: 0 1px 2px rgb(29 27 24 / 0.05);
+  --shadow-raised: 0 1px 2px rgb(29 27 24 / 0.06), 0 2px 6px rgb(29 27 24 / 0.04);
+  --shadow-overlay: 0 1px 2px rgb(29 27 24 / 0.07), 0 8px 24px -6px rgb(29 27 24 / 0.14);
+  --shadow-document: 0 1px 2px rgb(29 27 24 / 0.05), 0 10px 28px rgb(29 27 24 / 0.06);
   --motion-duration: 160ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
@@ -48,15 +48,15 @@
   --muted-foreground: var(--muted-text);
   --input: var(--border);
 
-  --sidebar: #f3f1ec;
-  --sidebar-foreground: #1a1917;
+  --sidebar: #f1eee8;
+  --sidebar-foreground: #1d1b18;
   --sidebar-primary: #2d6a4f;
-  --sidebar-primary-foreground: #f6fbf8;
-  --sidebar-accent: #e9e6de;
-  --sidebar-accent-foreground: #1a1917;
-  --sidebar-border: #e4e0d7;
+  --sidebar-primary-foreground: #f7fbf8;
+  --sidebar-accent: #e5e0d6;
+  --sidebar-accent-foreground: #1d1b18;
+  --sidebar-border: #ded9cf;
   --sidebar-ring: #2d6a4f;
-  --sidebar-muted: #6f6b63;
+  --sidebar-muted: #706a61;
 }
 
 @theme inline {

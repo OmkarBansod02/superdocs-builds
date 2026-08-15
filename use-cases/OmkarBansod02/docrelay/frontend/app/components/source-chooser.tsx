@@ -201,7 +201,7 @@ export function SourceChooser({
             </p>
           </div>
 
-          <div className="mt-8 flex w-full max-w-[468px] flex-col gap-3">
+          <div className="mt-8 flex w-full max-w-[496px] flex-col gap-3">
             {apiUnavailable ? (
               <InlineStatus
                 title="DocRelay API is unavailable"
@@ -225,7 +225,7 @@ export function SourceChooser({
               <InlineStatus title="Could not open Google Drive" description={error} />
             ) : null}
 
-            <div className="w-full rounded-[11px] border border-border bg-surface p-6 shadow-[var(--shadow-subtle)]">
+            <div className="w-full rounded-[11px] border border-border bg-surface px-7 py-7 shadow-[var(--shadow-subtle)]">
               {loading ? (
                 <SelectorSkeleton />
               ) : (
@@ -261,7 +261,7 @@ export function SourceChooser({
             </div>
           </div>
 
-          <p className="type-caption mt-6 max-w-[468px]">
+          <p className="type-caption mt-6 max-w-[496px]">
             Every change is reviewed before write-back.
           </p>
         </div>
@@ -283,16 +283,16 @@ function InlineStatus({
   return (
     <div
       role="status"
-      className="flex w-full items-start gap-2.5 rounded-[9px] border border-border bg-surface px-3.5 py-3"
+      className="flex w-full items-start gap-2.5 rounded-[9px] border border-border-light bg-transparent px-3.5 py-3"
     >
       <icons.warning
-        className="mt-px size-4 shrink-0 text-warning"
+        className="mt-px size-4 shrink-0 text-muted"
         strokeWidth={ICON_STROKE}
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
-        <p className="text-[13.5px] font-medium text-foreground">{title}</p>
-        <p className="mt-0.5 text-[13px] leading-[1.5] text-muted">{description}</p>
+        <p className="text-[13px] font-medium text-foreground">{title}</p>
+        <p className="mt-0.5 text-[12.5px] leading-[1.5] text-muted">{description}</p>
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>
