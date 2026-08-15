@@ -143,7 +143,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         />
       </aside>
 
-      <div className="flex h-full min-h-0 min-w-0 flex-col bg-conversation">
+      <div className="flex h-full min-h-0 min-w-0 flex-col bg-background">
         <header className="flex h-11 items-center gap-3 px-3 lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
@@ -210,8 +210,8 @@ function SidebarChrome({
     <div className="flex h-full min-h-0 flex-col">
       <Brand />
       <NewDocumentButton pathname={pathname} onNavigate={onNavigate} onNewDocument={onNewDocument} />
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-6 px-3 pt-4 pb-3">
+      <ScrollArea className="scrollbar-inset min-h-0 flex-1">
+        <div className="flex flex-col gap-[22px] px-2.5 pt-5 pb-3">
           <PrimaryNavigation pathname={pathname} onNavigate={onNavigate} />
           <RecentDocuments
             documents={recent}
@@ -231,7 +231,7 @@ function SidebarChrome({
 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
-    <div className={cn("flex items-center gap-2", compact ? "" : "h-14 shrink-0 px-4")}>
+    <div className={cn("flex items-center gap-2.5", compact ? "" : "h-14 shrink-0 px-5")}>
       <span
         className="grid size-[22px] shrink-0 place-items-center rounded-[6px] bg-primary text-primary-foreground"
         aria-hidden="true"
@@ -255,11 +255,11 @@ function NewDocumentButton({
   onNewDocument?: () => void;
 }) {
   return (
-    <div className="px-3">
+    <div className="px-2.5">
       <Button
         type="button"
         variant="outline"
-        className="h-9 w-full justify-start gap-2 border-sidebar-border bg-surface px-2.5 text-[13.5px] text-sidebar-foreground shadow-[var(--shadow-subtle)] hover:bg-surface hover:shadow-[var(--shadow-raised)]"
+        className="h-9 w-full justify-start gap-2.5 border-sidebar-border bg-surface px-2.5 text-[13.5px] text-sidebar-foreground shadow-[var(--shadow-subtle)] hover:bg-surface hover:shadow-[var(--shadow-raised)]"
         onClick={() => {
           onNavigate?.();
           if (pathname === "/") {
@@ -295,7 +295,7 @@ function PrimaryNavigation({
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "type-nav relative flex h-8 items-center gap-2.5 rounded-md px-2 transition-[background-color,color] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
+              "type-nav relative flex h-8 items-center gap-2.5 rounded-md px-2.5 transition-[background-color,color] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
               active
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
                 : "text-sidebar-muted hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
@@ -330,7 +330,7 @@ function RecentDocuments({
 }) {
   return (
     <section aria-label="Recent documents" className="flex flex-col gap-1.5">
-      <h2 className="type-section-heading px-2">Recent</h2>
+      <h2 className="type-section-heading px-2.5">Recent</h2>
       {documents.length > 0 ? (
         <ul className="flex flex-col">
           {documents.map((document) => (
@@ -346,7 +346,7 @@ function RecentDocuments({
           ))}
         </ul>
       ) : (
-        <p className="px-2 py-1 text-[12.5px] text-sidebar-muted">
+        <p className="px-2.5 py-1 text-[12.5px] text-sidebar-muted">
           {connected ? "No documents yet." : "Connect Drive to see documents."}
         </p>
       )}
@@ -354,7 +354,7 @@ function RecentDocuments({
         href="/runs"
         onClick={onNavigate}
         aria-label="View all documents in Activity"
-        className="type-caption mt-1 inline-flex items-center gap-0.5 px-2 py-1 text-sidebar-muted transition-colors duration-[var(--motion-duration)] hover:text-sidebar-foreground"
+        className="type-caption mt-1 inline-flex w-fit items-center gap-0.5 px-2.5 py-1 text-sidebar-muted transition-colors duration-[var(--motion-duration)] hover:text-sidebar-foreground"
       >
         View all documents
         <icons.chevronRight className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
@@ -398,7 +398,7 @@ function RecentDocumentRow({
             disabled={!connected}
             aria-current={active ? "true" : undefined}
             aria-label={timestamp ? `${document.name}, ${timestamp}` : document.name}
-            className="flex w-full items-start gap-2 rounded-md px-2 py-[7px] pr-8 text-left outline-none disabled:pointer-events-none disabled:opacity-50"
+            className="flex w-full items-start gap-2.5 rounded-md px-2.5 py-[7px] pr-8 text-left outline-none disabled:pointer-events-none disabled:opacity-50"
           >
             <icons.document
               className={cn(
@@ -472,8 +472,8 @@ function AccountArea({ connection }: { connection: GoogleConnection | null }) {
   const connected = connection?.status === "CONNECTED";
 
   return (
-    <div className="flex flex-col gap-0.5 p-3">
-      <div className="flex items-center gap-2 px-2 py-1">
+    <div className="flex flex-col gap-0.5 px-2.5 pt-2.5 pb-3">
+      <div className="flex items-center gap-2.5 px-2.5 py-1">
         <span
           className={cn(
             "size-1.5 shrink-0 rounded-full",
@@ -489,7 +489,7 @@ function AccountArea({ connection }: { connection: GoogleConnection | null }) {
         <DropdownMenuTrigger asChild>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent/60 aria-expanded:bg-sidebar-accent/60"
+            className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent/60 aria-expanded:bg-sidebar-accent/60"
           >
             <icons.account className="size-[18px] shrink-0 text-sidebar-muted" strokeWidth={ICON_STROKE} />
             <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-sidebar-foreground">

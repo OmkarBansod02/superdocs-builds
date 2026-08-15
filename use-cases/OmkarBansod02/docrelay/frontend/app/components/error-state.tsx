@@ -1,5 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 
+import { Button } from "./ui";
+
 export function ErrorState({
   message,
   recoverable,
@@ -10,26 +12,18 @@ export function ErrorState({
   onRetry: () => void;
 }) {
   return (
-    <div className="max-w-md mx-auto py-16 text-center">
-      <div className="w-12 h-12 rounded-lg bg-warning-soft flex items-center justify-center mx-auto mb-4">
-        <AlertTriangle className="w-6 h-6 text-warning" />
+    <div className="px-6 py-16">
+      <div className="surface-section mx-auto max-w-[440px] px-7 py-9 text-center shadow-[var(--shadow-subtle)]">
+        <span className="mx-auto grid size-10 place-items-center rounded-[9px] bg-warning-soft text-warning" aria-hidden="true">
+          <AlertTriangle className="size-5" strokeWidth={1.75} />
+        </span>
+        <h2 className="mt-5 text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Something needs attention</h2>
+        <p className="mx-auto mt-2 max-w-[24rem] text-[13.5px] leading-[1.6] text-muted">{message}</p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          {recoverable ? <Button onClick={onRetry}>Try again</Button> : null}
+          <Button variant="secondary" onClick={onRetry}>Start over</Button>
+        </div>
       </div>
-      <h2 className="text-base font-semibold text-ink mb-2">Something needs attention</h2>
-      <p className="text-sm text-muted mb-6">{message}</p>
-      {recoverable && (
-        <button
-          onClick={onRetry}
-          className="px-4 py-2 bg-ink text-white text-sm font-medium rounded hover:bg-ink/90 transition-colors"
-        >
-          Try again
-        </button>
-      )}
-      <button
-        onClick={onRetry}
-        className={`${recoverable ? "ml-3" : ""} px-4 py-2 bg-surface-muted text-ink text-sm font-medium rounded border border-border hover:bg-border/30 transition-colors`}
-      >
-        Start over
-      </button>
     </div>
   );
 }

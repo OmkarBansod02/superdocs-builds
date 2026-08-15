@@ -184,24 +184,24 @@ export function SourceChooser({
   }, [connection, pickerBusy, onDocumentPicked]);
 
   return (
-    <section className="flex h-full min-h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center justify-between px-6 lg:px-10">
+    <section className="flex h-full min-h-full flex-col bg-background">
+      <header className="flex h-14 shrink-0 items-center justify-between px-5 lg:px-6">
         <h1 className="type-chrome-title">Workspace</h1>
         <DriveConnectionStatus connected={Boolean(connection)} loading={loading} />
       </header>
 
-      {/* Editorial composition: content sits in a measured column near the top
-          of the page rather than floating in the middle of the canvas. */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-20 lg:px-10">
-        <div className="mx-auto w-full max-w-[960px] pt-12 lg:pt-[84px]">
-          <div className="max-w-[34rem]">
+      {/* Editorial composition: a measured focal column set at a deliberate top
+          offset — balanced, not vertically centred in the canvas. */}
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-24 lg:px-10">
+        <div className="mx-auto w-full max-w-[664px] pt-14 lg:pt-[100px]">
+          <div className="mx-auto max-w-[36rem] text-center">
             <h2 className="type-hero-title">Start with a document</h2>
-            <p className="type-hero-body mt-3">
+            <p className="type-hero-body mx-auto mt-3 max-w-[30rem]">
               Connect a Google Doc and ask DocRelay to make reviewed, verifiable changes.
             </p>
           </div>
 
-          <div className="mt-8 flex w-full max-w-[496px] flex-col gap-3">
+          <div className="mx-auto mt-9 flex w-full max-w-[556px] flex-col gap-3">
             {apiUnavailable ? (
               <InlineStatus
                 title="DocRelay API is unavailable"
@@ -225,21 +225,21 @@ export function SourceChooser({
               <InlineStatus title="Could not open Google Drive" description={error} />
             ) : null}
 
-            <div className="w-full rounded-[11px] border border-border bg-surface px-7 py-7 shadow-[var(--shadow-subtle)]">
+            <div className="w-full rounded-[var(--radius-pane)] border border-border bg-surface px-8 pt-9 pb-7 shadow-[var(--shadow-raised)]">
               {loading ? (
                 <SelectorSkeleton />
               ) : (
-                <div className="flex w-full flex-col">
-                  <GoogleDriveMark className="h-7 w-8" />
-                  <h3 className="mt-4 text-[15.5px] font-semibold tracking-[-0.02em] text-foreground">
+                <div className="flex w-full flex-col items-center text-center">
+                  <GoogleDriveMark className="h-[34px] w-[38px]" />
+                  <h3 className="mt-5 text-[16.5px] font-semibold tracking-[-0.022em] text-foreground">
                     Choose a Google Doc
                   </h3>
-                  <p className="mt-1.5 text-[13.5px] leading-[1.55] text-muted">
+                  <p className="mt-2 max-w-[25rem] text-[13.5px] leading-[1.6] text-muted">
                     DocRelay reads the document you select and freezes its revision before
                     anything changes.
                   </p>
                   {!connection ? (
-                    <Button onClick={handleConnect} className="mt-5 w-fit">
+                    <Button onClick={handleConnect} className="mt-6 h-[38px] px-5">
                       Connect Google Drive
                     </Button>
                   ) : (
@@ -248,12 +248,12 @@ export function SourceChooser({
                       busy={pickerBusy}
                       disabled={pickerBusy}
                       aria-busy={pickerBusy}
-                      className="mt-5 w-fit"
+                      className="mt-6 h-[38px] px-5"
                     >
                       {pickerBusy ? "Opening Drive…" : "Choose from Drive"}
                     </Button>
                   )}
-                  <p className="type-caption mt-5 border-t border-border-light pt-3">
+                  <p className="type-caption mt-7 w-full border-t border-border-light pt-4">
                     Only Google Docs are supported.
                   </p>
                 </div>
@@ -261,7 +261,7 @@ export function SourceChooser({
             </div>
           </div>
 
-          <p className="type-caption mt-6 max-w-[496px]">
+          <p className="type-caption mt-6 text-center">
             Every change is reviewed before write-back.
           </p>
         </div>
@@ -336,13 +336,13 @@ function GoogleDriveMark({ className }: { className?: string }) {
 
 function SelectorSkeleton() {
   return (
-    <div className="flex w-full flex-col" aria-hidden="true">
-      <Skeleton className="size-7 rounded-md" />
-      <Skeleton className="mt-4 h-4 w-40" />
-      <Skeleton className="mt-2.5 h-3.5 w-full" />
-      <Skeleton className="mt-2 h-3.5 w-3/4" />
-      <Skeleton className="mt-5 h-9 w-[10.5rem] rounded-[8px]" />
-      <Skeleton className="mt-6 h-3 w-44" />
+    <div className="flex w-full flex-col items-center" aria-hidden="true">
+      <Skeleton className="size-[34px] rounded-md" />
+      <Skeleton className="mt-5 h-4 w-40" />
+      <Skeleton className="mt-3 h-3.5 w-full max-w-[24rem]" />
+      <Skeleton className="mt-2 h-3.5 w-3/5" />
+      <Skeleton className="mt-6 h-[38px] w-[11rem] rounded-[8px]" />
+      <Skeleton className="mt-8 h-3 w-44" />
     </div>
   );
 }

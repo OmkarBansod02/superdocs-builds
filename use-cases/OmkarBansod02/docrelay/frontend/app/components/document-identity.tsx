@@ -9,9 +9,9 @@ export interface DocumentIdentityData {
 
 export function DocumentIdentity({ document, action }: { document: DocumentIdentityData; action?: ReactNode }) {
   return (
-    <div className="flex min-h-[80px] items-center gap-4 border-b border-border px-5 py-4 sm:px-8 lg:px-10">
-      <span className="grid size-10 shrink-0 place-items-center rounded-md bg-[#2878ed] text-white" aria-hidden="true">
-        <FileText className="size-5" strokeWidth={2} />
+    <div className="flex min-h-[72px] items-center gap-3.5 border-b border-border-light px-5 py-4 sm:px-8 lg:px-10">
+      <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-primary text-primary-foreground" aria-hidden="true">
+        <FileText className="size-[18px]" strokeWidth={2} />
       </span>
       <div className="min-w-0">
         <h1 className="truncate text-[17px] font-semibold tracking-[-0.015em] text-ink sm:text-[19px]">{document.name}</h1>

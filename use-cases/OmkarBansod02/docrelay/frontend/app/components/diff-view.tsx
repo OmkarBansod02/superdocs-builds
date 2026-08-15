@@ -39,13 +39,19 @@ function DiffSide({ label, text, exactText, explicitSpan, highlight, tone }: { l
     : highlight;
   return (
     <section className="min-w-0">
-      <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.045em] text-muted">{label}</h3>
+      <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.045em] text-ink/70">{label}</h3>
       <p className="min-h-14 text-[15px] leading-7 text-ink sm:text-[16px]">
         {text ? (
           index >= 0 ? (
             <>
               {contextCharacters ? contextCharacters.slice(0, index).join("") : text.slice(0, index)}
-              <mark className={tone === "removed" ? "bg-error-soft px-1 text-ink" : "bg-success-soft px-1 text-ink"}>{highlighted}</mark>
+              <mark
+                className={tone === "removed"
+                  ? "rounded-[4px] bg-diff-removed px-[3px] font-medium text-diff-removed-text line-through decoration-[color:var(--diff-removed-line)] decoration-[1.5px]"
+                  : "rounded-[4px] bg-diff-added px-[3px] font-semibold text-diff-added-text"}
+              >
+                {highlighted}
+              </mark>
               {contextCharacters ? contextCharacters.slice(range?.end).join("") : text.slice(index + highlighted.length)}
             </>
           ) : text

@@ -1,6 +1,6 @@
 "use client";
 
-import { FileKey2, ShieldCheck } from "lucide-react";
+import { FileKey2, FileText, ShieldCheck } from "lucide-react";
 import { useCallback, useState } from "react";
 import { browserPickerTokenManager } from "../google-drive/picker-token";
 import { verifyWriteAuthorization } from "../lib/api";
@@ -98,28 +98,56 @@ export function WriteAuthorization({
   }, [busy, document.name, onAuthorized, providerFileId, runId]);
 
   return (
-    <div>
+    // A safety checkpoint, not an error: same editorial surfaces as the rest of
+    // the product, with the authorization action as the single focal point.
+    <div className="bg-background">
       <DocumentIdentity document={document} />
       <WorkflowProgress current="Safety check" />
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
-        <section className="px-5 py-10 sm:px-8 lg:px-10 lg:py-12">
-          <div className="grid size-11 place-items-center rounded-lg bg-info-soft text-info"><FileKey2 className="size-5" aria-hidden="true" /></div>
-          <h1 className="mt-6 max-w-[690px] text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Authorize this exact document for write-back</h1>
-          <p className="mt-3 max-w-[660px] text-[15px] leading-7 text-muted">DocRelay can read this watched document, but Google requires an explicit selection before it can write to the file.</p>
-          <div className="mt-7 max-w-[680px]"><InlineNotice tone="info">This is a permission checkpoint, not a workflow failure. The approved proposal and safety evidence are preserved.</InlineNotice></div>
-          {error ? <div className="mt-4 max-w-[680px]"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
-          <Button busy={busy} onClick={() => void authorize()} className="mt-7 min-w-[250px]">{busy ? "Opening Google Drive…" : "Authorize exact file"}</Button>
-          <p className="mt-4 max-w-[650px] text-[12px] leading-5 text-muted">Google Picker must return the same Drive file ID. Choosing any other document is rejected.</p>
-        </section>
-        <aside className="border-t border-border px-5 py-9 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-12">
-          <h2 className="text-[19px] font-semibold text-ink">Authorization boundary</h2>
-          <div className="mt-8 space-y-8">
-            <div className="flex gap-3"><StateMark state="complete" /><span className="text-[14px] text-ink">Read access already verified</span></div>
-            <div className="flex gap-3"><StateMark state="current" /><span className="text-[14px] text-ink">Exact file selection required</span></div>
-            <div className="flex gap-3"><StateMark /><span className="text-[14px] text-ink">Safe write-back remains guarded</span></div>
+      <div className="px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
+        <div className="mx-auto w-full max-w-[640px]">
+          <div className="text-center">
+            <span className="mx-auto grid size-10 place-items-center rounded-[9px] bg-info-soft text-info" aria-hidden="true">
+              <FileKey2 className="size-5" />
+            </span>
+            <h1 className="type-hero-title mt-5">Authorize this exact document</h1>
+            <p className="type-hero-body mx-auto mt-3 max-w-[34rem]">
+              DocRelay can read this watched document, but Google requires an explicit selection
+              before it can write to the file.
+            </p>
           </div>
-          <div className="mt-9 border-t border-border pt-6 text-[13px] leading-6 text-muted"><ShieldCheck className="mb-3 size-5 text-accent" />Picker tokens remain memory-only and are never persisted.</div>
-        </aside>
+
+          <div className="surface-section mt-8 px-6 py-6 shadow-[var(--shadow-raised)] sm:px-8">
+            <div className="flex items-start gap-3">
+              <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-surface-muted text-muted" aria-hidden="true">
+                <FileText className="size-[18px]" strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[14.5px] font-semibold tracking-[-0.018em] text-ink">{document.name}</p>
+                <p className="type-caption mt-0.5">Google Docs</p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3.5 border-t border-border-light pt-5">
+              <div className="flex items-center gap-3"><StateMark state="complete" /><span className="text-[13.5px] text-ink">Read access already verified</span></div>
+              <div className="flex items-center gap-3"><StateMark state="current" /><span className="text-[13.5px] text-ink">Exact file selection required</span></div>
+              <div className="flex items-center gap-3"><StateMark /><span className="text-[13.5px] text-ink">Safe write-back remains guarded</span></div>
+            </div>
+
+            {error ? <div className="mt-5"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
+
+            <Button busy={busy} onClick={() => void authorize()} className="mt-6 h-[38px] w-full px-5">
+              {busy ? "Opening Google Drive…" : "Authorize exact file"}
+            </Button>
+            <p className="type-caption mt-4 border-t border-border-light pt-4">
+              Google Picker must return the same Drive file ID. Choosing any other document is rejected.
+            </p>
+          </div>
+
+          <p className="type-caption mt-5 flex items-center justify-center gap-2 text-center">
+            <ShieldCheck className="size-4 shrink-0 text-accent" aria-hidden="true" />
+            The approved proposal and safety evidence are preserved. Picker tokens stay memory-only.
+          </p>
+        </div>
       </div>
     </div>
   );

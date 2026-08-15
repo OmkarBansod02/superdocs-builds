@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { ICON_STROKE, icons } from "@/lib/icons";
+import { cn } from "@/lib/utils";
 import { browserPickerTokenManager } from "../google-drive/picker-token";
 import {
   configureWatch,
@@ -27,7 +28,7 @@ import {
   type WatchScanItem,
 } from "../lib/api";
 import { requestOpenRecentDocument } from "../lib/conversation";
-import { extractSelectedFile, type SelectedDriveFile } from "../lib/import-state";
+import { extractSelectedFile, formatRelativeTime, type SelectedDriveFile } from "../lib/import-state";
 import {
   actionableWatchRuns,
   exactFilePickMatches,
@@ -189,150 +190,178 @@ export function WatchWorkspace() {
   const watchError = watchErrorCopy(watch.last_error_code ?? latest?.failure_code ?? null);
   const progress = scanProgressLabel(latest, busy);
 
+  const lastScan = watch.last_scan_at ? formatRelativeTime(watch.last_scan_at) : null;
+
   return (
-    <div className="px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
-      <header className="max-w-[40rem]">
-        <h1 className="type-page-title">Watch</h1>
-        <p className="type-body-muted mt-2">Keep selected Drive folders in sync with DocRelay.</p>
-        <WatchAccessStatus
-          connection={connection}
-          onEnable={() => window.location.assign(getAuthorizeUrl("watch"))}
-        />
-      </header>
-
-      {error ? (
-        <div className="mt-6 max-w-[40rem]">
-          <InlineNotice tone="warning">{error}</InlineNotice>
-        </div>
-      ) : null}
-
-      {watchError ? (
-        <div className="mt-6 max-w-[40rem]">
-          <Alert variant="warning" className="rounded-md">
-            <icons.warning strokeWidth={ICON_STROKE} />
-            <AlertTitle>{watchError.title}</AlertTitle>
-            <AlertDescription>{watchError.detail}</AlertDescription>
-            {watch.last_error_code === "GOOGLE_WATCH_AUTHORIZATION_REQUIRED" ? (
-              <AlertAction>
-                <Button variant="secondary" onClick={() => window.location.assign(getAuthorizeUrl("watch"))}>
-                  Enable watch access
-                </Button>
-              </AlertAction>
-            ) : null}
-          </Alert>
-        </div>
-      ) : null}
-
-      <section className="mt-10 max-w-[40rem]" aria-labelledby="watching-heading">
-        <h2 id="watching-heading" className="type-section-heading">Watching</h2>
-        <div className="mt-4 border-t border-border pt-5">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 grid size-8 shrink-0 place-items-center text-muted" aria-hidden="true">
-              <icons.folderOpen className="size-4" strokeWidth={ICON_STROKE} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[15px] font-medium tracking-[-0.015em] text-ink">{watch.root_name}</p>
-              <p className="type-caption mt-0.5">Google Drive</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void chooseFolder()}
-              disabled={pickerBusy}
-              className="type-caption min-h-8 shrink-0 text-accent hover:underline"
-            >
-              {pickerBusy ? "Opening Drive…" : "Change folder"}
-            </button>
+    <div className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
+      <div className="mx-auto w-full max-w-[940px]">
+        <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+          <div className="min-w-0">
+            <h1 className="type-page-title">Watch</h1>
+            <p className="type-body-muted mt-1.5">Keep selected Drive folders in sync with DocRelay.</p>
           </div>
+          <WatchAccessStatus
+            connection={connection}
+            onEnable={() => window.location.assign(getAuthorizeUrl("watch"))}
+          />
+        </header>
 
-          <p className="mt-5 text-[13px] text-muted">{scheduleLabel(watch.enabled, watch.interval_seconds)}</p>
-          {progress ? <p className="mt-1 text-[13px] text-ink">{progress}</p> : null}
+        {error ? (
+          <div className="mt-6">
+            <InlineNotice tone="warning">{error}</InlineNotice>
+          </div>
+        ) : null}
 
-          <div className="mt-6 space-y-5">
-            {rules.length === 0 ? (
-              <p className="text-[14px] leading-6 text-muted">Add a rule so discovered documents know what to do.</p>
-            ) : rules.map((rule) => (
-              <div key={rule.rule_id}>
-                <p className="text-[14px] font-medium text-ink">{rule.folder_name}</p>
-                <p className="mt-1 text-[14px] leading-6 text-muted">“{rule.instruction}”</p>
-                {editing ? (
-                  <button
-                    type="button"
-                    onClick={() => { setEditingRule(rule); setShowRuleForm(true); }}
-                    className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
-                  >
-                    Edit
-                  </button>
+        {watchError ? (
+          <div className="mt-6">
+            <Alert variant="warning" className="rounded-[var(--radius-pane)]">
+              <icons.warning strokeWidth={ICON_STROKE} />
+              <AlertTitle>{watchError.title}</AlertTitle>
+              <AlertDescription>{watchError.detail}</AlertDescription>
+              {watch.last_error_code === "GOOGLE_WATCH_AUTHORIZATION_REQUIRED" ? (
+                <AlertAction>
+                  <Button variant="secondary" onClick={() => window.location.assign(getAuthorizeUrl("watch"))}>
+                    Enable watch access
+                  </Button>
+                </AlertAction>
+              ) : null}
+            </Alert>
+          </div>
+        ) : null}
+
+        <section className="mt-9" aria-labelledby="watching-heading">
+          <h2 id="watching-heading" className="type-section-heading">Watching</h2>
+          <div className="surface-section mt-3 px-5 py-5 shadow-[var(--shadow-subtle)] sm:px-6 sm:py-6">
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+              <span
+                className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-surface-muted text-muted"
+                aria-hidden="true"
+              >
+                <icons.folderOpen className="size-[18px]" strokeWidth={ICON_STROKE} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[15px] font-semibold tracking-[-0.018em] text-ink">{watch.root_name}</p>
+                <p className="type-caption mt-0.5">Google Drive</p>
+              </div>
+              <WatchStatePill enabled={watch.enabled} />
+            </div>
+
+            <dl className="mt-5 grid gap-x-8 gap-y-5 border-t border-border-light pt-5 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <dt className="type-section-heading">Rule</dt>
+                {rules.length === 0 ? (
+                  <dd className="mt-1.5 text-[13.5px] leading-[1.6] text-muted">
+                    Add a rule so discovered documents know what to do.
+                  </dd>
+                ) : (
+                  <dd className="mt-1.5 space-y-3">
+                    {rules.map((rule) => (
+                      <div key={rule.rule_id} className="min-w-0">
+                        <p className="text-[13.5px] leading-[1.6] text-ink">“{rule.instruction}”</p>
+                        <p className="type-caption mt-0.5">{rule.folder_name}</p>
+                        {editing ? (
+                          <button
+                            type="button"
+                            onClick={() => { setEditingRule(rule); setShowRuleForm(true); }}
+                            className="type-caption mt-1 text-accent hover:underline"
+                          >
+                            Edit rule
+                          </button>
+                        ) : null}
+                      </div>
+                    ))}
+                  </dd>
+                )}
+              </div>
+              <div className="sm:text-right">
+                <dt className="type-section-heading">Schedule</dt>
+                <dd className="mt-1.5 text-[13.5px] text-ink">
+                  {scheduleLabel(watch.enabled, watch.interval_seconds)}
+                </dd>
+                {lastScan ? <dd className="type-caption mt-1">Last scan {lastScan}</dd> : null}
+                {progress ? <dd className="mt-1 text-[13px] text-accent">{progress}</dd> : null}
+              </div>
+            </dl>
+
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-light pt-5">
+              <Button busy={scanning} disabled={scanning} onClick={() => void scanNow()}>
+                {latest?.status === "RUNNING" ? "Scanning…" : "Scan now"}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setEditing((value) => !value);
+                  if (editing) {
+                    setShowRuleForm(false);
+                    setEditingRule(null);
+                  }
+                }}
+              >
+                {editing ? "Done" : "Edit setup"}
+              </Button>
+              <Button variant="ghost" disabled={pickerBusy} onClick={() => void chooseFolder()}>
+                {pickerBusy ? "Opening Drive…" : "Change folder"}
+              </Button>
+            </div>
+
+            {editing ? (
+              <div className="mt-5 border-t border-border-light pt-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--motion-duration)]">
+                <ScheduleEditor
+                  watch={watch}
+                  onSaved={() => { void load(); }}
+                />
+                <Button
+                  variant="ghost"
+                  className="mt-4"
+                  onClick={() => { setEditingRule(null); setShowRuleForm(true); }}
+                >
+                  <icons.plus className="size-4" strokeWidth={ICON_STROKE} />
+                  Add rule
+                </Button>
+                {showRuleForm ? (
+                  <RuleEditor
+                    watchId={watch.watch_id}
+                    rule={editingRule}
+                    onClose={() => { setShowRuleForm(false); setEditingRule(null); }}
+                    onSaved={() => { setShowRuleForm(false); setEditingRule(null); void load(); }}
+                  />
                 ) : null}
               </div>
-            ))}
+            ) : null}
           </div>
+        </section>
 
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Button busy={scanning} disabled={scanning} onClick={() => void scanNow()}>
-              {latest?.status === "RUNNING" ? "Scanning…" : "Scan now"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setEditing((value) => !value);
-                if (editing) {
-                  setShowRuleForm(false);
-                  setEditingRule(null);
-                }
-              }}
-            >
-              {editing ? "Done" : "Edit setup"}
-            </Button>
+        <section className="mt-9" aria-labelledby="needs-review-heading">
+          <div className="flex items-center justify-between gap-4">
+            <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
+            {pending.length > 0 ? (
+              <span className="type-caption tabular-nums">{pending.length}</span>
+            ) : null}
           </div>
-
-          {editing ? (
-            <div className="mt-6 border-t border-border pt-5">
-              <ScheduleEditor
-                watch={watch}
-                onSaved={() => { void load(); }}
+          <div className="surface-section mt-3 overflow-hidden shadow-[var(--shadow-subtle)]">
+            {pending.length === 0 ? (
+              <EmptySurfaceRow
+                tone={latest ? "positive" : "neutral"}
+                label={latest ? "Nothing needs review" : "Scan to discover documents"}
               />
-              <Button
-                variant="ghost"
-                className="mt-4"
-                onClick={() => { setEditingRule(null); setShowRuleForm(true); }}
-              >
-                <icons.plus className="size-4" strokeWidth={ICON_STROKE} />
-                Add rule
-              </Button>
-              {showRuleForm ? (
-                <RuleEditor
-                  watchId={watch.watch_id}
-                  rule={editingRule}
-                  onClose={() => { setShowRuleForm(false); setEditingRule(null); }}
-                  onSaved={() => { setShowRuleForm(false); setEditingRule(null); void load(); }}
-                />
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="mt-12 max-w-[40rem]" aria-labelledby="needs-review-heading">
-        <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
-        <div className="mt-4 border-t border-border">
-          {pending.length === 0 ? (
-            <p className="py-5 text-[14px] leading-6 text-muted">
-              {latest ? "Nothing needs review." : "Scan to discover documents."}
-            </p>
-          ) : pending.map((run) => {
-            const action = watchDocumentAction(run);
-            return (
-              <article key={run.run_id} className="flex items-start gap-3 border-b border-border py-4 last:border-b-0">
-                <icons.document className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[14.5px] font-medium tracking-[-0.012em] text-ink">{run.document_name}</p>
-                  {action.kind === "review" ? (
-                    <p className="mt-0.5 text-[13px] text-muted">{proposalCountLabel(run.proposal_count)}</p>
-                  ) : null}
-                  {action.kind === "authorize" && action.detail ? (
-                    <p className="mt-2 max-w-[34rem] text-[13px] leading-5 text-muted">{action.detail}</p>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap gap-2">
+            ) : pending.map((run) => {
+              const action = watchDocumentAction(run);
+              return (
+                <article
+                  key={run.run_id}
+                  className="flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border-light px-5 py-4 last:border-b-0"
+                >
+                  <icons.document className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  <div className="min-w-[12rem] flex-1">
+                    <p className="truncate text-[14px] font-medium tracking-[-0.012em] text-ink">{run.document_name}</p>
+                    <p className="mt-0.5 text-[12.5px] text-muted">
+                      {action.kind === "review" ? proposalCountLabel(run.proposal_count) : action.statusLabel}
+                    </p>
+                    {action.kind === "authorize" && action.detail ? (
+                      <p className="mt-2 max-w-[36rem] text-[12.5px] leading-[1.6] text-muted">{action.detail}</p>
+                    ) : null}
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
                     {action.kind === "authorize" ? (
                       <AuthorizeExactFileButton
                         run={run}
@@ -340,38 +369,93 @@ export function WatchWorkspace() {
                         onError={setError}
                       />
                     ) : null}
-                    <Button variant={action.kind === "authorize" ? "secondary" : "primary"} onClick={() => openConversation(run)}>
+                    <Button
+                      variant={action.kind === "authorize" ? "secondary" : "primary"}
+                      onClick={() => openConversation(run)}
+                    >
                       Open conversation
+                      <icons.chevronRight className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
                     </Button>
                   </div>
-                </div>
-                <span className="type-caption shrink-0 pt-0.5">{action.statusLabel}</span>
-              </article>
-            );
-          })}
-        </div>
-      </section>
+                </article>
+              );
+            })}
+          </div>
+        </section>
 
-      <section className="mt-12 max-w-[40rem]" aria-labelledby="activity-heading">
-        <h2 id="activity-heading" className="type-section-heading">Recent activity</h2>
-        <div className="mt-4 border-t border-border">
-          {latestItems.length === 0 ? (
-            <p className="py-5 text-[14px] leading-6 text-muted">
-              {latest?.status === "RUNNING" ? "Scan in progress." : "No recent Watch activity."}
-            </p>
-          ) : latestItems.map((item) => {
-            const run = item.run_id ? runsById.get(item.run_id) : undefined;
-            return (
-              <div key={`${item.provider_file_id}-${item.outcome}`} className="flex items-center gap-3 border-b border-border py-3.5 last:border-b-0">
-                <icons.document className="size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
-                <p className="min-w-0 flex-1 truncate text-[14px] text-ink">{item.name}</p>
-                <p className="type-caption shrink-0">{watchActivityLabel(item, run)}</p>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+        <section className="mt-9" aria-labelledby="activity-heading">
+          <h2 id="activity-heading" className="type-section-heading">Recent activity</h2>
+          <div className="surface-section mt-3 overflow-hidden shadow-[var(--shadow-subtle)]">
+            {latestItems.length === 0 ? (
+              <EmptySurfaceRow
+                tone="neutral"
+                label={latest?.status === "RUNNING" ? "Scan in progress" : "No recent Watch activity"}
+              />
+            ) : latestItems.map((item) => {
+              const run = item.run_id ? runsById.get(item.run_id) : undefined;
+              const label = watchActivityLabel(item, run);
+              return (
+                <div
+                  key={`${item.provider_file_id}-${item.outcome}`}
+                  className="flex items-center gap-3 border-b border-border-light px-5 py-3 last:border-b-0"
+                >
+                  <icons.document className="size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  <p className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{item.name}</p>
+                  <ActivityMark label={label} />
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      </div>
     </div>
+  );
+}
+
+function WatchStatePill({ enabled }: { enabled: boolean }) {
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium",
+        enabled ? "bg-accent-soft text-accent" : "bg-surface-muted text-muted",
+      )}
+    >
+      <span
+        className={cn("size-1.5 rounded-full", enabled ? "bg-accent" : "bg-border")}
+        aria-hidden="true"
+      />
+      {enabled ? "Watch enabled" : "Manual only"}
+    </span>
+  );
+}
+
+/** Truthful status labels only — the tone is derived, never the wording. */
+function ActivityMark({ label }: { label: string }) {
+  const attention = label === "Attention required" || label === "Conflict"
+    || label === "Write access required" || label === "Needs review";
+  const verified = label === "Verified" || label === "Reviewed";
+  return (
+    <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-muted">
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          attention ? "bg-warning" : verified ? "bg-success" : "bg-border",
+        )}
+        aria-hidden="true"
+      />
+      {label}
+    </span>
+  );
+}
+
+function EmptySurfaceRow({ label, tone }: { label: string; tone: "positive" | "neutral" }) {
+  return (
+    <p className="flex items-center gap-2 px-5 py-6 text-[13.5px] text-muted">
+      {tone === "positive" ? (
+        <icons.check className="size-4 shrink-0 text-success" strokeWidth={2.25} aria-hidden="true" />
+      ) : null}
+      {label}
+    </p>
   );
 }
 
@@ -384,25 +468,22 @@ function WatchAccessStatus({
 }) {
   if (connection?.watch_authorized) {
     return (
-      <p className="mt-5 inline-flex items-center gap-1.5 text-[13px] text-muted">
-        Google Drive
-        <span className="inline-flex items-center gap-1 text-success">
-          <span className="grid size-3.5 place-items-center rounded-full bg-success text-primary-foreground">
-            <icons.check className="size-2.5" strokeWidth={2.5} />
-          </span>
-          Watch access enabled
+      <p className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border-light bg-surface px-3 py-1.5 text-[12.5px] text-muted">
+        <span className="grid size-3.5 place-items-center rounded-full bg-success text-primary-foreground" aria-hidden="true">
+          <icons.check className="size-2.5" strokeWidth={2.5} />
         </span>
+        Drive access · Watch enabled
       </p>
     );
   }
 
   return (
-    <div className="mt-6">
-      <p className="text-[14px] font-medium text-ink">Watch access required</p>
-      <p className="mt-1 text-[14px] leading-6 text-muted">
+    <div className="surface-section shrink-0 px-4 py-3.5">
+      <p className="text-[13.5px] font-medium text-ink">Watch access required</p>
+      <p className="mt-1 max-w-[22rem] text-[12.5px] leading-[1.6] text-muted">
         DocRelay needs read access to discover files in the selected folder.
       </p>
-      <Button className="mt-4" onClick={onEnable}>Enable watch access</Button>
+      <Button className="mt-3" onClick={onEnable}>Enable watch access</Button>
     </div>
   );
 }
@@ -422,33 +503,50 @@ function WatchEmpty({
 }) {
   const watchReady = Boolean(connection?.watch_authorized);
   return (
-    <section className="flex min-h-[calc(100dvh-156px)] items-center justify-center px-6 py-14">
-      <div className="w-full max-w-[28rem]">
-        <h1 className="type-page-title">Watch</h1>
-        <p className="type-body-muted mt-2">
-          Keep a Drive folder in sync with human-reviewed AI changes.
-        </p>
+    <section className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
+      <div className="mx-auto w-full max-w-[640px] pt-6 lg:pt-[72px]">
+        <div className="text-center">
+          <h1 className="type-hero-title">Watch a Drive folder</h1>
+          <p className="type-hero-body mx-auto mt-3 max-w-[30rem]">
+            Keep a Drive folder in sync with human-reviewed DocRelay changes.
+          </p>
+        </div>
         {error ? <div className="mt-6"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
-        {!connection || !watchReady ? (
-          <div className="mt-7">
-            <p className="text-[14px] font-medium text-ink">Watch access required</p>
-            <p className="mt-1 text-[14px] leading-6 text-muted">
-              DocRelay needs read access to discover files in the selected folder.
-            </p>
-            <Button className="mt-5" onClick={onEnableWatch}>Enable Watch access</Button>
-          </div>
-        ) : (
-          <div className="mt-8 space-y-6">
-            <div>
-              <p className="text-[14px] font-medium text-ink">Choose folder</p>
-              <p className="mt-1 text-[13px] leading-5 text-muted">Select the Drive folder DocRelay should watch.</p>
-              <Button className="mt-3" busy={pickerBusy} onClick={onChooseFolder}>
+
+        <div className="surface-section mx-auto mt-8 max-w-[540px] px-8 py-8 text-center shadow-[var(--shadow-raised)]">
+          <span
+            className="mx-auto grid size-10 place-items-center rounded-[9px] bg-surface-muted text-muted"
+            aria-hidden="true"
+          >
+            <icons.folderOpen className="size-5" strokeWidth={ICON_STROKE} />
+          </span>
+          {!connection || !watchReady ? (
+            <>
+              <h2 className="mt-5 text-[16.5px] font-semibold tracking-[-0.022em] text-ink">
+                Watch access required
+              </h2>
+              <p className="mx-auto mt-2 max-w-[25rem] text-[13.5px] leading-[1.6] text-muted">
+                DocRelay needs read access to discover files in the selected folder.
+              </p>
+              <Button className="mt-6 h-[38px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
+            </>
+          ) : (
+            <>
+              <h2 className="mt-5 text-[16.5px] font-semibold tracking-[-0.022em] text-ink">
+                Choose a folder
+              </h2>
+              <p className="mx-auto mt-2 max-w-[25rem] text-[13.5px] leading-[1.6] text-muted">
+                Select the Drive folder DocRelay should watch, then add a rule and set a schedule.
+              </p>
+              <Button className="mt-6 h-[38px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
                 {pickerBusy ? "Opening Drive…" : "Choose folder"}
               </Button>
-            </div>
-            <p className="text-[13px] leading-5 text-muted">Then add a rule and set a schedule.</p>
-          </div>
-        )}
+            </>
+          )}
+          <p className="type-caption mt-7 border-t border-border-light pt-4">
+            Every discovered change is reviewed before write-back.
+          </p>
+        </div>
       </div>
     </section>
   );
@@ -461,8 +559,8 @@ function ScheduleEditor({ watch, onSaved }: { watch: WatchRoot; onSaved: () => v
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-wrap items-end gap-4">
-      <label className="grid gap-1.5 text-[12px] text-muted">
+    <div className="flex flex-wrap items-end gap-3">
+      <label className="type-section-heading grid gap-1.5">
         Schedule
         <select
           value={enabled ? interval : 0}
@@ -475,7 +573,7 @@ function ScheduleEditor({ watch, onSaved }: { watch: WatchRoot; onSaved: () => v
             setEnabled(true);
             setIntervalValue(next);
           }}
-          className="min-h-9 rounded-md border border-border bg-surface px-3 text-[13px] text-ink"
+          className="h-9 rounded-[8px] border border-border bg-surface px-3 text-[13px] font-normal tracking-normal text-ink normal-case"
         >
           <option value={0}>Manual</option>
           {INTERVALS.map((item) => (
@@ -540,26 +638,28 @@ function RuleEditor({
   }
 
   return (
-    <div className="mt-5">
-      <h3 className="text-[14px] font-medium text-ink">{rule ? `Edit ${rule.folder_name}` : "Add rule"}</h3>
+    <div className="mt-5 rounded-[9px] border border-border-light bg-background px-4 py-4">
+      <h3 className="text-[13.5px] font-semibold tracking-[-0.015em] text-ink">
+        {rule ? `Edit ${rule.folder_name}` : "Add rule"}
+      </h3>
       <div className="mt-4 grid gap-4">
         <div>
-          <p className="text-[12px] text-muted">Folder</p>
+          <p className="type-section-heading">Folder</p>
           {folder ? (
-            <p className="mt-1 text-[14px] text-ink">{folder.name}</p>
+            <p className="mt-1.5 text-[13.5px] text-ink">{folder.name}</p>
           ) : (
             <Button variant="secondary" className="mt-1.5" busy={picking} onClick={() => void pickFolder()}>
               {picking ? "Opening Drive…" : "Choose folder"}
             </Button>
           )}
         </div>
-        <label className="grid gap-1.5 text-[12px] text-muted">
+        <label className="type-section-heading grid gap-1.5">
           Instruction
           <textarea
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={4}
-            className="resize-y rounded-md border border-border bg-surface px-3 py-2 text-[13px] leading-5 text-ink"
+            className="resize-y rounded-[9px] border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-[1.6] font-normal tracking-normal text-ink normal-case"
           />
         </label>
         <label className="flex items-center gap-2 text-[13px] text-ink">
@@ -640,11 +740,13 @@ function AuthorizeExactFileButton({
 
 function WatchSkeleton() {
   return (
-    <div className="space-y-4 px-6 py-8 sm:px-8 lg:px-10">
-      <Skeleton className="h-8 w-40" />
-      <Skeleton className="h-4 w-80" />
-      <Skeleton className="mt-8 h-40 w-full max-w-[40rem]" />
-      <Skeleton className="h-32 w-full max-w-[40rem]" />
+    <div className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
+      <div className="mx-auto w-full max-w-[940px] space-y-4">
+        <Skeleton className="h-7 w-40" />
+        <Skeleton className="h-4 w-80" />
+        <Skeleton className="h-44 w-full rounded-[var(--radius-pane)]" />
+        <Skeleton className="h-32 w-full rounded-[var(--radius-pane)]" />
+      </div>
     </div>
   );
 }

@@ -8,16 +8,18 @@
    Product classes (text-ink, text-muted, bg-accent, bg-surface) stay stable.
    shadcn primitives use primary / surface-muted / muted-foreground. */
 :root {
-  --background: #f7f4ee;
+  /* Warm surface ladder. Each step must stay perceptible on a normal monitor:
+     working canvas → conversation pane → document canvas → document page. */
+  --background: #f4f1e9;
   --foreground: #1d1b18;
-  --conversation: #faf8f3;
-  --canvas: #f0ece5;
-  --surface: #fffdf9;
+  --conversation: #fdfbf6;
+  --canvas: #ebe6dc;
+  --surface: #fffdf8;
   --surface-elevated: #fffefb;
-  --surface-muted: #f1ede5;
-  --border: #ded9cf;
-  --border-light: #e9e4da;
-  --muted-text: #706a61;
+  --surface-muted: #efeae1;
+  --border: #dad4c8;
+  --border-light: #e6e0d4;
+  --muted-text: #6e6860;
   --primary: #2d6a4f;
   --primary-hover: #255943;
   --primary-foreground: #f7fbf8;
@@ -30,13 +32,21 @@
   --destructive-soft: #f5e9e5;
   --info: #5e646c;
   --info-soft: #ecedeb;
-  /* Contextual review tints. Only the changed span is ever coloured. */
-  --diff-added: #e6efe6;
-  --diff-removed: #f6e9e5;
+  /* Contextual review tints. Only the exact changed span is ever coloured —
+     the surrounding sentence always stays neutral. */
+  --diff-added: #d8eddc;
+  --diff-added-text: #1d5738;
+  --diff-removed: #f7dad7;
+  --diff-removed-text: #8a3a32;
+  --diff-removed-line: #b05a51;
   --review-mark: #f3ecdc;
   --review-mark-line: #e0d0ab;
   --ring: #2d6a4f;
   --radius: 0.5625rem;
+  /* Editor pane geometry — one radius family across conversation, document and
+     the page-level surfaces so panes read as one assembled grid. */
+  --radius-pane: 11px;
+  --workbench-gutter: 12px;
   --shadow-subtle: 0 1px 2px rgb(29 27 24 / 0.05);
   --shadow-raised: 0 1px 2px rgb(29 27 24 / 0.06), 0 2px 6px rgb(29 27 24 / 0.04);
   --shadow-overlay: 0 1px 2px rgb(29 27 24 / 0.07), 0 8px 24px -6px rgb(29 27 24 / 0.14);
@@ -53,15 +63,15 @@
   --muted-foreground: var(--muted-text);
   --input: var(--border);
 
-  --sidebar: #f1eee8;
+  --sidebar: #eeeae1;
   --sidebar-foreground: #1d1b18;
   --sidebar-primary: #2d6a4f;
   --sidebar-primary-foreground: #f7fbf8;
-  --sidebar-accent: #e5e0d6;
+  --sidebar-accent: #e3ddd1;
   --sidebar-accent-foreground: #1d1b18;
-  --sidebar-border: #ded9cf;
+  --sidebar-border: #ddd6c9;
   --sidebar-ring: #2d6a4f;
-  --sidebar-muted: #706a61;
+  --sidebar-muted: #6e6860;
 }
 
 @theme inline {
@@ -107,7 +117,9 @@
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
   --color-diff-added: var(--diff-added);
+  --color-diff-added-text: var(--diff-added-text);
   --color-diff-removed: var(--diff-removed);
+  --color-diff-removed-text: var(--diff-removed-text);
   --color-review-mark: var(--review-mark);
 
   --color-ring: var(--ring);
@@ -185,6 +197,29 @@
 }
 
 @layer components {
+  /* An editor pane: the framing shared by conversation, document and the
+     page-level surfaces on Workspace, Watch and Activity. Panes create
+     separation, so no adjacent element repeats the divider. */
+  .pane {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-pane);
+    background: var(--surface);
+    overflow: hidden;
+  }
+
+  /* Section surface used by Watch / Activity page composition. */
+  .surface-section {
+    border: 1px solid var(--border-light);
+    border-radius: var(--radius-pane);
+    background: var(--surface);
+  }
+
+  /* Keeps an overlay scrollbar clear of the pane separator it sits beside. */
+  .scrollbar-inset [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
+    margin-right: 3px;
+    margin-block: 4px;
+  }
+
   /* Editorial hero — Workspace start screen and equivalent first impressions. */
   .type-hero-title {
     font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
