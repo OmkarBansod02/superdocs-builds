@@ -30,6 +30,11 @@
   --destructive-soft: #f5e9e5;
   --info: #5e646c;
   --info-soft: #ecedeb;
+  /* Contextual review tints. Only the changed span is ever coloured. */
+  --diff-added: #e6efe6;
+  --diff-removed: #f6e9e5;
+  --review-mark: #f3ecdc;
+  --review-mark-line: #e0d0ab;
   --ring: #2d6a4f;
   --radius: 0.5625rem;
   --shadow-subtle: 0 1px 2px rgb(29 27 24 / 0.05);
@@ -101,6 +106,9 @@
   --color-error-soft: var(--destructive-soft);
   --color-info: var(--info);
   --color-info-soft: var(--info-soft);
+  --color-diff-added: var(--diff-added);
+  --color-diff-removed: var(--diff-removed);
+  --color-review-mark: var(--review-mark);
 
   --color-ring: var(--ring);
   --color-focus-ring: var(--ring);

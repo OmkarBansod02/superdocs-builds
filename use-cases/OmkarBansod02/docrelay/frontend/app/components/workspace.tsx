@@ -759,7 +759,7 @@ function ReopenSourceFailure({
   return (
     <MotionPanel className="flex h-full min-h-0 flex-col">
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <div className="flex h-full min-h-0 min-w-0 w-full flex-col overflow-hidden lg:w-[420px] lg:min-w-[360px] lg:max-w-[470px] lg:shrink-0">
+        <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden lg:w-[420px] lg:min-w-[360px] lg:max-w-[470px] lg:shrink-0 xl:w-[440px]">
           <ConversationPanel
             title={thread.file.name}
             stateLabel="Needs attention"
@@ -788,9 +788,9 @@ function ReopenSourceFailure({
           aria-label="Current Google document"
           className="hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 lg:grid"
         >
-          <div className="max-w-sm rounded-lg border border-border bg-surface p-5">
+          <div className="max-w-sm rounded-[10px] border border-border-light bg-surface px-5 py-4">
             <h2 className="text-[14px] font-medium text-foreground">Current document unavailable</h2>
-            <p className="mt-1.5 text-[13px] leading-5 text-muted">
+            <p className="mt-1.5 text-[13px] leading-[1.6] text-muted">
               DocRelay could not refresh the Google source, so no current document content is shown and new edits are disabled.
             </p>
           </div>

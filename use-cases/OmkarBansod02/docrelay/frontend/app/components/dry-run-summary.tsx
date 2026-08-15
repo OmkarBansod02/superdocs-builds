@@ -3,6 +3,7 @@
 import { ChevronDown } from "lucide-react";
 import { useState } from "react";
 import type { DryRunView, SourceRegistration } from "../lib/api";
+import { normalizedSafetyChecks } from "../lib/conversation";
 import { canWriteBack } from "../lib/write-back-state";
 import { DiffView } from "./diff-view";
 import { DocumentIdentity, type DocumentIdentityData, shortId } from "./document-identity";
@@ -131,19 +132,4 @@ function operationPhrase(count: number): string {
   if (count === 1) return "one";
   if (count === 2) return "two";
   return String(count);
-}
-
-function normalizedSafetyChecks(checks: string[]): string[] {
-  const mapping: Record<string, string> = {
-    "approved immutable review decision": "Review decision recorded",
-    "exact persisted baseline revision and native snapshot hash": "Exact source revision matched",
-    "one unique ordinary body paragraph and one plain text run": "Unique location found",
-    "exact internal ASCII preimage with equal UTF-16 length": "Source text exactly matched",
-    "exact internal contiguous ASCII preimage": "Source text exactly matched",
-    "minimum delete-and-insert range guarded by requiredRevisionId": "Revision guard prepared",
-    "independent non-overlapping replacements on the same frozen revision": "Approved changes do not overlap",
-  };
-  const result = checks.map((check) => mapping[check] ?? check);
-  if (!result.some((check) => check.toLowerCase().includes("backup"))) result.push("Backup will be created first");
-  return result;
 }
