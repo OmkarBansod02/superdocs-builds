@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ICON_STROKE, icons } from "@/lib/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createDryRun,
@@ -203,11 +203,22 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
   }
 
   return (
-    <div>
-      <div className="border-b border-border px-5 py-2 sm:px-8 lg:px-10">
-        <Link href="/runs" className="inline-flex min-h-10 items-center gap-2 text-[13px] font-medium text-muted hover:text-ink"><ArrowLeft className="size-4" />All runs</Link>
+    <div className="min-h-full bg-background">
+      <div className="chrome-rail justify-start border-b border-border-light">
+        <Button variant="ghost" className="h-8 px-2 text-muted hover:text-ink" asChild>
+          <Link href="/runs">
+            <icons.arrowLeft className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />
+            All activity
+          </Link>
+        </Button>
       </div>
-      {error ? <div className="px-5 pt-5 sm:px-8 lg:px-10"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
+      {error ? (
+        <div className="px-6 pt-6 sm:px-8 lg:px-10">
+          <div className="page-measure">
+            <InlineNotice tone="warning">{error}</InlineNotice>
+          </div>
+        </div>
+      ) : null}
       {content}
     </div>
   );
@@ -242,18 +253,116 @@ export function writeBackViewFromPersisted(run: RunView, summary: RunSummary): W
 }
 
 function PreparingSafetyCheck({ document }: { document: DocumentIdentityData }) {
-  return <div><DocumentIdentity document={document} /><WorkflowProgress current="Safety check" /><section className="mx-auto max-w-[720px] px-5 py-16 sm:px-8"><h1 className="text-[28px] font-semibold tracking-[-0.03em] text-ink">Proving the write is safe</h1><p className="mt-3 text-[14px] text-muted">Matching the approved old text, source revision, structural location, and guarded write operation.</p><div className="mt-9 space-y-5">{["Approved review located", "Mapping exact source range", "Preparing revision guard"].map((label, index) => <div key={label} className="flex gap-3"><StateMark state={index === 0 ? "complete" : index === 1 ? "current" : "idle"} /><span className="text-[14px] text-ink">{label}</span></div>)}</div></section></div>;
+  return (
+    <div>
+      <DocumentIdentity document={document} />
+      <WorkflowProgress current="Safety check" />
+      <section className="page-shell">
+        <div className="mx-auto w-full max-w-[720px]">
+          <h1 className="type-page-title">Proving the write is safe</h1>
+          <p className="type-body-muted mt-2.5 max-w-[38rem]">
+            Matching the approved old text, source revision, structural location, and guarded write operation.
+          </p>
+          <div className="mt-8 space-y-4">
+            {["Approved review located", "Mapping exact source range", "Preparing revision guard"].map((label, index) => (
+              <div key={label} className="flex items-center gap-3">
+                <StateMark state={index === 0 ? "complete" : index === 1 ? "current" : "idle"} />
+                <span className="text-[14px] text-ink">{label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function SafetyStop({ document, dryRun, onRetry }: { document: DocumentIdentityData; dryRun: DryRunView; onRetry: () => void }) {
   const recovery = safetyFailureRecovery(dryRun.reason_code);
-  return <div><DocumentIdentity document={document} /><WorkflowProgress current="Safety check" warning /><section className="mx-auto max-w-[760px] px-5 py-14 sm:px-8"><h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">Safety check stopped</h1><div className="mt-6"><InlineNotice tone="warning">{dryRun.reason ?? "DocRelay could not produce a unique, current write plan."}</InlineNotice></div>{dryRun.reason_code ? <p className="mt-4 font-mono text-[11px] text-muted">{dryRun.reason_code}</p> : null}{recovery.explanation ? <p className="mt-5 max-w-[650px] text-[14px] leading-6 text-muted">{recovery.explanation}</p> : null}{recovery.kind === "refresh-source" ? <Link href="/" className="mt-7 inline-flex min-h-11 items-center justify-center rounded-md border border-accent bg-surface px-4 text-[14px] font-semibold text-accent transition-colors hover:bg-accent-soft">{recovery.label}</Link> : <Button variant="secondary" className="mt-7" onClick={onRetry}>{recovery.label}</Button>}</section></div>;
+  return (
+    <div>
+      <DocumentIdentity document={document} />
+      <WorkflowProgress current="Safety check" warning />
+      <section className="page-shell">
+        <div className="mx-auto w-full max-w-[760px]">
+          <h1 className="type-page-title">Safety check stopped</h1>
+          <div className="mt-5">
+            <InlineNotice tone="warning">
+              {dryRun.reason ?? "DocRelay could not produce a unique, current write plan."}
+            </InlineNotice>
+          </div>
+          {dryRun.reason_code ? (
+            <p className="type-mono mt-4 text-muted">{dryRun.reason_code}</p>
+          ) : null}
+          {recovery.explanation ? (
+            <p className="type-body-muted mt-5 max-w-[40rem]">{recovery.explanation}</p>
+          ) : null}
+          {recovery.kind === "refresh-source" ? (
+            <Button variant="secondary" className="mt-7" asChild>
+              <Link href="/">{recovery.label}</Link>
+            </Button>
+          ) : (
+            <Button variant="secondary" className="mt-7" onClick={onRetry}>{recovery.label}</Button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function RunAttention({ document, summary, onRefresh }: { document: DocumentIdentityData; summary: RunSummary; onRefresh: () => void }) {
   const unknown = summary.write_back_status === "UNKNOWN" || summary.external_effects_unknown > 0;
-  return <div><DocumentIdentity document={document} /><WorkflowProgress current="Write-back" warning /><section className="mx-auto max-w-[760px] px-5 py-14 sm:px-8"><h1 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">{unknown ? "External effect needs verification" : "This run needs attention"}</h1><div className="mt-6"><InlineNotice tone={unknown ? "info" : "warning"}>{unknown ? "DocRelay cannot prove the external outcome yet. It will not automatically repeat the write." : "The workflow stopped without a verified write-back result."}</InlineNotice></div>{summary.last_error_code ? <p className="mt-4 font-mono text-[11px] text-muted">{summary.last_error_code}</p> : null}<Button variant="secondary" className="mt-7" onClick={onRefresh}><RefreshCw className="size-4" />Refresh run</Button></section></div>;
+  return (
+    <div>
+      <DocumentIdentity document={document} />
+      <WorkflowProgress current="Write-back" warning />
+      <section className="page-shell">
+        <div className="mx-auto w-full max-w-[760px]">
+          <h1 className="type-page-title">
+            {unknown ? "External effect needs verification" : "This run needs attention"}
+          </h1>
+          <div className="mt-5">
+            <InlineNotice tone={unknown ? "info" : "warning"}>
+              {unknown
+                ? "DocRelay cannot prove the external outcome yet. It will not automatically repeat the write."
+                : "The workflow stopped without a verified write-back result."}
+            </InlineNotice>
+          </div>
+          {summary.last_error_code ? (
+            <p className="type-mono mt-4 text-muted">{summary.last_error_code}</p>
+          ) : null}
+          <Button variant="secondary" className="mt-7" onClick={onRefresh}>
+            <icons.refresh className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />
+            Refresh run
+          </Button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
-function RunDetailSkeleton() { return <div className="space-y-4 px-5 py-8 sm:px-8 lg:px-10"><Skeleton className="h-10 w-32" /><Skeleton className="h-20 w-full" /><Skeleton className="h-12 w-full" /><Skeleton className="h-[420px] w-full" /></div>; }
-function RunLoadFailure({ error, onRetry }: { error: string | null; onRetry: () => void }) { return <section className="mx-auto max-w-[700px] px-5 py-20 sm:px-8"><h1 className="text-[30px] font-semibold text-ink">Run unavailable</h1><div className="mt-6"><InlineNotice tone="warning">{error ?? "The run could not be loaded."}</InlineNotice></div><Button variant="secondary" className="mt-7" onClick={onRetry}>Try again</Button></section>; }
+function RunDetailSkeleton() {
+  return (
+    <div className="page-shell">
+      <div className="page-measure space-y-4">
+        <Skeleton className="h-8 w-32 rounded-[9px]" />
+        <Skeleton className="h-20 w-full rounded-[var(--radius-pane)]" />
+        <Skeleton className="h-12 w-full rounded-[var(--radius-pane)]" />
+        <Skeleton className="h-[420px] w-full rounded-[var(--radius-pane)]" />
+      </div>
+    </div>
+  );
+}
+function RunLoadFailure({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  return (
+    <section className="page-shell">
+      <div className="mx-auto w-full max-w-[700px]">
+        <h1 className="type-page-title">Run unavailable</h1>
+        <div className="mt-5">
+          <InlineNotice tone="warning">{error ?? "The run could not be loaded."}</InlineNotice>
+        </div>
+        <Button variant="secondary" className="mt-7" onClick={onRetry}>Try again</Button>
+      </div>
+    </section>
+  );
+}

@@ -193,12 +193,12 @@ export function WatchWorkspace() {
   const lastScan = watch.last_scan_at ? formatRelativeTime(watch.last_scan_at) : null;
 
   return (
-    <div className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
-      <div className="mx-auto w-full max-w-[940px]">
+    <div className="page-shell">
+      <div className="page-measure">
         <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
           <div className="min-w-0">
             <h1 className="type-page-title">Watch</h1>
-            <p className="type-body-muted mt-1.5">Keep selected Drive folders in sync with DocRelay.</p>
+            <p className="type-body-muted mt-2">Keep selected Drive folders in sync with reviewed DocRelay changes.</p>
           </div>
           <WatchAccessStatus
             connection={connection}
@@ -229,12 +229,12 @@ export function WatchWorkspace() {
           </div>
         ) : null}
 
-        <section className="mt-9" aria-labelledby="watching-heading">
+        <section className="mt-10" aria-labelledby="watching-heading">
           <h2 id="watching-heading" className="type-section-heading">Watching</h2>
-          <div className="surface-section mt-3 px-5 py-5 shadow-[var(--shadow-subtle)] sm:px-6 sm:py-6">
+          <div className="surface-section mt-3 px-5 py-5 sm:px-6 sm:py-6">
             <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
               <span
-                className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-surface-muted text-muted"
+                className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-surface-muted text-muted"
                 aria-hidden="true"
               >
                 <icons.folderOpen className="size-[18px]" strokeWidth={ICON_STROKE} />
@@ -331,14 +331,25 @@ export function WatchWorkspace() {
           </div>
         </section>
 
-        <section className="mt-9" aria-labelledby="needs-review-heading">
+        <section className="mt-10" aria-labelledby="needs-review-heading">
           <div className="flex items-center justify-between gap-4">
             <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
             {pending.length > 0 ? (
-              <span className="type-caption tabular-nums">{pending.length}</span>
+              <span className="inline-flex h-[22px] items-center rounded-full bg-warning-soft px-2 text-[11.5px] font-medium tabular-nums text-warning">
+                {pending.length}
+              </span>
             ) : null}
           </div>
-          <div className="surface-section mt-3 overflow-hidden shadow-[var(--shadow-subtle)]">
+          {/* Documents waiting on a person are the loudest thing on the page:
+              a raised surface, a warm edge, and the action in reach. */}
+          <div
+            className={cn(
+              "mt-3 overflow-hidden rounded-[var(--radius-pane)] border bg-surface",
+              pending.length > 0
+                ? "border-warning/25 shadow-[var(--shadow-raised)]"
+                : "border-border-light shadow-[var(--shadow-subtle)]",
+            )}
+          >
             {pending.length === 0 ? (
               <EmptySurfaceRow
                 tone={latest ? "positive" : "neutral"}
@@ -349,11 +360,15 @@ export function WatchWorkspace() {
               return (
                 <article
                   key={run.run_id}
-                  className="flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border-light px-5 py-4 last:border-b-0"
+                  className="relative flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border-light px-5 py-4 last:border-b-0"
                 >
+                  <span
+                    className="absolute inset-y-0 left-0 w-[2px] bg-warning/45"
+                    aria-hidden="true"
+                  />
                   <icons.document className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
                   <div className="min-w-[12rem] flex-1">
-                    <p className="truncate text-[14px] font-medium tracking-[-0.012em] text-ink">{run.document_name}</p>
+                    <p className="truncate text-[14.5px] font-medium tracking-[-0.014em] text-ink">{run.document_name}</p>
                     <p className="mt-0.5 text-[12.5px] text-muted">
                       {action.kind === "review" ? proposalCountLabel(run.proposal_count) : action.statusLabel}
                     </p>
@@ -383,9 +398,9 @@ export function WatchWorkspace() {
           </div>
         </section>
 
-        <section className="mt-9" aria-labelledby="activity-heading">
+        <section className="mt-10" aria-labelledby="activity-heading">
           <h2 id="activity-heading" className="type-section-heading">Recent activity</h2>
-          <div className="surface-section mt-3 overflow-hidden shadow-[var(--shadow-subtle)]">
+          <div className="surface-section mt-3 overflow-hidden">
             {latestItems.length === 0 ? (
               <EmptySurfaceRow
                 tone="neutral"
@@ -397,9 +412,9 @@ export function WatchWorkspace() {
               return (
                 <div
                   key={`${item.provider_file_id}-${item.outcome}`}
-                  className="flex items-center gap-3 border-b border-border-light px-5 py-3 last:border-b-0"
+                  className="flex items-center gap-3 border-b border-border-light px-5 py-3 transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-muted/40"
                 >
-                  <icons.document className="size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  <icons.document className="size-4 shrink-0 text-muted-soft" strokeWidth={ICON_STROKE} aria-hidden="true" />
                   <p className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{item.name}</p>
                   <ActivityMark label={label} />
                 </div>
@@ -503,8 +518,8 @@ function WatchEmpty({
 }) {
   const watchReady = Boolean(connection?.watch_authorized);
   return (
-    <section className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
-      <div className="mx-auto w-full max-w-[640px] pt-6 lg:pt-[72px]">
+    <section className="page-shell">
+      <div className="mx-auto w-full max-w-[600px] pt-4 lg:pt-16">
         <div className="text-center">
           <h1 className="type-hero-title">Watch a Drive folder</h1>
           <p className="type-hero-body mx-auto mt-3 max-w-[30rem]">
@@ -513,37 +528,38 @@ function WatchEmpty({
         </div>
         {error ? <div className="mt-6"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
 
-        <div className="surface-section mx-auto mt-8 max-w-[540px] px-8 py-8 text-center shadow-[var(--shadow-raised)]">
+        <div className="mx-auto mt-9 flex max-w-[540px] flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-10 pb-8 text-center shadow-[var(--shadow-raised)]">
           <span
-            className="mx-auto grid size-10 place-items-center rounded-[9px] bg-surface-muted text-muted"
+            className="grid size-[68px] place-items-center rounded-[18px] border border-border-light bg-surface-elevated text-muted shadow-[var(--shadow-subtle)]"
             aria-hidden="true"
           >
-            <icons.folderOpen className="size-5" strokeWidth={ICON_STROKE} />
+            <icons.folderOpen className="size-7" strokeWidth={ICON_STROKE} />
           </span>
           {!connection || !watchReady ? (
             <>
-              <h2 className="mt-5 text-[16.5px] font-semibold tracking-[-0.022em] text-ink">
+              <h2 className="mt-6 text-[19px] leading-[1.25] font-semibold tracking-[-0.026em] text-ink">
                 Watch access required
               </h2>
-              <p className="mx-auto mt-2 max-w-[25rem] text-[13.5px] leading-[1.6] text-muted">
+              <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
                 DocRelay needs read access to discover files in the selected folder.
               </p>
-              <Button className="mt-6 h-[38px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
+              <Button className="mt-7 h-[38px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
             </>
           ) : (
             <>
-              <h2 className="mt-5 text-[16.5px] font-semibold tracking-[-0.022em] text-ink">
+              <h2 className="mt-6 text-[19px] leading-[1.25] font-semibold tracking-[-0.026em] text-ink">
                 Choose a folder
               </h2>
-              <p className="mx-auto mt-2 max-w-[25rem] text-[13.5px] leading-[1.6] text-muted">
+              <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
                 Select the Drive folder DocRelay should watch, then add a rule and set a schedule.
               </p>
-              <Button className="mt-6 h-[38px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
+              <Button className="mt-7 h-[38px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
                 {pickerBusy ? "Opening Drive…" : "Choose folder"}
               </Button>
             </>
           )}
-          <p className="type-caption mt-7 border-t border-border-light pt-4">
+          <p className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-light pt-4 text-[12px] text-muted-soft">
+            <icons.shield className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
             Every discovered change is reviewed before write-back.
           </p>
         </div>
@@ -573,7 +589,7 @@ function ScheduleEditor({ watch, onSaved }: { watch: WatchRoot; onSaved: () => v
             setEnabled(true);
             setIntervalValue(next);
           }}
-          className="h-9 rounded-[8px] border border-border bg-surface px-3 text-[13px] font-normal tracking-normal text-ink normal-case"
+          className="h-[34px] rounded-[9px] border border-border bg-surface px-3 text-[13px] font-normal tracking-normal text-ink normal-case outline-none focus-visible:border-ring"
         >
           <option value={0}>Manual</option>
           {INTERVALS.map((item) => (
@@ -638,7 +654,7 @@ function RuleEditor({
   }
 
   return (
-    <div className="mt-5 rounded-[9px] border border-border-light bg-background px-4 py-4">
+    <div className="mt-5 rounded-[10px] border border-border-light bg-background px-4 py-4">
       <h3 className="text-[13.5px] font-semibold tracking-[-0.015em] text-ink">
         {rule ? `Edit ${rule.folder_name}` : "Add rule"}
       </h3>
@@ -659,7 +675,7 @@ function RuleEditor({
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={4}
-            className="resize-y rounded-[9px] border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-[1.6] font-normal tracking-normal text-ink normal-case"
+            className="resize-y rounded-[9px] border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-[1.6] font-normal tracking-normal text-ink normal-case outline-none focus-visible:border-ring"
           />
         </label>
         <label className="flex items-center gap-2 text-[13px] text-ink">
@@ -740,8 +756,8 @@ function AuthorizeExactFileButton({
 
 function WatchSkeleton() {
   return (
-    <div className="min-h-full bg-background px-6 py-9 sm:px-8 lg:px-10 lg:py-12">
-      <div className="mx-auto w-full max-w-[940px] space-y-4">
+    <div className="page-shell">
+      <div className="page-measure space-y-4">
         <Skeleton className="h-7 w-40" />
         <Skeleton className="h-4 w-80" />
         <Skeleton className="h-44 w-full rounded-[var(--radius-pane)]" />

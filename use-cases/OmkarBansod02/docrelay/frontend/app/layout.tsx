@@ -23,9 +23,22 @@ export const metadata: Metadata = {
   description: "Safe AI write-back for cloud documents.",
 };
 
+/**
+ * Applies the stored navigation-rail preference before first paint so a
+ * collapsed rail never flashes open on load. Presentation only.
+ */
+const SIDEBAR_BOOTSTRAP = `try{var s=localStorage.getItem("docrelay.ui.sidebar.v1");document.documentElement.dataset.sidebar=s==="collapsed"?"collapsed":"expanded"}catch(e){document.documentElement.dataset.sidebar="expanded"}`;
+
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={cn("h-full antialiased", geistSans.variable, geistMono.variable)}>
+    <html
+      lang="en"
+      data-sidebar="expanded"
+      className={cn("h-full antialiased", geistSans.variable, geistMono.variable)}
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: SIDEBAR_BOOTSTRAP }} />
+      </head>
       <body className="min-h-dvh bg-background font-sans text-foreground">
         <AppProviders>
           <AppShell>{children}</AppShell>

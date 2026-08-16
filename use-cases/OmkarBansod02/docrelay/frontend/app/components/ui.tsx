@@ -21,20 +21,31 @@ export function Button({
   className = "",
   children,
   disabled,
+  asChild = false,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
   busy?: boolean;
+  /** Render a link (or other element) with button geometry, so no screen
+      needs to hand-roll a button-shaped anchor. */
+  asChild?: boolean;
 }) {
   return (
     <PrimitiveButton
       {...props}
+      asChild={asChild}
       variant={variantMap[variant]}
-      disabled={disabled || busy}
+      disabled={asChild ? undefined : disabled || busy}
       className={cn(className)}
     >
-      {busy ? <Spinner className="size-4" /> : null}
-      {children}
+      {asChild ? (
+        children
+      ) : (
+        <>
+          {busy ? <Spinner className="size-4" /> : null}
+          {children}
+        </>
+      )}
     </PrimitiveButton>
   );
 }
@@ -47,15 +58,15 @@ export function StateMark({
   label?: string;
 }) {
   const styles = {
-    idle: "border-muted/40 bg-surface text-transparent",
+    idle: "border-border bg-surface text-transparent",
     current: "border-primary bg-primary text-primary-foreground",
-    complete: "border-success bg-surface text-success",
-    warning: "border-warning bg-surface text-warning",
-    info: "border-info bg-surface text-info",
+    complete: "border-primary-line bg-success-soft text-success",
+    warning: "border-warning/40 bg-warning-soft text-warning",
+    info: "border-info/40 bg-info-soft text-info",
   };
   return (
-    <span className={cn("grid size-5 shrink-0 place-items-center rounded-sm border", styles[state])} aria-label={label}>
-      {state === "complete" ? <Check className="size-3.5" strokeWidth={2.25} /> : null}
+    <span className={cn("grid size-[18px] shrink-0 place-items-center rounded-[5px] border", styles[state])} aria-label={label}>
+      {state === "complete" ? <Check className="size-3" strokeWidth={2.5} /> : null}
     </span>
   );
 }
@@ -68,7 +79,7 @@ export function InlineNotice({
   children: ReactNode;
 }) {
   if (tone === "neutral") {
-    return <div className="border-l-2 border-border px-4 py-3 text-[14px] leading-6 text-ink">{children}</div>;
+    return <div className="rounded-[10px] border border-border-light bg-surface px-3.5 py-3 text-[14px] leading-[1.6] text-ink">{children}</div>;
   }
   return <StatusBanner tone={tone}>{children}</StatusBanner>;
 }

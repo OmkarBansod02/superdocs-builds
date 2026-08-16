@@ -118,7 +118,7 @@ export function WriteAuthorization({
 
           <div className="surface-section mt-8 px-6 py-6 shadow-[var(--shadow-raised)] sm:px-8">
             <div className="flex items-start gap-3">
-              <span className="grid size-9 shrink-0 place-items-center rounded-[8px] bg-surface-muted text-muted" aria-hidden="true">
+              <span className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-surface-muted text-muted" aria-hidden="true">
                 <FileText className="size-[18px]" strokeWidth={1.75} />
               </span>
               <div className="min-w-0 flex-1">

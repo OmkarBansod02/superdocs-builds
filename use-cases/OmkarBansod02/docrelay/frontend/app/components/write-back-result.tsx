@@ -57,13 +57,13 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
       <WorkflowProgress current="Write-back" />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
         <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
-          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">{multiple ? "Changes written and verified" : "Change written and verified"}</h2>
+          <h2 className="type-page-title">{multiple ? "Changes written and verified" : "Change written and verified"}</h2>
           <p className="mt-2 text-[15px] text-muted">{multiple ? "The approved changes are now in Google Drive." : "The approved change is now in Google Drive."}</p>
           <p className="mt-5 text-[17px] font-semibold text-success">Write-back verified</p>
 
           {items.length ? (
             <div className="mt-9">
-              <h3 className="text-[18px] font-semibold text-ink">What changed</h3>
+              <h3 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">What changed</h3>
               <div className="mt-5 grid gap-8">
                 {items.map((item, index) => (
                   <div key={item.proposal_id ?? String(index)}>
@@ -82,7 +82,7 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
 
           <div className="mt-6 grid gap-3">
             {fileId ? (
-              <a href={`https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`} target="_blank" rel="noreferrer" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-accent bg-accent px-4 text-[14px] font-semibold text-white transition-colors hover:bg-accent-strong">
+              <a href={`https://docs.google.com/document/d/${encodeURIComponent(fileId)}/edit`} target="_blank" rel="noreferrer" className="type-button inline-flex h-[34px] items-center justify-center gap-1.5 rounded-[9px] bg-primary px-3.5 text-primary-foreground shadow-[var(--shadow-subtle)] transition-colors duration-[var(--motion-duration)] hover:bg-primary-hover">
                 Open in Google Drive <ExternalLink className="size-4" aria-hidden="true" />
               </a>
             ) : null}
@@ -92,7 +92,7 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
         </section>
 
         <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
-          <h2 className="text-[19px] font-semibold text-ink">Verification record</h2>
+          <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Verification record</h2>
           <div className="mt-8">
             {checks.map((label, index) => (
               <div key={label} className="relative flex gap-3 pb-9 last:pb-0">
@@ -116,11 +116,11 @@ function ConflictState({ identity, result, deciding, onDecision }: { identity: D
       <WorkflowProgress current="Write-back" warning />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
         <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
-          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Google Drive has a newer version</h2>
+          <h2 className="type-page-title">Google Drive has a newer version</h2>
           <p className="mt-2 text-[15px] text-muted">DocRelay stopped before applying the approved change.</p>
           <div className="mt-5"><InlineNotice tone="warning"><strong>Nothing was silently overwritten.</strong></InlineNotice></div>
 
-          <h3 className="mt-9 text-[18px] font-semibold text-ink">What DocRelay found</h3>
+          <h3 className="mt-9 text-[15.5px] font-semibold tracking-[-0.02em] text-ink">What DocRelay found</h3>
           <dl className="mt-4 max-w-[560px] divide-y divide-border border-y border-border text-[14px]">
             <RevisionRow label="Prepared from" value={conflict.baseline_revision_id} />
             <RevisionRow label="Latest in Drive" value={conflict.latest_revision_id} />
@@ -137,7 +137,7 @@ function ConflictState({ identity, result, deciding, onDecision }: { identity: D
         </section>
 
         <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
-          <h2 className="text-[19px] font-semibold text-ink">Safe stop</h2>
+          <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Safe stop</h2>
           <div className="mt-8">
             {["Review preserved", "Revision mismatch detected", "Google write not applied"].map((label) => (
               <div key={label} className="relative flex gap-3 pb-10">
@@ -171,7 +171,7 @@ function AttentionState({ identity, result }: { identity: DocumentIdentityData; 
       <DocumentIdentity document={identity} />
       <WorkflowProgress current="Write-back" warning />
       <section className="mx-auto max-w-[780px] px-5 py-14 sm:px-8 lg:py-20">
-        <h2 className="text-[30px] font-semibold tracking-[-0.04em] text-ink">{title}</h2>
+        <h2 className="type-page-title">{title}</h2>
         <div className="mt-6"><InlineNotice tone={unknown ? "info" : "warning"}>{message}</InlineNotice></div>
         {result.attention_code ? <p className="mt-5 font-mono text-[11px] text-muted">{result.attention_code}</p> : null}
       </section>

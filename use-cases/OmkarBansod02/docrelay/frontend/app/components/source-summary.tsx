@@ -23,7 +23,7 @@ export function SourceSummary({
   }
 
   return (
-    <div className="bg-surface border border-border rounded-md p-4">
+    <div className="rounded-[10px] border border-border-light bg-surface p-4">
       <div className="flex items-start gap-3">
         <div className="w-9 h-9 rounded bg-accent-soft flex items-center justify-center flex-shrink-0">
           <FileText className="w-4.5 h-4.5 text-accent" />

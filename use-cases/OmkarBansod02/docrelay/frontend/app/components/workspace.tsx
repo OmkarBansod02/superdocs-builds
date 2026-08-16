@@ -39,6 +39,7 @@ import {
   type UserInstructionTurn,
 } from "../lib/conversation";
 import { mapImportFailure, type SelectedDriveFile } from "../lib/import-state";
+import { ICON_STROKE, icons } from "@/lib/icons";
 import {
   buildReviewDecisionSubmission,
   routeRun,
@@ -53,6 +54,7 @@ import { DocumentWorkbench } from "./document-workbench";
 import { ConversationPanel } from "./conversation-panel";
 import { extractText } from "./diff-view";
 import { MotionPanel } from "./motion-panel";
+import { useConversationWidthStyle } from "./workbench-split";
 import { ErrorState } from "./error-state";
 import {
   ConversationErrorEvent,
@@ -702,140 +704,140 @@ export function Workspace() {
 
   return (
     <div className="h-full min-h-0">
-          {reopenThread?.sourceError && !sourced ? (
-            <ReopenSourceFailure
-              thread={reopenThread}
-              turns={conversation}
-              onRetry={retryReopen}
-            />
-          ) : null}
+    {reopenThread?.sourceError && !sourced ? (
+      <ReopenSourceFailure
+        thread={reopenThread}
+        turns={conversation}
+        onRetry={retryReopen}
+      />
+    ) : null}
 
-          {!reopenThread?.sourceError && (state.stage === "source" || state.stage === "importing") ? (
-            <MotionPanel key={entryKey} className="h-full">
-              {state.stage === "source" ? (
-                <SourceChooser
-                  initialConnection={state.connection}
-                  onDocumentPicked={beginImport}
-                  onConnectionChange={handleConnectionChange}
-                />
-              ) : null}
-              {state.stage === "importing" ? (
-                <ImportingDocument
-                  documentName={state.selectedFile.name}
-                  phase={state.error ? "FAILED" : "READING_SOURCE"}
-                  error={state.error}
-                  onRetry={() => beginImport(state.connection, state.selectedFile)}
-                  onChooseAnother={handleChangeSource}
-                />
-              ) : null}
-            </MotionPanel>
-          ) : null}
+    {!reopenThread?.sourceError && (state.stage === "source" || state.stage === "importing") ? (
+      <MotionPanel key={entryKey} className="h-full">
+        {state.stage === "source" ? (
+          <SourceChooser
+            initialConnection={state.connection}
+            onDocumentPicked={beginImport}
+            onConnectionChange={handleConnectionChange}
+          />
+        ) : null}
+        {state.stage === "importing" ? (
+          <ImportingDocument
+            documentName={state.selectedFile.name}
+            phase={state.error ? "FAILED" : "READING_SOURCE"}
+            error={state.error}
+            onRetry={() => beginImport(state.connection, state.selectedFile)}
+            onChooseAnother={handleChangeSource}
+          />
+        ) : null}
+      </MotionPanel>
+    ) : null}
 
-          {sourced ? (
-            <DocumentWorkbench
-              source={sourced}
-              turns={conversation}
-              draft={draft}
-              busy={submitting || threadBusy}
-              composerEnabled={composerCanContinue && !threadBlocked}
-              stateLabel={matchingThread?.historyError
-                ? "Needs attention"
-                : threadBusy
-                  ? "Loading"
-                  : workbenchStateLabel(state)}
-              onDraftChange={setDraft}
-              onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
-              onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
-              onChangeSource={handleChangeSource}
-              reviewMarks={reviewMarks}
-              documentPreview={verifiedWrite
-                ? state.result.verified_preview ?? undefined
-                : undefined}
-              documentRevision={verifiedWrite
-                ? state.result.verified_preview?.revision_id
-                  ?? state.result.resulting_revision_id
-                  ?? undefined
-                : undefined}
-            >
-              {matchingThread?.historyLoading ? (
-                <DocRelayEvent title="Loading saved document history…" />
-              ) : null}
-              {matchingThread?.activeRunLoading ? (
-                <DocRelayEvent title="Loading the active workflow…" />
-              ) : null}
-              {matchingThread?.historyError ? (
-                <ConversationErrorEvent
-                  message={matchingThread.historyError}
-                  recoverable
-                  onRetry={retryReopen}
-                />
-              ) : null}
-              {state.stage === "processing" ? (
-                <ProcessingEvent
-                  run={state.run}
-                  onCheckStatus={handleCheckProviderStatus}
-                />
-              ) : null}
-              {state.stage === "review" ? (
-                <ReviewEvent
-                  proposals={state.proposals}
-                  blocks={previewBlocks}
-                  decisions={state.decisions}
-                  submitting={state.submitting}
-                  onDecide={handleDecide}
-                  onSubmitAll={handleSubmitDecisions}
-                />
-              ) : null}
-              {state.stage === "dry-run" ? (
-                <DryRunEvent
-                  dryRun={state.dryRun}
-                  writing={state.writing}
-                  onWrite={() => handleWriteBack(
-                    state.connection,
-                    state.source,
-                    state.run,
-                    state.dryRun,
-                  )}
-                />
-              ) : null}
-              {state.stage === "write-result" && !verifiedWrite ? (
-                <WriteResultEvent
-                  fileId={state.source.source.provider_file_id}
-                  result={state.result}
-                  deciding={state.deciding}
-                  onDecision={(choice) => handleConflictDecision(
-                    state.connection,
-                    state.source,
-                    state.run,
-                    choice,
-                  )}
-                />
-              ) : null}
-              {state.stage === "unsupported" ? (
-                <UnsupportedEvent
-                  dryRun={state.dryRun}
-                  onReturn={state.dryRun.reason_code === "MALFORMED_SNAPSHOT"
-                    ? handleChangeSource
-                    : handleReturnFromUnsupported}
-                />
-              ) : null}
-              {state.stage === "error" ? (
-                <ConversationErrorEvent
-                  message={state.message}
-                  recoverable={state.recoverable}
-                  onRetry={handleReset}
-                />
-              ) : null}
-            </DocumentWorkbench>
-          ) : null}
+    {sourced ? (
+      <DocumentWorkbench
+        source={sourced}
+        turns={conversation}
+        draft={draft}
+        busy={submitting || threadBusy}
+        composerEnabled={composerCanContinue && !threadBlocked}
+        stateLabel={matchingThread?.historyError
+          ? "Needs attention"
+          : threadBusy
+            ? "Loading"
+            : workbenchStateLabel(state)}
+        onDraftChange={setDraft}
+        onSubmit={(instruction) => void handleSubmitInstruction(instruction)}
+        onRetry={(turn) => void handleSubmitInstruction(turn.text, turn.id)}
+        onChangeSource={handleChangeSource}
+        reviewMarks={reviewMarks}
+        documentPreview={verifiedWrite
+          ? state.result.verified_preview ?? undefined
+          : undefined}
+        documentRevision={verifiedWrite
+          ? state.result.verified_preview?.revision_id
+            ?? state.result.resulting_revision_id
+            ?? undefined
+          : undefined}
+      >
+        {matchingThread?.historyLoading ? (
+          <DocRelayEvent title="Loading saved document history…" />
+        ) : null}
+        {matchingThread?.activeRunLoading ? (
+          <DocRelayEvent title="Loading the active workflow…" />
+        ) : null}
+        {matchingThread?.historyError ? (
+          <ConversationErrorEvent
+            message={matchingThread.historyError}
+            recoverable
+            onRetry={retryReopen}
+          />
+        ) : null}
+        {state.stage === "processing" ? (
+          <ProcessingEvent
+            run={state.run}
+            onCheckStatus={handleCheckProviderStatus}
+          />
+        ) : null}
+        {state.stage === "review" ? (
+          <ReviewEvent
+            proposals={state.proposals}
+            blocks={previewBlocks}
+            decisions={state.decisions}
+            submitting={state.submitting}
+            onDecide={handleDecide}
+            onSubmitAll={handleSubmitDecisions}
+          />
+        ) : null}
+        {state.stage === "dry-run" ? (
+          <DryRunEvent
+            dryRun={state.dryRun}
+            writing={state.writing}
+            onWrite={() => handleWriteBack(
+              state.connection,
+              state.source,
+              state.run,
+              state.dryRun,
+            )}
+          />
+        ) : null}
+        {state.stage === "write-result" && !verifiedWrite ? (
+          <WriteResultEvent
+            fileId={state.source.source.provider_file_id}
+            result={state.result}
+            deciding={state.deciding}
+            onDecision={(choice) => handleConflictDecision(
+              state.connection,
+              state.source,
+              state.run,
+              choice,
+            )}
+          />
+        ) : null}
+        {state.stage === "unsupported" ? (
+          <UnsupportedEvent
+            dryRun={state.dryRun}
+            onReturn={state.dryRun.reason_code === "MALFORMED_SNAPSHOT"
+              ? handleChangeSource
+              : handleReturnFromUnsupported}
+          />
+        ) : null}
+        {state.stage === "error" ? (
+          <ConversationErrorEvent
+            message={state.message}
+            recoverable={state.recoverable}
+            onRetry={handleReset}
+          />
+        ) : null}
+      </DocumentWorkbench>
+    ) : null}
 
-          {state.stage === "error" && !sourced ? (
-            <ErrorState
-              message={state.message}
-              recoverable={state.recoverable}
-              onRetry={handleReset}
-            />
-          ) : null}
+    {state.stage === "error" && !sourced ? (
+      <ErrorState
+        message={state.message}
+        recoverable={state.recoverable}
+        onRetry={handleReset}
+      />
+    ) : null}
     </div>
   );
 }
@@ -849,10 +851,14 @@ function ReopenSourceFailure({
   turns: UserInstructionTurn[];
   onRetry: () => void;
 }) {
+  const splitStyle = useConversationWidthStyle();
   return (
     <MotionPanel className="flex h-full min-h-0 flex-col">
-      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background lg:gap-[13px] lg:p-[var(--workbench-gutter)]">
-        <div className="flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden bg-conversation lg:w-[420px] lg:min-w-[360px] lg:max-w-[470px] lg:shrink-0 lg:rounded-[var(--radius-pane)] lg:border lg:border-border-light lg:shadow-[var(--shadow-subtle)] xl:w-[440px]">
+      <div
+        style={splitStyle}
+        className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background lg:gap-[var(--workbench-gutter)] lg:p-[var(--workbench-gutter)]"
+      >
+        <div className="conversation-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-conversation lg:shrink-0 lg:rounded-[var(--radius-pane)] lg:border lg:border-border-light lg:shadow-[var(--shadow-subtle)]">
           <ConversationPanel
             title={thread.file.name}
             stateLabel="Needs attention"
@@ -879,12 +885,21 @@ function ReopenSourceFailure({
         </div>
         <section
           aria-label="Current Google document"
-          className="pane hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 shadow-[var(--shadow-subtle)] lg:grid"
+          className="pane hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 lg:grid"
         >
-          <div className="max-w-sm rounded-[10px] border border-border-light bg-surface px-5 py-4 shadow-[var(--shadow-subtle)]">
-            <h2 className="text-[14px] font-medium text-foreground">Current document unavailable</h2>
+          <div className="max-w-[26rem] text-center">
+            <span
+              className="mx-auto grid size-9 place-items-center rounded-[9px] border border-border-light bg-surface text-muted"
+              aria-hidden="true"
+            >
+              <icons.warning className="size-4" strokeWidth={ICON_STROKE} />
+            </span>
+            <h2 className="mt-4 text-[14.5px] font-medium text-foreground">
+              Current document unavailable
+            </h2>
             <p className="mt-1.5 text-[13px] leading-[1.6] text-muted">
-              DocRelay could not refresh the Google source, so no current document content is shown and new edits are disabled.
+              DocRelay could not refresh the Google source, so no current document content is shown
+              and new edits are disabled.
             </p>
           </div>
         </section>

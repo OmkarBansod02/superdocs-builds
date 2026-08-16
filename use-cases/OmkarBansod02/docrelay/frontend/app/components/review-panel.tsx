@@ -51,7 +51,7 @@ export function ReviewPanel({
       <WorkflowProgress current="Review" />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_270px]">
         <section className="min-w-0 px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
-          <h2 className="text-[30px] font-semibold tracking-[-0.04em] text-ink sm:text-[34px]">Review proposed changes</h2>
+          <h2 className="type-page-title">Review proposed changes</h2>
           <p className="mt-2 text-[14px] leading-6 text-muted sm:text-[15px]">Approve or reject every change before DocRelay prepares a write plan.</p>
 
           <div className="mt-7 grid overflow-hidden rounded-lg border border-border md:grid-cols-[210px_minmax(0,1fr)]">
@@ -112,7 +112,7 @@ export function ReviewPanel({
         </section>
 
         <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-7 lg:py-10">
-          <h2 className="text-[15px] font-semibold text-ink">Review evidence</h2>
+          <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ink">Review evidence</h2>
           <div className="mt-7">
             {[
               { label: "Proposal received", state: "complete" as const },

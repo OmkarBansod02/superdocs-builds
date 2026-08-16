@@ -33,11 +33,11 @@ export function DryRunSummary({
       <WorkflowProgress current="Safety check" />
       <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.72fr)]">
         <section className="px-5 py-9 sm:px-8 lg:px-10 lg:py-10">
-          <h2 className="text-[31px] font-semibold tracking-[-0.04em] text-ink sm:text-[36px]">Ready for safe write-back</h2>
+          <h2 className="type-page-title">Ready for safe write-back</h2>
           <p className="mt-2 max-w-[680px] text-[15px] leading-6 text-muted">{writePlanSummary(dryRun)}</p>
 
           <div className="mt-8">
-            <h3 className="text-[18px] font-semibold text-ink">{(dryRun.changes?.length ?? 1) > 1 ? "Changes to write" : "Change to write"}</h3>
+            <h3 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">{(dryRun.changes?.length ?? 1) > 1 ? "Changes to write" : "Change to write"}</h3>
             <div className="mt-6 grid gap-8">
               {mappedChanges(dryRun).map((change, index) => (
                 <div key={change.proposal_id ?? String(index)}>
@@ -63,7 +63,7 @@ export function DryRunSummary({
             {writing ? "Creating and verifying backup…" : "Write back safely"}
           </Button>
 
-          <button type="button" onClick={() => setShowDetails((value) => !value)} aria-expanded={showDetails} className="mx-auto mt-3 flex min-h-11 items-center gap-2 px-3 text-[13px] font-medium text-accent hover:underline">
+          <button type="button" onClick={() => setShowDetails((value) => !value)} aria-expanded={showDetails} className="type-button mx-auto mt-3 flex h-8 items-center gap-1.5 rounded-[8px] px-3 text-accent hover:bg-accent-soft">
             View technical evidence
             <ChevronDown className={`size-4 transition-transform ${showDetails ? "rotate-180" : ""}`} aria-hidden="true" />
           </button>
@@ -73,7 +73,7 @@ export function DryRunSummary({
         </section>
 
         <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
-          <h2 className="text-[19px] font-semibold text-ink">Safety checks</h2>
+          <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Safety checks</h2>
           <div className="mt-8">
             {safetyChecks.map((label, index) => (
               <div key={label} className="relative flex gap-3 pb-9 last:pb-0">
@@ -91,7 +91,7 @@ export function DryRunSummary({
 
 function TechnicalDetails({ dryRun }: { dryRun: DryRunView }) {
   return (
-    <dl className="mt-2 space-y-3 rounded-md border border-border bg-surface-muted p-4 font-mono text-[11px] leading-5 text-muted">
+    <dl className="mt-2 space-y-3 rounded-[10px] border border-border-light bg-surface-muted/60 p-4 font-mono text-[11px] leading-5 text-muted">
       {dryRun.mapping_proof_id ? <TechnicalRow label="MappingProof" value={dryRun.mapping_proof_id} /> : null}
       {dryRun.mapping_proof_sha256 ? <TechnicalRow label="Proof SHA-256" value={dryRun.mapping_proof_sha256} /> : null}
       {dryRun.write_plan_id ? <TechnicalRow label="WritePlan" value={dryRun.write_plan_id} /> : null}
