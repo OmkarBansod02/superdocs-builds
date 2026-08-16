@@ -35,6 +35,7 @@ export function PolicySetApp() {
     return (
       <WorkspaceView
         workspace={workspace}
+        onWorkspaceChange={setWorkspace}
         onEditIntake={() => {
           setIntake(intakeFromProfile(clonePolicyProfile(workspace.profile)));
           setView("intake");

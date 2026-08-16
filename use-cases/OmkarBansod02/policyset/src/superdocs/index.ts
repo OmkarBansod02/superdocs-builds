@@ -11,6 +11,16 @@ export {
   SuperDocsRequestError,
 } from "./errors";
 export {
+  PolicySetSuperDocsSafetyError,
+  assertPendingChangesTargetDocument,
+  createPolicySetSuperDocsClient,
+  getPolicyDocumentEditJob,
+  getPolicySetSessionDocuments,
+  initializePolicySetSession,
+  startPolicyDocumentEdit,
+  submitPolicyDocumentReview,
+} from "./policyset";
+export {
   DOCX_MIME,
   PDF_MIME,
   SUPERDOCS_API_BASE,

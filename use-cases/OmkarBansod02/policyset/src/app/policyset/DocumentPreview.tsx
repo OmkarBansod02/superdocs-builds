@@ -16,10 +16,12 @@ export function DocumentPreview({
   documentType,
   html,
   profile,
+  source = "deterministic",
 }: {
   documentType: PolicyDocumentType;
   html: string;
   profile: PolicyProfile;
+  source?: "deterministic" | "superdocs";
 }) {
   const body = previewBody(html, profile.company.legalName);
   const title =
@@ -28,10 +30,14 @@ export function DocumentPreview({
   return (
     <article
       className="document-preview"
-      data-preview-surface="deterministic-html"
+      data-preview-surface={
+        source === "superdocs" ? "superdocs-html" : "deterministic-html"
+      }
       data-policy-document={documentType}
     >
-      <p className="document-kicker">Deterministic preview</p>
+      <p className="document-kicker">
+        {source === "superdocs" ? "SuperDocs content" : "Deterministic preview"}
+      </p>
       <header className="document-header">
         <h1>{title}</h1>
         <p className="document-meta">
