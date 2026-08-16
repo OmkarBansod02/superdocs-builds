@@ -48,6 +48,7 @@ import {
   toggleSidebarCollapsed,
 } from "../lib/ui-preferences";
 import { ICON_STROKE, icons } from "@/lib/icons";
+import { DocRelayAvatar, GoogleDocsMark } from "./brand";
 
 const navigation = [
   { href: "/", label: "Workspace", icon: icons.workspace },
@@ -160,7 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-border-light px-3 lg:hidden">
+        <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border-light bg-sidebar px-3 lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button
@@ -230,14 +231,21 @@ function SidebarChrome({
 }) {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
-      <div className="nav-inset flex h-14 shrink-0 items-center justify-between gap-1">
+      <div className="nav-inset relative flex h-[68px] shrink-0 items-center justify-between gap-1">
         <Brand />
         {onToggleCollapsed ? (
-          <RailToggle collapsed={collapsed} onToggle={onToggleCollapsed} />
+          <>
+            {/* Collapsed, the mark is the rail's header and hands over to the
+                expand control only while the rail is hovered or focused. */}
+            <div className="rail-brand nav-collapsed-only mx-auto w-fit">
+              <DocRelayAvatar className="size-[30px]" />
+            </div>
+            <RailToggle collapsed={collapsed} onToggle={onToggleCollapsed} />
+          </>
         ) : null}
       </div>
 
-      <div className="nav-inset">
+      <div className="nav-inset pb-1">
         <NewDocumentButton
           pathname={pathname}
           collapsed={collapsed}
@@ -247,9 +255,14 @@ function SidebarChrome({
       </div>
 
       <ScrollArea className="scrollbar-inset min-h-0 min-w-0 flex-1">
-        <div className="nav-inset flex min-w-0 flex-col gap-5 pt-4 pb-3">
-          <PrimaryNavigation pathname={pathname} collapsed={collapsed} onNavigate={onNavigate} />
-          <div className="nav-expanded-only min-w-0">
+        <div className="flex min-w-0 flex-col pt-4 pb-4">
+          <div className="nav-inset min-w-0">
+            <PrimaryNavigation pathname={pathname} collapsed={collapsed} onNavigate={onNavigate} />
+          </div>
+          {/* A hairline is enough to separate navigation from documents; the
+              rail never nests a card inside itself. */}
+          <div className="nav-expanded-only mx-4 mt-5 h-px shrink-0 bg-sidebar-border" aria-hidden="true" />
+          <div className="nav-expanded-only nav-inset mt-4 min-w-0">
             <RecentDocuments
               documents={recent}
               activeFileId={activeFileId}
@@ -278,7 +291,7 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
           aria-label={label}
           aria-expanded={!collapsed}
           className={cn(
-            "rail-toggle grid size-7 shrink-0 place-items-center rounded-[7px] text-sidebar-muted",
+            "rail-toggle grid size-8 shrink-0 place-items-center rounded-[8px] text-sidebar-muted",
             "hover:bg-sidebar-accent hover:text-sidebar-foreground",
           )}
         >
@@ -302,14 +315,16 @@ function RailToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
 function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className={cn("flex min-w-0 items-center gap-2.5", compact ? "" : "nav-expanded-only")}>
-      <span
-        className="grid size-[22px] shrink-0 place-items-center rounded-[6px] bg-primary text-primary-foreground"
-        aria-hidden="true"
-      >
-        <icons.document className="size-3.5" strokeWidth={2} />
-      </span>
-      <span className="truncate text-[14.5px] font-semibold tracking-[-0.03em] text-sidebar-foreground">
-        DocRelay
+      <DocRelayAvatar className="size-[30px]" />
+      <span className="min-w-0">
+        <span className="block truncate text-[15.5px] leading-[1.15] font-semibold tracking-[-0.032em] text-sidebar-foreground">
+          DocRelay
+        </span>
+        {compact ? null : (
+          <span className="mt-[3px] block truncate text-[11px] leading-none font-medium tracking-[-0.004em] text-sidebar-muted">
+            AI-safe Google Docs editing
+          </span>
+        )}
       </span>
     </div>
   );
@@ -335,23 +350,22 @@ function NewDocumentButton({
     onNewDocument?.();
   };
 
+  // The one filled control in the rail. Everything else is quiet, so the
+  // product's starting action is unmistakable at a glance.
   const button = (
     <button
       type="button"
       onClick={start}
       aria-label="New document"
       className={cn(
-        "nav-item group/new flex h-9 w-full items-center rounded-[9px] border border-sidebar-border bg-surface",
-        "type-nav text-sidebar-foreground shadow-[var(--shadow-subtle)]",
-        "transition-[box-shadow,border-color,background-color] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
-        "hover:border-border hover:shadow-[var(--shadow-raised)]",
+        "nav-item group/new flex h-[38px] w-full items-center justify-center rounded-[10px]",
+        "bg-primary text-[13.5px] leading-none font-medium tracking-[-0.012em] text-primary-foreground",
+        "shadow-[var(--shadow-raised)]",
+        "transition-[background-color,box-shadow,translate] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
+        "hover:bg-primary-hover hover:shadow-[var(--shadow-lifted)] active:translate-y-px",
       )}
     >
-      <icons.plus
-        className="size-4 shrink-0 text-sidebar-muted transition-colors duration-[var(--motion-duration)] group-hover/new:text-primary"
-        strokeWidth={ICON_STROKE}
-        aria-hidden="true"
-      />
+      <icons.plus className="size-4 shrink-0" strokeWidth={2.25} aria-hidden="true" />
       <span className="nav-label truncate">New document</span>
     </button>
   );
@@ -375,7 +389,7 @@ function PrimaryNavigation({
   onNavigate?: () => void;
 }) {
   return (
-    <nav aria-label="Primary" className="flex min-w-0 flex-col gap-0.5">
+    <nav aria-label="Primary" className="flex min-w-0 flex-col gap-1">
       {navigation.map((item) => {
         const active = isActive(pathname, item.href);
         const Icon = item.icon;
@@ -386,15 +400,15 @@ function PrimaryNavigation({
             aria-label={item.label}
             aria-current={active ? "page" : undefined}
             className={cn(
-              "nav-item type-nav relative flex h-8 min-w-0 items-center rounded-[7px]",
+              "nav-item type-nav relative flex h-9 min-w-0 items-center rounded-[9px]",
               "transition-[background-color,color] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
               active
-                ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                : "text-sidebar-muted hover:bg-sidebar-accent/60 hover:text-sidebar-foreground",
+                ? "bg-accent-soft font-medium text-foreground"
+                : "text-sidebar-muted hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
             )}
           >
             <Icon
-              className={cn("size-4 shrink-0", active ? "text-primary" : "text-sidebar-muted")}
+              className={cn("size-[17px] shrink-0", active ? "text-primary" : "text-sidebar-muted")}
               strokeWidth={ICON_STROKE}
             />
             <span className="nav-label truncate">{item.label}</span>
@@ -429,10 +443,10 @@ function RecentDocuments({
   onRemove: (providerFileId: string) => void;
 }) {
   return (
-    <section aria-label="Recent documents" className="flex min-w-0 flex-col gap-1.5">
-      <h2 className="type-section-heading px-2.5">Recent</h2>
+    <section aria-label="Recent documents" className="flex min-w-0 flex-col gap-2">
+      <h2 className="type-section-heading px-[11px]">Recent</h2>
       {documents.length > 0 ? (
-        <ul className="flex min-w-0 flex-col">
+        <ul className="flex min-w-0 flex-col gap-0.5">
           {documents.map((document) => (
             <RecentDocumentRow
               key={document.providerFileId}
@@ -446,7 +460,7 @@ function RecentDocuments({
           ))}
         </ul>
       ) : (
-        <p className="px-2.5 py-1 text-[12.5px] leading-[1.5] text-sidebar-muted">
+        <p className="px-[11px] py-1 text-[12.5px] leading-[1.5] text-sidebar-muted">
           {connected ? "No documents yet." : "Connect Drive to see documents."}
         </p>
       )}
@@ -454,7 +468,7 @@ function RecentDocuments({
         href="/runs"
         onClick={onNavigate}
         aria-label="View all documents in Activity"
-        className="type-caption mt-1 inline-flex w-fit items-center gap-0.5 rounded-[6px] px-2.5 py-1 text-sidebar-muted transition-colors duration-[var(--motion-duration)] hover:text-sidebar-foreground"
+        className="type-caption mt-1 inline-flex w-fit items-center gap-0.5 rounded-[7px] px-[11px] py-1 text-sidebar-muted transition-colors duration-[var(--motion-duration)] hover:text-sidebar-foreground"
       >
         View all documents
         <icons.chevronRight className="size-3.5" strokeWidth={ICON_STROKE} aria-hidden="true" />
@@ -484,10 +498,10 @@ function RecentDocumentRow({
   return (
     <li
       className={cn(
-        "group/recent relative min-w-0 rounded-[7px] transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
+        "group/recent relative min-w-0 rounded-[9px] transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
         "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--motion-duration)]",
-        active ? "bg-accent-soft" : "hover:bg-sidebar-accent/60",
-        menuOpen && !active ? "bg-sidebar-accent/60" : "",
+        active ? "bg-accent-soft" : "hover:bg-sidebar-accent/70",
+        menuOpen && !active ? "bg-sidebar-accent/70" : "",
       )}
     >
       <Tooltip>
@@ -498,18 +512,16 @@ function RecentDocumentRow({
             disabled={!connected}
             aria-current={active ? "true" : undefined}
             aria-label={timestamp ? `${document.name}, ${timestamp}` : document.name}
-            className="flex w-full min-w-0 items-start gap-2.5 rounded-[7px] py-[7px] pr-[34px] pl-2.5 text-left outline-none disabled:pointer-events-none disabled:opacity-50"
+            className="flex w-full min-w-0 items-start gap-2.5 rounded-[9px] py-2 pr-[34px] pl-[11px] text-left outline-none disabled:pointer-events-none disabled:opacity-50"
           >
-            <icons.document
-              className={cn("mt-px size-4 shrink-0", active ? "text-primary" : "text-sidebar-muted")}
-              strokeWidth={ICON_STROKE}
-              aria-hidden="true"
-            />
+            <GoogleDocsMark className="mt-[1px] size-[15px]" />
             <span className="block min-w-0 flex-1">
-              <span className="block truncate text-[13.5px] leading-[1.35] font-medium tracking-[-0.014em] text-sidebar-foreground">
+              {/* Two lines, then an ellipsis: a long agreement title stays
+                  readable instead of collapsing to a few words. */}
+              <span className="line-clamp-2 text-[13.25px] leading-[1.38] font-medium tracking-[-0.014em] text-sidebar-foreground">
                 {document.name}
               </span>
-              <span className="mt-px block truncate text-[11.5px] leading-[1.4] text-sidebar-muted">
+              <span className="mt-[3px] block truncate text-[11.5px] leading-[1.4] text-sidebar-muted">
                 {active ? (timestamp ? `Open · ${timestamp}` : "Open") : timestamp}
               </span>
             </span>
@@ -522,7 +534,7 @@ function RecentDocumentRow({
 
       {/* Contained inside the row's reserved right inset, so it can never sit
           on top of the title or push the row wider. */}
-      <div className="pointer-events-none absolute top-1.5 right-1.5 grid size-6 place-items-center">
+      <div className="pointer-events-none absolute top-2 right-1.5 grid size-6 place-items-center">
         {active && !menuOpen ? (
           <span
             className="col-start-1 row-start-1 size-1.5 rounded-full bg-primary transition-opacity duration-[var(--motion-duration)] group-hover/recent:opacity-0"
@@ -582,15 +594,20 @@ function AccountArea({
       type="button"
       aria-label={`Account · Google Drive ${connected ? "connected" : "not connected"}`}
       className={cn(
-        "nav-item flex w-full min-w-0 items-center rounded-[7px] py-1.5 text-left",
-        "transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent/60 aria-expanded:bg-sidebar-accent/60",
+        "nav-item flex w-full min-w-0 items-center rounded-[10px] py-2 text-left",
+        "transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent/70 aria-expanded:bg-sidebar-accent/70",
       )}
     >
       <span className="relative grid shrink-0 place-items-center">
-        <icons.account className="size-[19px] text-sidebar-muted" strokeWidth={ICON_STROKE} />
+        <span
+          className="grid size-[30px] place-items-center rounded-full border border-sidebar-border bg-surface text-muted"
+          aria-hidden="true"
+        >
+          <icons.account className="size-4" strokeWidth={ICON_STROKE} />
+        </span>
         <span
           className={cn(
-            "absolute -right-px -bottom-px size-[7px] rounded-full ring-2 ring-sidebar",
+            "absolute right-0 bottom-0 size-[9px] rounded-full ring-2 ring-sidebar",
             connected ? "bg-success" : "bg-sidebar-border",
           )}
           aria-hidden="true"

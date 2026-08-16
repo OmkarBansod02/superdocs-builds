@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { icons } from "@/lib/icons";
+import { GoogleDocsMark } from "./brand";
 
 export interface DocumentIdentityData {
   name: string;
@@ -16,19 +16,19 @@ export function DocumentIdentity({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[68px] items-center gap-3.5 border-b border-border-light bg-background px-6 py-4 sm:px-8 lg:px-10">
+    <div className="flex min-h-[72px] items-center gap-3.5 border-b border-border-light bg-surface px-6 py-4 sm:px-8 lg:px-10">
       <span
-        className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-primary text-primary-foreground"
+        className="grid size-10 shrink-0 place-items-center rounded-[11px] border border-border-light bg-surface-sunken shadow-[var(--shadow-subtle)]"
         aria-hidden="true"
       >
-        <icons.document className="size-[18px]" strokeWidth={2} />
+        <GoogleDocsMark className="size-[19px]" />
       </span>
       <div className="min-w-0">
-        <h1 className="truncate text-[16px] font-semibold tracking-[-0.022em] text-ink sm:text-[17px]">
+        <h1 className="truncate text-[16px] font-semibold tracking-[-0.024em] text-ink sm:text-[17px]">
           {document.name}
         </h1>
         <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-muted">
-          <span>Google Drive</span>
+          <span>Google Docs</span>
           {document.revision ? (
             <>
               <span className="h-3 w-px bg-border" aria-hidden="true" />

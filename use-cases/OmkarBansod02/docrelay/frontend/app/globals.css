@@ -17,83 +17,94 @@
      Six deliberate layers. Each step is perceptible on a normal monitor:
        navigation → working canvas → conversation → document canvas → paper
      with interactive surfaces sitting a half-step above their container. */
-  --sidebar: #ebe8e1;          /* navigation, recedes behind the work */
-  --background: #f2efe9;       /* working canvas the panes sit inside */
-  --conversation: #fbfaf7;     /* conversation pane */
-  --canvas: #e7e3db;           /* document canvas behind the page */
-  --surface: #fdfcf9;          /* cards, inputs, controls */
+  --sidebar: #f7f5f1;          /* navigation, recedes behind the work */
+  --background: #edeae4;       /* working canvas the panes sit inside */
+  --conversation: #fcfbf9;     /* conversation pane */
+  --canvas: #e8e4dd;           /* document canvas behind the page */
+  --surface: #ffffff;          /* cards, inputs, controls */
   --surface-elevated: #ffffff; /* document paper, popovers, lifted plates */
-  --surface-muted: #edeae2;    /* quiet fills, hover, skeletons */
+  --surface-muted: #f1eee7;    /* quiet fills, hover, skeletons */
+  --surface-sunken: #f6f3ee;   /* secondary bands inside a surface */
 
-  --foreground: #1c1a17;
-  --muted-text: #6d675e;
-  --muted-soft: #8d877c;       /* tertiary metadata only */
-  --border: #d8d3c8;
-  --border-light: #e4dfd5;
+  --foreground: #1a1815;
+  --muted-text: #64605a;
+  /* Tertiary metadata only, but still held above 4.5:1 on every surface it is
+     allowed on — small uppercase labels are the hardest text in the product. */
+  --muted-soft: #78736b;
+  --border: #ded9cf;
+  --border-light: #e9e5dc;
+  --border-hair: #efece4;      /* interior rules inside a pane */
 
   /* --- Accent -------------------------------------------------------------
      A single deep pine. It marks selection, approval and verified state and
      nothing else, so its presence always means "this is decided". */
-  --primary: #2f6a52;
-  --primary-hover: #275844;
+  --primary: #115c40;
+  --primary-hover: #0d4a33;
   --primary-foreground: #f8fbf9;
-  --primary-soft: #e4ece6;
-  --primary-line: #c3d6cb;
+  --primary-soft: #e6f0ea;
+  --primary-line: #bfd6c8;
 
-  --success: #3d6b52;
-  --success-soft: #e4ece6;
-  --warning: #8c6330;
-  --warning-soft: #f4ecdd;
-  --destructive: #9a544c;
-  --destructive-soft: #f5e8e4;
-  --info: #5c626a;
-  --info-soft: #ebeceb;
+  --success: #1d6142;
+  --success-soft: #e6f0ea;
+  --warning: #8a5f2c;
+  --warning-soft: #f6edde;
+  --destructive: #9a4f45;
+  --destructive-soft: #f8e9e5;
+  --info: #56606a;
+  --info-soft: #ecedec;
 
   /* Contextual review tints. Only the exact changed span is ever coloured —
-     the surrounding sentence always stays neutral. */
-  --diff-added: #d5ecdb;
-  --diff-added-text: #1b5636;
-  --diff-removed: #f8dad6;
-  --diff-removed-text: #883830;
-  --diff-removed-line: #ae5850;
-  --review-mark: #f5eedc;
-  --review-mark-line: #e0d0ab;
+     the surrounding sentence always stays neutral, and the band it sits in is
+     paler still so a diff reads as calm evidence rather than an alarm. */
+  --diff-removed-band: #fdf4f2;
+  --diff-removed-edge: #f1dcd7;
+  --diff-removed: #f8d2cc;
+  --diff-removed-text: #8c3a31;
+  --diff-removed-line: #b0605a;
+  --diff-added-band: #f1f8f3;
+  --diff-added-edge: #d6e8dc;
+  --diff-added: #cbe9d6;
+  --diff-added-text: #17573a;
+  --review-mark: #f7f0dc;
+  --review-mark-line: #ddcda6;
 
-  --ring: #2f6a52;
+  --ring: #115c40;
 
   /* --- Geometry -----------------------------------------------------------
      One radius family across controls, panes and the document page so the
      product reads as a single assembled grid. */
   --radius: 0.5rem;
-  --radius-pane: 12px;
-  --radius-plate: 16px;
+  --radius-pane: 14px;
+  --radius-card: 12px;
+  --radius-plate: 18px;
   --workbench-gutter: 12px;
 
-  --sidebar-width: 248px;
-  --sidebar-width-collapsed: 60px;
+  --sidebar-width: 260px;
+  --sidebar-width-collapsed: 64px;
   --shell-nav-width: var(--sidebar-width);
 
-  --conversation-width: 430px;
-  --conversation-width-min: 360px;
-  --conversation-width-max: 620px;
+  --conversation-width: 452px;
+  --conversation-width-min: 380px;
+  --conversation-width-max: 640px;
   --document-width-min: 420px;
 
   /* --- Elevation ----------------------------------------------------------
      Warm-tinted, low-contrast. Elevation separates layers; it never decorates. */
-  --shadow-subtle: 0 1px 2px rgb(28 26 23 / 0.045);
-  --shadow-raised: 0 1px 2px rgb(28 26 23 / 0.05), 0 3px 8px -2px rgb(28 26 23 / 0.05);
+  --shadow-subtle: 0 1px 2px rgb(26 24 21 / 0.04);
+  --shadow-raised: 0 1px 2px rgb(26 24 21 / 0.045), 0 3px 8px -2px rgb(26 24 21 / 0.05);
   --shadow-lifted:
-    0 1px 2px rgb(28 26 23 / 0.05),
-    0 8px 20px -8px rgb(28 26 23 / 0.10),
-    0 20px 44px -22px rgb(28 26 23 / 0.12);
-  --shadow-overlay: 0 1px 2px rgb(28 26 23 / 0.07), 0 10px 28px -8px rgb(28 26 23 / 0.16);
+    0 1px 2px rgb(26 24 21 / 0.05),
+    0 8px 20px -8px rgb(26 24 21 / 0.09),
+    0 20px 44px -22px rgb(26 24 21 / 0.11);
+  --shadow-overlay: 0 1px 2px rgb(26 24 21 / 0.07), 0 10px 28px -8px rgb(26 24 21 / 0.16);
+  --shadow-pane: 0 1px 2px rgb(26 24 21 / 0.04), 0 6px 16px -10px rgb(26 24 21 / 0.10);
   --shadow-document:
-    0 0 0 1px rgb(28 26 23 / 0.035),
-    0 1px 2px rgb(28 26 23 / 0.05),
-    0 14px 34px -14px rgb(28 26 23 / 0.11);
+    0 0 0 1px rgb(26 24 21 / 0.04),
+    0 1px 2px rgb(26 24 21 / 0.05),
+    0 18px 40px -18px rgb(26 24 21 / 0.13);
 
   --motion-duration: 150ms;
-  --motion-duration-lg: 200ms;
+  --motion-duration-lg: 220ms;
   --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* shadcn primitive aliases */
@@ -109,11 +120,11 @@
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: #e0dcd2;
+  --sidebar-accent: #ece8e0;
   --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: #dcd7cb;
+  --sidebar-border: #e4dfd5;
   --sidebar-ring: var(--primary);
-  --sidebar-muted: #6d675e;
+  --sidebar-muted: #6b665e;
 }
 
 [data-sidebar="collapsed"] {
@@ -123,6 +134,7 @@
 @theme inline {
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-document-serif);
   --font-heading: var(--font-geist-sans);
 
   --color-background: var(--background);
@@ -133,8 +145,10 @@
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
   --color-surface-muted: var(--surface-muted);
+  --color-surface-sunken: var(--surface-sunken);
   --color-border: var(--border);
   --color-border-light: var(--border-light);
+  --color-border-hair: var(--border-hair);
   --color-muted: var(--muted-text);
   --color-muted-soft: var(--muted-soft);
   --color-muted-foreground: var(--muted-foreground);
@@ -166,8 +180,12 @@
   --color-info-soft: var(--info-soft);
   --color-diff-added: var(--diff-added);
   --color-diff-added-text: var(--diff-added-text);
+  --color-diff-added-band: var(--diff-added-band);
+  --color-diff-added-edge: var(--diff-added-edge);
   --color-diff-removed: var(--diff-removed);
   --color-diff-removed-text: var(--diff-removed-text);
+  --color-diff-removed-band: var(--diff-removed-band);
+  --color-diff-removed-edge: var(--diff-removed-edge);
   --color-review-mark: var(--review-mark);
 
   --color-ring: var(--ring);
@@ -205,6 +223,7 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "cv05" 1, "ss01" 1;
   }
 
   html,
@@ -235,7 +254,7 @@
   }
 
   :focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--ring) 70%, white);
+    outline: 2px solid color-mix(in srgb, var(--ring) 60%, white);
     outline-offset: 2px;
   }
 
@@ -265,7 +284,7 @@
     border: 1px solid var(--border-light);
     border-radius: var(--radius-pane);
     background: var(--surface);
-    box-shadow: var(--shadow-subtle);
+    box-shadow: var(--shadow-pane);
     overflow: hidden;
   }
 
@@ -296,7 +315,7 @@
   .page-measure {
     margin-inline: auto;
     width: 100%;
-    max-width: 960px;
+    max-width: 980px;
   }
 
   /* Thin chrome rail at the top of a full-bleed workspace screen. */
@@ -314,6 +333,45 @@
   .scrollbar-inset [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
     margin-right: 3px;
     margin-block: 4px;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Pills and small status chrome                                          */
+  /* ---------------------------------------------------------------------- */
+
+  /* One pill geometry for every small state label, so "In review",
+     "Ready for your review" and "Verified" are visibly the same species. */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    height: 1.5rem;
+    padding-inline: 0.5rem;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    font-size: 0.75rem;
+    line-height: 1;
+    font-weight: 500;
+    letter-spacing: -0.006em;
+    white-space: nowrap;
+  }
+
+  .pill-neutral {
+    border-color: var(--border-light);
+    background: var(--surface-muted);
+    color: var(--muted-text);
+  }
+
+  .pill-accent {
+    border-color: var(--primary-line);
+    background: var(--primary-soft);
+    color: var(--primary);
+  }
+
+  .pill-warning {
+    border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+    background: var(--warning-soft);
+    color: var(--warning);
   }
 
   /* ---------------------------------------------------------------------- */
@@ -344,9 +402,29 @@
     opacity: 1;
   }
 
+  /* Collapsed, the rail's header is the brand mark; the expand control takes
+     its place on hover or focus, so the rail keeps its identity at rest. */
+  .rail-brand {
+    transition: opacity var(--motion-duration) var(--motion-ease);
+  }
+
   [data-sidebar="collapsed"] [data-nav="rail"] .rail-toggle {
-    opacity: 1;
+    position: absolute;
+    inset-inline: 0;
+    top: 50%;
+    translate: 0 -50%;
     margin-inline: auto;
+    opacity: 0;
+  }
+
+  [data-sidebar="collapsed"] [data-nav="rail"]:hover .rail-toggle,
+  [data-sidebar="collapsed"] [data-nav="rail"] .rail-toggle:focus-visible {
+    opacity: 1;
+  }
+
+  [data-sidebar="collapsed"] [data-nav="rail"]:hover .rail-brand,
+  [data-sidebar="collapsed"] [data-nav="rail"]:has(.rail-toggle:focus-visible) .rail-brand {
+    opacity: 0;
   }
 
   /* ---------------------------------------------------------------------- */
@@ -375,9 +453,9 @@
   .split-handle::after {
     content: "";
     position: absolute;
-    inset-block: 12%;
+    inset-block: 14%;
     left: 50%;
-    width: 2px;
+    width: 3px;
     translate: -50% 0;
     border-radius: 999px;
     background: var(--border);
@@ -418,36 +496,130 @@
   .document-canvas {
     container-type: inline-size;
     container-name: document;
+    background:
+      radial-gradient(120% 60% at 50% 0%, rgb(255 255 255 / 0.5), transparent 62%),
+      var(--canvas);
   }
 
   .document-page {
+    position: relative;
     width: 100%;
     max-width: 760px;
-    padding: 2.5rem 1.75rem;
-    border-radius: 10px;
-    border: 1px solid var(--border-light);
+    padding: 2.75rem 1.875rem;
+    border-radius: 6px;
+    border: 1px solid color-mix(in srgb, var(--border-light) 70%, transparent);
     background: var(--surface-elevated);
     box-shadow: var(--shadow-document);
   }
 
   @container document (min-width: 560px) {
-    .document-page { max-width: 780px; padding: 3.25rem 3rem; }
+    .document-page { max-width: 780px; padding: 3.5rem 3.25rem; }
   }
 
   @container document (min-width: 760px) {
-    .document-page { max-width: 800px; padding: 4rem 4.25rem; }
+    .document-page { max-width: 800px; padding: 4.25rem 4.5rem; }
   }
 
   @container document (min-width: 980px) {
-    .document-page { max-width: 840px; padding: 4.5rem 5.25rem; }
+    .document-page { max-width: 840px; padding: 4.75rem 5.5rem; }
   }
 
+  /* The reader surface is the one place in the product that is not a UI
+     surface, so it gets a text face of its own. */
   .document-body {
-    font-size: 1rem;
-    line-height: 1.78;
-    letter-spacing: -0.003em;
+    font-family: var(--font-serif), ui-serif, Georgia, "Times New Roman", serif;
+    font-size: 1.0625rem;
+    line-height: 1.72;
+    letter-spacing: 0;
     color: var(--foreground);
     text-wrap: pretty;
+  }
+
+  .document-heading {
+    font-family: var(--font-serif), ui-serif, Georgia, "Times New Roman", serif;
+    color: var(--foreground);
+    text-wrap: balance;
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Review evidence bands                                                  */
+  /* ---------------------------------------------------------------------- */
+
+  /* Before/after evidence reads as two stacked plates with a tinted edge,
+     never as two loud blocks of colour. */
+  .diff-band {
+    border-radius: 10px;
+    border: 1px solid;
+    padding: 0.625rem 0.75rem 0.75rem;
+  }
+
+  .diff-band-removed {
+    border-color: var(--diff-removed-edge);
+    background: var(--diff-removed-band);
+  }
+
+  .diff-band-added {
+    border-color: var(--diff-added-edge);
+    background: var(--diff-added-band);
+  }
+
+  .diff-token-removed {
+    border-radius: 4px;
+    background: var(--diff-removed);
+    padding-inline: 3px;
+    font-weight: 500;
+    color: var(--diff-removed-text);
+    text-decoration-line: line-through;
+    text-decoration-color: var(--diff-removed-line);
+    text-decoration-thickness: 1.5px;
+  }
+
+  .diff-token-added {
+    border-radius: 4px;
+    background: var(--diff-added);
+    padding-inline: 3px;
+    font-weight: 600;
+    color: var(--diff-added-text);
+  }
+
+  /* ---------------------------------------------------------------------- */
+  /* Loading                                                                */
+  /* ---------------------------------------------------------------------- */
+
+  /* A slow light sweep instead of a blinking block: the surface reads as
+     "being prepared" rather than as a broken element. */
+  .sheen {
+    position: relative;
+    overflow: hidden;
+    background: var(--surface-muted);
+  }
+
+  .sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    translate: -100% 0;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      color-mix(in srgb, var(--surface-elevated) 70%, transparent),
+      transparent
+    );
+    animation: docrelay-sheen 1.8s var(--motion-ease) infinite;
+  }
+
+  @keyframes docrelay-sheen {
+    100% { translate: 100% 0; }
+  }
+
+  /* Slow pulse for a live status dot — one property, no layout cost. */
+  .live-dot {
+    animation: docrelay-live 2.2s var(--motion-ease) infinite;
+  }
+
+  @keyframes docrelay-live {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
   }
 
   /* ---------------------------------------------------------------------- */
@@ -457,29 +629,29 @@
   /* Editorial hero — Workspace start screen and equivalent first impressions. */
   .type-hero-title {
     font-size: 2rem;
-    line-height: 1.14;
+    line-height: 1.12;
     font-weight: 600;
-    letter-spacing: -0.036em;
+    letter-spacing: -0.038em;
     color: var(--foreground);
   }
 
   @media (min-width: 1024px) {
-    .type-hero-title { font-size: 2.375rem; }
+    .type-hero-title { font-size: 2.25rem; }
   }
 
   .type-hero-body {
     font-size: 1rem;
     line-height: 1.62;
     font-weight: 400;
-    letter-spacing: -0.008em;
+    letter-spacing: -0.011em;
     color: var(--muted-text);
   }
 
   .type-page-title {
-    font-size: 1.5rem;
-    line-height: 1.24;
+    font-size: 1.625rem;
+    line-height: 1.2;
     font-weight: 600;
-    letter-spacing: -0.03em;
+    letter-spacing: -0.032em;
     color: var(--foreground);
   }
 
@@ -501,18 +673,18 @@
   }
 
   .type-conversation-title {
-    font-size: 0.9375rem;
+    font-size: 0.96875rem;
     line-height: 1.3;
-    font-weight: 560;
-    letter-spacing: -0.018em;
+    font-weight: 580;
+    letter-spacing: -0.021em;
     color: var(--foreground);
   }
 
   .type-section-heading {
     font-size: 0.6875rem;
     line-height: 1.4;
-    font-weight: 500;
-    letter-spacing: 0.07em;
+    font-weight: 550;
+    letter-spacing: 0.075em;
     text-transform: uppercase;
     color: var(--muted-soft);
   }
@@ -531,6 +703,15 @@
     color: var(--muted-text);
   }
 
+  /* Assistant prose in the conversation column. */
+  .type-message {
+    font-size: 0.90625rem;
+    line-height: 1.65;
+    letter-spacing: -0.009em;
+    color: var(--foreground);
+    text-wrap: pretty;
+  }
+
   .type-label {
     font-size: 0.75rem;
     line-height: 1.4;
@@ -539,18 +720,27 @@
     color: var(--muted-text);
   }
 
+  /* Speaker name above a conversation turn. */
+  .type-speaker {
+    font-size: 0.8125rem;
+    line-height: 1.2;
+    font-weight: 570;
+    letter-spacing: -0.011em;
+    color: var(--foreground);
+  }
+
   .type-button {
     font-size: 0.8125rem;
     line-height: 1;
-    font-weight: 500;
+    font-weight: 520;
     letter-spacing: -0.008em;
   }
 
   .type-nav {
-    font-size: 0.84375rem;
+    font-size: 0.859375rem;
     line-height: 1.25;
     font-weight: 500;
-    letter-spacing: -0.012em;
+    letter-spacing: -0.014em;
   }
 
   .type-caption {
@@ -593,12 +783,12 @@
   /* Rail insets own their horizontal padding rather than borrowing a utility,
      so the collapsed override actually wins. */
   [data-nav] .nav-inset {
-    padding-inline: 0.75rem;
+    padding-inline: 0.875rem;
   }
 
   [data-nav] .nav-item {
-    padding-inline: 0.625rem;
-    gap: 0.625rem;
+    padding-inline: 0.6875rem;
+    gap: 0.6875rem;
   }
 
   [data-sidebar="collapsed"] [data-nav="rail"] .nav-item {
@@ -608,7 +798,7 @@
   }
 
   [data-sidebar="collapsed"] [data-nav="rail"] .nav-inset {
-    padding-inline: 0.5rem;
+    padding-inline: 0.625rem;
   }
 
   /* The split preference is one number (`--conversation-w`); keeping the

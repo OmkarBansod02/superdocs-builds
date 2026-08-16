@@ -20,20 +20,37 @@ The signature visual is a thin verification line with small square checkpoints. 
 ## Typography hierarchy
 
 - UI family: Geist/Inter-style sans serif with system fallbacks.
-- Page title: 30–36px, 650–700 weight, tight tracking.
-- Section title: 18–22px, 600–650 weight.
-- Body: 14–16px with generous 1.45–1.6 line height.
+- Reader family: Source Serif 4, used **only** inside `.document-page`. The
+  frozen preview is the one surface in the product that is a document rather
+  than product chrome, so it is set in a text face. All chrome around it — the
+  document toolbar included — stays in the UI family.
+- Hero title: 32–36px, 600 weight, −0.038em tracking.
+- Page title: 26px, 600 weight.
+- Section title: 15–17px, 600 weight.
+- Body: 14–16px with generous 1.6 line height.
 - Controls and navigation: deliberate 13–15px sizing; never browser-default typography.
 - Revisions, hashes, and IDs: compact monospace, visually subordinate.
+- Small uppercase labels stay at or above 4.5:1 contrast on every surface they
+  are used on; `--muted-soft` is tuned to that limit, not below it.
 
 ## Surface hierarchy
 
-- Background: cool near-white; primary surfaces: true white.
-- Text: charcoal; muted copy: cool blue-gray.
-- Borders: restrained cool gray, mostly single-pixel dividers.
-- Radius: 8–10px for controls and purposeful frames; rows and open sections usually have no enclosing radius.
-- Shadows: none by default; one subtle elevation only for sticky/mobile actions when needed.
-- Accent: deep pine for primary actions and verified state; pale rose/green for token-level diffs; amber only for conflict.
+- A warm-neutral ladder, lifted rather than sepia: sidebar → working canvas →
+  conversation → document canvas → paper, with cards a half-step above the
+  surface they sit on. Cards and paper are true white; the canvas between and
+  behind panes carries the warmth.
+- Text: warm charcoal; muted copy: warm gray. Borders: `--border` for controls,
+  `--border-light` for pane edges, `--border-hair` for rules inside a pane.
+- Radius: 14px panes, 12px cards, 9–10px controls, 18px plates, 6px document
+  page. Rows and open sections usually have no enclosing radius.
+- Shadows: warm-tinted and low-contrast. `--shadow-subtle` for flat surfaces,
+  `--shadow-raised` for cards, `--shadow-pane` for panes, `--shadow-lifted` for
+  the one focal plate per screen, `--shadow-document` for the page.
+- Accent: deep pine for primary actions, selection and verified state; tinted
+  before/after evidence bands for diffs, with a stronger token tint on the exact
+  mutated span only; amber for conflict.
+- One pill geometry (`.pill` + tone) for every small state label, so a state
+  reads the same in a conversation header, a table row and a page header.
 
 ## Spacing principles
 
@@ -51,6 +68,11 @@ The signature visual is a thin verification line with small square checkpoints. 
 
 Focus is always visible. Loading replaces action text without shifting layout. Disabled states explain why when the reason is not obvious. Motion is limited to small status and panel transitions and respects reduced-motion preferences.
 
+Progress is drawn as a vertical rail with round marks, shared by the import
+sequence, the run's processing steps and the safety check. The active mark
+breathes on a slow opacity cycle rather than blinking, and skeletons use one
+slow light sweep (`.sheen`), so a screen that is working never flickers.
+
 ## State treatment
 
 - Processing: truthful ordered stages, no percentages.
@@ -66,7 +88,8 @@ Focus is always visible. Loading replaces action text without shifting layout. D
 
 - Fake document pages, editor chrome, invented body content, or a decorative empty canvas.
 - Marketing heroes, AI gradients, glass, bento grids, metric tiles, charts, or decorative badges.
-- Card-inside-card layouts, oversized radii, heavy shadows, and status communicated by color alone.
+- Card-inside-card layouts beyond one level, oversized radii, heavy shadows,
+  and status communicated by color alone.
 - Placeholder navigation such as Settings, Billing, Analytics, or account administration.
 - Hardcoded production documents, rules, scans, or run history.
 
@@ -78,7 +101,9 @@ The implementation exposes the already-persisted watch-rule `configuration.folde
 
 ## Implemented component inventory
 
-- Product shell with Workspace, Watch, and Runs only.
+- Product shell with Workspace, Watch, and Runs only; a collapsible rail whose
+  collapsed header is the brand mark until hovered, when it becomes the expand
+  control.
 - Central Drive source selection, compact document identity, and instruction workbench.
 - Shared workflow progress, proposal diff, status, notice, safety-check, and skeleton primitives.
 - Hero dry-run, conflict, exact-file authorization, unknown-effect, and verified-success states.

@@ -15,6 +15,7 @@ import {
 import { ICON_STROKE, icons } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
+import { GoogleDriveMark } from "./brand";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
 const PICKER_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_PICKER_API_KEY ?? "";
@@ -218,8 +219,12 @@ export function SourceChooser({
       {/* Editorial composition: one focal column, balanced in the canvas rather
           than pinned to the top, with the Drive selection carrying the mass. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[620px] flex-col justify-center px-6 pt-12 pb-20 lg:pt-14 lg:pb-24">
+        <div className="mx-auto flex min-h-full w-full max-w-[640px] flex-col justify-center px-6 pt-12 pb-20 lg:pt-14 lg:pb-24">
           <div className="mx-auto max-w-[34rem] text-center">
+            <span className="pill pill-accent mx-auto mb-5 flex w-fit">
+              <icons.shield className="size-3" strokeWidth={2} aria-hidden="true" />
+              Reviewed before write-back
+            </span>
             <h2 className="type-hero-title text-balance">Start with a document</h2>
             <p className="type-hero-body mx-auto mt-3.5 max-w-[27rem] text-pretty">
               Connect a Google Doc and let DocRelay prepare reviewed, verifiable changes.
@@ -238,10 +243,23 @@ export function SourceChooser({
             />
           </div>
 
-          <p className="mt-7 flex items-center justify-center gap-1.5 text-center text-[12.5px] text-muted">
-            <icons.shield className="size-3.5 shrink-0 text-muted-soft" strokeWidth={ICON_STROKE} aria-hidden="true" />
-            Every change is reviewed before write-back.
-          </p>
+          {/* Three quiet facts, not feature marketing: what actually happens
+              to a document between choosing it and a verified write. */}
+          <ol className="mt-9 grid gap-x-6 gap-y-3 sm:grid-cols-3">
+            {[
+              ["Frozen", "The revision is captured before anything changes."],
+              ["Reviewed", "You approve each proposed change on its own."],
+              ["Verified", "The write is backed up, applied, then checked."],
+            ].map(([title, detail], index) => (
+              <li key={title} className="min-w-0">
+                <p className="flex items-center gap-1.5 text-[12.5px] leading-4 font-medium tracking-[-0.008em] text-foreground">
+                  <span className="type-mono text-[10.5px] text-muted-soft">{index + 1}</span>
+                  {title}
+                </p>
+                <p className="mt-1 text-[12px] leading-[1.55] text-muted">{detail}</p>
+              </li>
+            ))}
+          </ol>
         </div>
       </div>
     </section>
@@ -270,15 +288,15 @@ function DriveSelectionPlate({
     <>
       <span
         className={cn(
-          "grid size-[68px] place-items-center rounded-[18px] border border-border-light bg-surface-elevated",
-          "shadow-[var(--shadow-subtle)] transition-transform duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
+          "grid size-[72px] place-items-center rounded-[20px] border border-border-light bg-surface-elevated",
+          "shadow-[var(--shadow-raised)] transition-transform duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
           connected && !busy ? "group-hover/plate:-translate-y-0.5" : "",
         )}
         aria-hidden="true"
       >
         <GoogleDriveMark className="h-[30px] w-[34px]" />
       </span>
-      <span className="mt-6 block text-[19px] leading-[1.25] font-semibold tracking-[-0.026em] text-foreground">
+      <span className="mt-6 block text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-foreground">
         {connected ? "Choose a Google Doc" : "Connect Google Drive"}
       </span>
       <span className="mx-auto mt-2.5 block max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
@@ -290,7 +308,7 @@ function DriveSelectionPlate({
   );
 
   const footnote = (
-    <span className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-light pt-4 text-[12px] text-muted-soft">
+    <span className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12px] text-muted-soft">
       <icons.lock className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
       Only Google Docs are supported.
     </span>
@@ -302,15 +320,15 @@ function DriveSelectionPlate({
           matter, not from decoration. */}
       <span
         aria-hidden="true"
-        className="absolute inset-x-11 -top-[17px] h-[18px] rounded-t-[13px] border border-b-0 border-border-light bg-surface/50"
+        className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/45"
       />
       <span
         aria-hidden="true"
-        className="absolute inset-x-[22px] -top-[9px] h-[11px] rounded-t-[15px] border border-b-0 border-border-light bg-surface/80"
+        className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[16px] border border-b-0 border-border-light bg-surface/75"
       />
 
       {loading ? (
-        <div className="relative rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 shadow-[var(--shadow-raised)]">
+        <div className="relative rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 shadow-[var(--shadow-lifted)]">
           <SelectorSkeleton />
         </div>
       ) : connected ? (
@@ -321,18 +339,18 @@ function DriveSelectionPlate({
           aria-busy={busy}
           className={cn(
             "group/plate relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border bg-surface px-8 pt-11 pb-8 text-center",
-            "transition-[box-shadow,border-color,background-color] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
-            "border-border-light shadow-[var(--shadow-raised)]",
-            "hover:border-border hover:bg-surface-elevated hover:shadow-[var(--shadow-lifted)]",
-            "focus-visible:border-ring focus-visible:shadow-[var(--shadow-lifted)]",
+            "transition-[box-shadow,border-color,background-color,translate] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
+            "border-border-light shadow-[var(--shadow-lifted)]",
+            "hover:border-border hover:shadow-[0_2px_4px_rgb(26_24_21/0.05),0_14px_32px_-12px_rgb(26_24_21/0.14),0_28px_60px_-30px_rgb(26_24_21/0.16)]",
+            "focus-visible:border-ring",
             "disabled:pointer-events-none",
           )}
         >
           {body}
           <span
             className={cn(
-              "type-button mt-7 inline-flex h-[38px] items-center justify-center gap-2 rounded-[9px] px-5",
-              "bg-primary text-primary-foreground shadow-[var(--shadow-subtle)]",
+              "type-button mt-7 inline-flex h-[40px] items-center justify-center gap-2 rounded-[10px] px-5",
+              "bg-primary text-primary-foreground shadow-[var(--shadow-raised)]",
               "transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
               busy ? "opacity-80" : "group-hover/plate:bg-primary-hover",
             )}
@@ -345,9 +363,9 @@ function DriveSelectionPlate({
           {footnote}
         </button>
       ) : (
-        <div className="relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-raised)]">
+        <div className="relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
           {body}
-          <Button onClick={onConnect} className="mt-7 h-[38px] px-5">
+          <Button onClick={onConnect} className="mt-7 h-[40px] px-5">
             Connect Google Drive
           </Button>
           {footnote}
@@ -408,27 +426,14 @@ function DriveConnectionStatus({
   );
 }
 
-function GoogleDriveMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 87.3 78" className={className} aria-hidden="true" focusable="false">
-      <path fill="#0066da" d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8H0c0 1.55.4 3.1 1.2 4.5z" />
-      <path fill="#00ac47" d="M43.65 25 29.9 1.2c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44C.41 49.88 0 51.44 0 53h27.5z" />
-      <path fill="#ea4335" d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.797l5.852 11.5z" />
-      <path fill="#00832d" d="M43.65 25 57.4 1.2C56.05.4 54.5 0 52.9 0H34.4c-1.6 0-3.15.45-4.5 1.2z" />
-      <path fill="#2684fc" d="M59.8 53H27.5L13.75 76.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" />
-      <path fill="#ffba00" d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" />
-    </svg>
-  );
-}
-
 function SelectorSkeleton() {
   return (
     <div className="flex w-full flex-col items-center" aria-hidden="true">
-      <Skeleton className="size-[68px] rounded-[18px]" />
+      <Skeleton className="size-[72px] rounded-[20px]" />
       <Skeleton className="mt-6 h-5 w-48" />
       <Skeleton className="mt-3.5 h-3.5 w-full max-w-[24rem]" />
       <Skeleton className="mt-2 h-3.5 w-3/5" />
-      <Skeleton className="mt-7 h-[38px] w-[11.5rem] rounded-[9px]" />
+      <Skeleton className="mt-7 h-[40px] w-[11.5rem] rounded-[10px]" />
       <Skeleton className="mt-9 h-3 w-44" />
     </div>
   );

@@ -63,7 +63,7 @@ export function ProcessingState({
             <p className="mt-1 text-[14px] text-muted">{humanRunState(run.state)}</p>
           </div>
         </div>
-        <ol className="mt-10 border-l border-border pl-7">
+        <ol className="mt-10 border-l border-border-light pl-7">
           {processingSteps(run.state).map((step) => (
             <li key={step.label} className="relative flex min-h-16 items-start gap-3">
               <span className="absolute -left-[37px] bg-background"><StateMark state={step.state} /></span>

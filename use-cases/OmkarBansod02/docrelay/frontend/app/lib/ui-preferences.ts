@@ -15,9 +15,9 @@ const SIDEBAR_KEY = "docrelay.ui.sidebar.v1";
 const CONVERSATION_KEY = "docrelay.ui.conversation-width.v1";
 
 /** Kept in sync with the same names in globals.css. */
-export const CONVERSATION_MIN_WIDTH = 360;
-export const CONVERSATION_MAX_WIDTH = 620;
-export const CONVERSATION_DEFAULT_WIDTH = 430;
+export const CONVERSATION_MIN_WIDTH = 380;
+export const CONVERSATION_MAX_WIDTH = 640;
+export const CONVERSATION_DEFAULT_WIDTH = 452;
 /** The document pane's preferred minimum; the conversation minimum wins if
     the viewport cannot honour both. */
 export const DOCUMENT_MIN_WIDTH = 420;

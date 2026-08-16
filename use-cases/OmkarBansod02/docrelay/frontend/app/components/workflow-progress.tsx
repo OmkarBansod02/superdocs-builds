@@ -16,7 +16,7 @@ export function WorkflowProgress({
   return (
     <nav
       aria-label="Document workflow"
-      className="border-b border-border-light bg-background px-6 sm:px-8 lg:px-10"
+      className="border-b border-border-light bg-surface-sunken px-6 sm:px-8 lg:px-10"
     >
       <div className="py-3.5 sm:hidden">
         <div className="flex items-center justify-between text-[13px]">
@@ -28,7 +28,7 @@ export function WorkflowProgress({
             Step {currentIndex + 1} of {steps.length}
           </span>
         </div>
-        <div className="mt-3 h-0.5 overflow-hidden rounded-full bg-border" aria-hidden="true">
+        <div className="mt-3 h-[3px] overflow-hidden rounded-full bg-border-light" aria-hidden="true">
           <span
             className={cn(
               "block h-full rounded-full transition-[width] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
@@ -56,7 +56,13 @@ export function WorkflowProgress({
                 <span>{step}</span>
               </div>
               {index < steps.length - 1 ? (
-                <span className="mx-3.5 h-px min-w-8 flex-1 bg-border-light" aria-hidden="true" />
+                <span
+                  className={cn(
+                    "mx-3.5 h-px min-w-8 flex-1",
+                    complete ? "bg-primary-line" : "bg-border-light",
+                  )}
+                  aria-hidden="true"
+                />
               ) : null}
             </li>
           );

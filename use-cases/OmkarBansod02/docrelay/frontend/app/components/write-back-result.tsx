@@ -75,7 +75,7 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
             </div>
           ) : null}
 
-          <dl className="mt-7 divide-y divide-border border-y border-border text-[14px]">
+          <dl className="mt-7 surface-section divide-y divide-border-hair px-4 text-[14px]">
             <RevisionRow label="Previous revision" value={result.baseline_revision_id} />
             <RevisionRow label="Resulting revision" value={result.resulting_revision_id} />
           </dl>
@@ -88,20 +88,20 @@ function VerifiedSuccess({ identity, fileId, dryRun, change, result, onStartAnot
             ) : null}
             {onStartAnother ? <Button variant="secondary" onClick={onStartAnother}>Start another document</Button> : null}
           </div>
-          <p className="mt-4 border-t border-border pt-4 text-[12px] text-muted">Run complete</p>
+          <p className="mt-4 border-t border-border-hair pt-4 text-[12px] text-muted">Run complete</p>
         </section>
 
-        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
+        <aside className="border-t border-border-light px-5 py-8 sm:px-8 lg:border-t-0 lg:border-l lg:px-8 lg:py-10">
           <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Verification record</h2>
           <div className="mt-8">
             {checks.map((label, index) => (
               <div key={label} className="relative flex gap-3 pb-9 last:pb-0">
-                {index < checks.length - 1 ? <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" /> : null}
+                {index < checks.length - 1 ? <span className="absolute top-[18px] bottom-0 left-[8.5px] w-px bg-primary-line" aria-hidden="true" /> : null}
                 <StateMark state="complete" /><span className="text-[14px] text-ink">{label}</span>
               </div>
             ))}
           </div>
-          {result.structurally_verified ? <p className="mt-7 border-t border-border pt-6 text-[14px] leading-6 text-ink">Unrelated content remained unchanged.</p> : null}
+          {result.structurally_verified ? <p className="mt-7 border-t border-border-hair pt-6 text-[14px] leading-6 text-ink">Unrelated content remained unchanged.</p> : null}
         </aside>
       </div>
     </div>
@@ -121,7 +121,7 @@ function ConflictState({ identity, result, deciding, onDecision }: { identity: D
           <div className="mt-5"><InlineNotice tone="warning"><strong>Nothing was silently overwritten.</strong></InlineNotice></div>
 
           <h3 className="mt-9 text-[15.5px] font-semibold tracking-[-0.02em] text-ink">What DocRelay found</h3>
-          <dl className="mt-4 max-w-[560px] divide-y divide-border border-y border-border text-[14px]">
+          <dl className="mt-4 max-w-[560px] surface-section divide-y divide-border-hair px-4 text-[14px]">
             <RevisionRow label="Prepared from" value={conflict.baseline_revision_id} />
             <RevisionRow label="Latest in Drive" value={conflict.latest_revision_id} />
           </dl>
@@ -133,15 +133,15 @@ function ConflictState({ identity, result, deciding, onDecision }: { identity: D
               <Button key={action.choice} variant={action.choice === "REVIEW_LATEST" ? "primary" : "secondary"} busy={deciding} onClick={() => onDecision(action.choice)}>{action.label}</Button>
             ))}
           </div>
-          <p className="mt-7 border-t border-border pt-5 text-[13px] text-muted">The existing write plan remains stale and cannot be reused.</p>
+          <p className="mt-7 border-t border-border-hair pt-5 text-[13px] text-muted">The existing write plan remains stale and cannot be reused.</p>
         </section>
 
-        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
+        <aside className="border-t border-border-light px-5 py-8 sm:px-8 lg:border-t-0 lg:border-l lg:px-8 lg:py-10">
           <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Safe stop</h2>
           <div className="mt-8">
             {["Review preserved", "Revision mismatch detected", "Google write not applied"].map((label) => (
               <div key={label} className="relative flex gap-3 pb-10">
-                <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" />
+                <span className="absolute top-[18px] bottom-0 left-[8.5px] w-px bg-border-light" aria-hidden="true" />
                 <StateMark state="complete" /><span className="text-[14px] text-ink">{label}</span>
               </div>
             ))}

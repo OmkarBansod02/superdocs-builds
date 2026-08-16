@@ -57,16 +57,29 @@ export function StateMark({
   state?: "idle" | "current" | "complete" | "warning" | "info";
   label?: string;
 }) {
+  // Round marks, matching the progress rail: a run's state reads the same
+  // wherever it appears — in a conversation, a table row or a page header.
   const styles = {
-    idle: "border-border bg-surface text-transparent",
-    current: "border-primary bg-primary text-primary-foreground",
-    complete: "border-primary-line bg-success-soft text-success",
-    warning: "border-warning/40 bg-warning-soft text-warning",
-    info: "border-info/40 bg-info-soft text-info",
+    idle: "border-border-light bg-surface text-transparent",
+    current: "border-primary-line bg-surface text-primary",
+    complete: "border-primary-line bg-accent-soft text-primary",
+    warning: "border-warning/35 bg-warning-soft text-warning",
+    info: "border-info/30 bg-info-soft text-info",
   };
   return (
-    <span className={cn("grid size-[18px] shrink-0 place-items-center rounded-[5px] border", styles[state])} aria-label={label}>
-      {state === "complete" ? <Check className="size-3" strokeWidth={2.5} /> : null}
+    <span
+      className={cn("grid size-[18px] shrink-0 place-items-center rounded-full border", styles[state])}
+      aria-label={label}
+    >
+      {state === "complete" ? (
+        <Check className="size-2.5" strokeWidth={2.75} />
+      ) : state === "current" ? (
+        <span className="size-[7px] rounded-full bg-primary" aria-hidden="true" />
+      ) : state === "idle" ? (
+        <span className="size-[6px] rounded-full bg-border" aria-hidden="true" />
+      ) : (
+        <span className="size-[6px] rounded-full bg-current" aria-hidden="true" />
+      )}
     </span>
   );
 }
@@ -79,7 +92,11 @@ export function InlineNotice({
   children: ReactNode;
 }) {
   if (tone === "neutral") {
-    return <div className="rounded-[10px] border border-border-light bg-surface px-3.5 py-3 text-[14px] leading-[1.6] text-ink">{children}</div>;
+    return (
+      <div className="rounded-[var(--radius-card)] border border-border-light bg-surface px-4 py-3 text-[14px] leading-[1.6] text-ink shadow-[var(--shadow-subtle)]">
+        {children}
+      </div>
+    );
   }
   return <StatusBanner tone={tone}>{children}</StatusBanner>;
 }

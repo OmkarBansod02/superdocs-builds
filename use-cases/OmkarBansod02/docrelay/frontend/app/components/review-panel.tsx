@@ -54,9 +54,9 @@ export function ReviewPanel({
           <h2 className="type-page-title">Review proposed changes</h2>
           <p className="mt-2 text-[14px] leading-6 text-muted sm:text-[15px]">Approve or reject every change before DocRelay prepares a write plan.</p>
 
-          <div className="mt-7 grid overflow-hidden rounded-lg border border-border md:grid-cols-[210px_minmax(0,1fr)]">
-            <aside className="border-b border-border bg-surface md:border-b-0 md:border-r">
-              <div className="border-b border-border px-4 py-4 text-[13px] font-medium text-ink">{proposals.length} proposed {proposals.length === 1 ? "change" : "changes"}</div>
+          <div className="surface-section mt-7 grid overflow-hidden md:grid-cols-[220px_minmax(0,1fr)]">
+            <aside className="border-b border-border-light bg-surface-sunken md:border-r md:border-b-0">
+              <div className="border-b border-border-hair px-4 py-3.5 text-[13px] font-medium tracking-[-0.01em] text-ink">{proposals.length} proposed {proposals.length === 1 ? "change" : "changes"}</div>
               <div className="hidden md:block">
                 {proposals.map((proposal, index) => {
                   const decision = decisions.get(proposal.proposal_id);
@@ -67,7 +67,7 @@ export function ReviewPanel({
                       type="button"
                       key={proposal.proposal_id}
                       onClick={() => setSelectedIndex(index)}
-                      className={`flex min-h-14 w-full items-center gap-3 px-4 text-left text-[13px] transition-colors ${isSelected ? "bg-surface-muted text-ink" : "text-muted hover:bg-surface-muted"}`}
+                      className={`flex min-h-[52px] w-full items-center gap-3 border-b border-border-hair px-4 text-left text-[13px] transition-colors duration-[var(--motion-duration)] last:border-b-0 ${isSelected ? "bg-surface font-medium text-ink" : "text-muted hover:bg-surface/70"}`}
                     >
                       <StateMark state={resolved ? "complete" : isSelected ? "current" : "idle"} />
                       <span>{index + 1}</span>
@@ -86,18 +86,18 @@ export function ReviewPanel({
             </aside>
 
             <div className="min-w-0 bg-surface">
-              <div className="border-b border-border px-5 py-4 text-[13px] font-medium text-ink">Proposed change {selectedIndex + 1} of {proposals.length}</div>
+              <div className="border-b border-border-hair bg-surface-sunken px-5 py-3.5 text-[13px] font-medium tracking-[-0.01em] text-ink">Proposed change {selectedIndex + 1} of {proposals.length}</div>
               <div className="px-5 py-7 sm:px-7">
                 <DiffView oldText={extractText(selected.old_html)} newText={extractText(selected.new_html)} />
                 {selected.ai_explanation ? (
-                  <div className="mt-8 border-t border-border pt-6">
+                  <div className="mt-8 border-t border-border-hair pt-6">
                     <h3 className="text-[13px] font-semibold text-ink">SuperDocs rationale</h3>
                     <p className="mt-2 text-[14px] leading-6 text-muted">{selected.ai_explanation}</p>
                   </div>
                 ) : null}
               </div>
 
-              <div className="sticky bottom-[76px] flex flex-wrap justify-end gap-3 border-t border-border bg-surface px-5 py-4 lg:static">
+              <div className="sticky bottom-[76px] flex flex-wrap justify-end gap-2.5 border-t border-border-hair bg-surface px-5 py-4 lg:static">
                 <Button variant={pending && !pending.approve ? "danger" : "secondary"} disabled={submitting || existing !== null} onClick={() => onDecide(selected.proposal_id, false)} className="min-w-[120px]">Reject</Button>
                 <Button disabled={submitting || existing !== null} onClick={() => onDecide(selected.proposal_id, true)} className="min-w-[160px]">{approved ? "Approved" : "Approve change"}</Button>
               </div>
@@ -111,16 +111,16 @@ export function ReviewPanel({
           </div>
         </section>
 
-        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-7 lg:py-10">
-          <h2 className="text-[15px] font-semibold tracking-[-0.02em] text-ink">Review evidence</h2>
+        <aside className="border-t border-border-light px-5 py-8 sm:px-8 lg:border-t-0 lg:border-l lg:px-7 lg:py-10">
+          <h2 className="text-[15px] font-semibold tracking-[-0.022em] text-ink">Review evidence</h2>
           <div className="mt-7">
             {[
               { label: "Proposal received", state: "complete" as const },
               { label: extractText(selected.old_html) ? "Exact old text captured" : "Old text unavailable", state: extractText(selected.old_html) ? "complete" as const : "info" as const },
               { label: existing || pending ? "Decision recorded" : "Decision required", state: existing || pending ? "complete" as const : "current" as const },
             ].map((item, index, items) => (
-              <div key={item.label} className="relative flex gap-3 pb-11 last:pb-0">
-                {index < items.length - 1 ? <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" /> : null}
+              <div key={item.label} className="relative flex gap-3 pb-9 last:pb-0">
+                {index < items.length - 1 ? <span className="absolute top-[18px] bottom-0 left-[8.5px] w-px bg-border-light" aria-hidden="true" /> : null}
                 <StateMark state={item.state} />
                 <span className="text-[13px] leading-5 text-ink">{item.label}</span>
               </div>

@@ -16,12 +16,12 @@ export function DiffView({ oldText, newText, context, compact = false }: { oldTe
   const segments = changedSegments(oldText ?? "", newText ?? "");
   return (
     <div>
-      <div className={`grid gap-4 ${compact ? "md:grid-cols-[1fr_auto_1fr] md:items-center" : "md:grid-cols-2"}`}>
-        <DiffSide label="Before" text={context?.before.text ?? oldText} exactText={oldText} explicitSpan={context?.before} highlight={segments.oldChanged} tone="removed" />
-        {compact ? <ArrowRight className="mx-auto hidden size-4 text-muted md:block" aria-hidden="true" /> : null}
-        <DiffSide label="After" text={context?.after.text ?? newText} exactText={newText} explicitSpan={context?.after} highlight={segments.newChanged} tone="added" />
+      <div className={`grid gap-3 ${compact ? "md:grid-cols-[1fr_auto_1fr] md:items-center" : "md:grid-cols-2"}`}>
+        <DiffSide label="Removed" text={context?.before.text ?? oldText} exactText={oldText} explicitSpan={context?.before} highlight={segments.oldChanged} tone="removed" />
+        {compact ? <ArrowRight className="mx-auto hidden size-4 text-muted-soft md:block" aria-hidden="true" /> : null}
+        <DiffSide label="Added" text={context?.after.text ?? newText} exactText={newText} explicitSpan={context?.after} highlight={segments.newChanged} tone="added" />
       </div>
-      {context ? <p className="mt-4 text-[12px] text-muted">Context is read-only. Highlighted exact mutation span: <span className="font-mono text-ink">{JSON.stringify(oldText)} → {JSON.stringify(newText)}</span></p> : null}
+      {context ? <p className="mt-3.5 text-[12px] leading-[1.55] text-muted">Context is read-only. Highlighted exact mutation span: <span className="type-mono text-ink">{JSON.stringify(oldText)} → {JSON.stringify(newText)}</span></p> : null}
     </div>
   );
 }
@@ -37,19 +37,27 @@ function DiffSide({ label, text, exactText, explicitSpan, highlight, tone }: { l
   const highlighted = range
     ? contextCharacters?.slice(range.start, range.end).join("") ?? ""
     : highlight;
+  const removed = tone === "removed";
   return (
-    <section className="min-w-0">
-      <h3 className="mb-3 text-[12px] font-semibold uppercase tracking-[0.045em] text-ink/70">{label}</h3>
-      <p className="min-h-14 text-[15px] leading-7 text-ink sm:text-[16px]">
+    <section
+      className={`diff-band min-w-0 ${removed ? "diff-band-removed" : "diff-band-added"}`}
+    >
+      <h3
+        className={`flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.02em] ${
+          removed ? "text-diff-removed-text" : "text-diff-added-text"
+        }`}
+      >
+        <span aria-hidden="true" className="text-[13px] leading-none font-semibold">
+          {removed ? "−" : "+"}
+        </span>
+        {label}
+      </h3>
+      <p className="mt-2 min-h-12 text-[14.5px] leading-[1.7] text-ink sm:text-[15px]">
         {text ? (
           index >= 0 ? (
             <>
               {contextCharacters ? contextCharacters.slice(0, index).join("") : text.slice(0, index)}
-              <mark
-                className={tone === "removed"
-                  ? "rounded-[4px] bg-diff-removed px-[3px] font-medium text-diff-removed-text line-through decoration-[color:var(--diff-removed-line)] decoration-[1.5px]"
-                  : "rounded-[4px] bg-diff-added px-[3px] font-semibold text-diff-added-text"}
-              >
+              <mark className={removed ? "diff-token-removed" : "diff-token-added"}>
                 {highlighted}
               </mark>
               {contextCharacters ? contextCharacters.slice(range?.end).join("") : text.slice(index + highlighted.length)}

@@ -204,7 +204,7 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
 
   return (
     <div className="min-h-full bg-background">
-      <div className="chrome-rail justify-start border-b border-border-light">
+      <div className="chrome-rail justify-start border-b border-border-light bg-surface">
         <Button variant="ghost" className="h-8 px-2 text-muted hover:text-ink" asChild>
           <Link href="/runs">
             <icons.arrowLeft className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />
@@ -263,14 +263,26 @@ function PreparingSafetyCheck({ document }: { document: DocumentIdentityData }) 
           <p className="type-body-muted mt-2.5 max-w-[38rem]">
             Matching the approved old text, source revision, structural location, and guarded write operation.
           </p>
-          <div className="mt-8 space-y-4">
+          {/* The same progress rail the conversation uses, so a safety check
+              reads identically wherever it is shown. */}
+          <ol className="relative mt-8">
             {["Approved review located", "Mapping exact source range", "Preparing revision guard"].map((label, index) => (
-              <div key={label} className="flex items-center gap-3">
+              <li key={label} className="relative flex items-center gap-3 pb-4 last:pb-0">
+                {index < 2 ? (
+                  <span
+                    className={`absolute top-[18px] bottom-0 left-[8.5px] w-px ${index === 0 ? "bg-primary-line" : "bg-border-light"}`}
+                    aria-hidden="true"
+                  />
+                ) : null}
                 <StateMark state={index === 0 ? "complete" : index === 1 ? "current" : "idle"} />
-                <span className="text-[14px] text-ink">{label}</span>
-              </div>
+                <span
+                  className={index === 1 ? "text-[14px] font-medium text-ink" : "text-[14px] text-muted"}
+                >
+                  {label}
+                </span>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
       </section>
     </div>

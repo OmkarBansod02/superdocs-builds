@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { listRuns, listWatchRules, listWatches, type RunSummary } from "../lib/api";
 import { ICON_STROKE, icons } from "@/lib/icons";
+import { GoogleDocsMark } from "./brand";
 import { RunStatus } from "./run-status";
 import { Button, InlineNotice, Skeleton } from "./ui";
 
@@ -45,10 +46,14 @@ export function RunsWorkspace() {
   return (
     <section className="page-shell">
       <div className="page-measure">
-        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
           <div className="min-w-0">
+            <span className="pill pill-neutral mb-3 flex w-fit">
+              <icons.activity className="size-3" strokeWidth={ICON_STROKE} aria-hidden="true" />
+              Full history
+            </span>
             <h1 className="type-page-title">Activity</h1>
-            <p className="type-body-muted mt-2">
+            <p className="type-body-muted mt-2 max-w-[42rem]">
               Every manual and watched document operation, each independently actionable.
             </p>
           </div>
@@ -78,7 +83,7 @@ export function RunsWorkspace() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] border-collapse text-left">
                 <thead>
-                  <tr className="type-section-heading border-b border-border-light">
+                  <tr className="type-section-heading border-b border-border-light bg-surface-sunken">
                     <th className="px-5 py-3 font-medium">Document</th>
                     <th className="px-3 py-3 font-medium">Origin</th>
                     <th className="px-3 py-3 font-medium">Matched rule</th>
@@ -91,34 +96,30 @@ export function RunsWorkspace() {
                   {runs.map((run) => (
                     <tr
                       key={run.run_id}
-                      className="border-b border-border-light transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-muted/40"
+                      className="border-b border-border-hair transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-sunken"
                     >
-                      <td className="px-5 py-3.5">
-                        <span className="flex items-center gap-2.5 text-[13.5px] font-medium tracking-[-0.012em] text-ink">
-                          <icons.document
-                            className="size-4 shrink-0 text-muted-soft"
-                            strokeWidth={ICON_STROKE}
-                            aria-hidden="true"
-                          />
+                      <td className="px-5 py-4">
+                        <span className="flex items-center gap-2.5 text-[13.5px] font-medium tracking-[-0.014em] text-ink">
+                          <GoogleDocsMark className="size-[15px]" />
                           <span className="min-w-0 truncate">{run.document_name}</span>
                         </span>
                       </td>
-                      <td className="px-3 py-3.5 text-[13px] text-muted">
+                      <td className="px-3 py-4 text-[13px] text-muted">
                         {run.watch_id ? "Watch" : "Manual"}
                       </td>
-                      <td className="px-3 py-3.5 text-[13px] text-muted">
+                      <td className="px-3 py-4 text-[13px] text-muted">
                         {run.matched_rule_id
                           ? ruleNames.get(run.matched_rule_id) ?? `Rule v${run.matched_rule_version ?? "—"}`
                           : "—"}
                       </td>
-                      <td className="px-3 py-3.5">
+                      <td className="px-3 py-4">
                         <RunStatus run={run} />
                       </td>
-                      <td className="px-3 py-3.5 text-[13px] tabular-nums text-muted">
+                      <td className="px-3 py-4 text-[13px] tabular-nums text-muted">
                         {formatDateTime(run.updated_at)}
                       </td>
-                      <td className="px-5 py-3.5 text-right">
-                        <Button variant="ghost" className="h-[30px] px-2.5 text-accent" asChild>
+                      <td className="px-5 py-4 text-right">
+                        <Button variant="secondary" className="h-[30px] px-2.5" asChild>
                           <Link href={`/runs/${run.run_id}`}>
                             Open
                             <icons.chevronRight
@@ -156,12 +157,12 @@ function EmptyRuns() {
   return (
     <div className="surface-section mt-8 flex flex-col items-center px-6 py-16 text-center">
       <span
-        className="grid size-10 place-items-center rounded-[10px] border border-border-light bg-surface-elevated text-muted"
+        className="grid size-11 place-items-center rounded-[13px] border border-border-light bg-surface-sunken shadow-[var(--shadow-subtle)]"
         aria-hidden="true"
       >
-        <icons.document className="size-[18px]" strokeWidth={ICON_STROKE} />
+        <GoogleDocsMark className="size-[19px]" />
       </span>
-      <h2 className="mt-4 text-[15px] font-semibold tracking-[-0.02em] text-ink">No activity yet</h2>
+      <h2 className="mt-4 text-[15.5px] font-semibold tracking-[-0.022em] text-ink">No activity yet</h2>
       <p className="mt-2 max-w-[24rem] text-[13.5px] leading-[1.62] text-muted">
         Choose a document in Workspace or configure Watch to begin.
       </p>

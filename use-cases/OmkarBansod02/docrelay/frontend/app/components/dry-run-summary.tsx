@@ -37,25 +37,25 @@ export function DryRunSummary({
           <p className="mt-2 max-w-[680px] text-[15px] leading-6 text-muted">{writePlanSummary(dryRun)}</p>
 
           <div className="mt-8">
-            <h3 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">{(dryRun.changes?.length ?? 1) > 1 ? "Changes to write" : "Change to write"}</h3>
+            <h3 className="text-[15.5px] font-semibold tracking-[-0.022em] text-ink">{(dryRun.changes?.length ?? 1) > 1 ? "Changes to write" : "Change to write"}</h3>
             <div className="mt-6 grid gap-8">
               {mappedChanges(dryRun).map((change, index) => (
                 <div key={change.proposal_id ?? String(index)}>
-                  {mappedChanges(dryRun).length > 1 ? <p className="mb-3 text-[13px] font-semibold uppercase tracking-[0.04em] text-muted">Change {index + 1}</p> : null}
+                  {mappedChanges(dryRun).length > 1 ? <p className="type-section-heading mb-3">Change {index + 1}</p> : null}
                   <DiffView oldText={change.old_text} newText={change.new_text} context={change.context} compact />
                 </div>
               ))}
             </div>
           </div>
 
-          <dl className="mt-7 divide-y divide-border border-y border-border text-[14px]">
+          <dl className="surface-section mt-7 divide-y divide-border-hair px-4 text-[14px]">
             {dryRun.structural_location ? <DetailRow label="Location" value={locationSummary(dryRun.structural_location)} /> : null}
             <DetailRow label="Operations" value={String(dryRun.operation_count)} />
             <DetailRow label="Source revision" value={dryRun.source?.baseline_revision_id ? shortId(dryRun.source.baseline_revision_id) : "—"} mono />
           </dl>
 
-          <div className="mt-6 flex items-center gap-3 text-[16px] font-medium text-success">
-            <span className="grid size-5 place-items-center rounded-full border border-success text-[12px]" aria-hidden="true">✓</span>
+          <div className="mt-6 flex items-center gap-2.5 rounded-[var(--radius-card)] border border-primary-line bg-accent-soft px-4 py-3 text-[14.5px] font-medium text-success">
+            <span className="grid size-[18px] place-items-center rounded-full border border-primary-line bg-surface text-[11px] text-primary" aria-hidden="true">✓</span>
             No cloud write has happened yet
           </div>
 
@@ -69,15 +69,15 @@ export function DryRunSummary({
           </button>
           {showDetails ? <TechnicalDetails dryRun={dryRun} /> : null}
 
-          <p className="mt-5 border-t border-border pt-5 text-[13px] text-muted">DocRelay stops if Google Drive has a newer revision.</p>
+          <p className="mt-5 border-t border-border-hair pt-5 text-[13px] text-muted">DocRelay stops if Google Drive has a newer revision.</p>
         </section>
 
-        <aside className="border-t border-border px-5 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8 lg:py-10">
-          <h2 className="text-[15.5px] font-semibold tracking-[-0.02em] text-ink">Safety checks</h2>
+        <aside className="border-t border-border-light px-5 py-8 sm:px-8 lg:border-t-0 lg:border-l lg:px-8 lg:py-10">
+          <h2 className="text-[15.5px] font-semibold tracking-[-0.022em] text-ink">Safety checks</h2>
           <div className="mt-8">
             {safetyChecks.map((label, index) => (
-              <div key={label} className="relative flex gap-3 pb-9 last:pb-0">
-                {index < safetyChecks.length - 1 ? <span className="absolute left-[9px] top-5 h-[calc(100%-20px)] border-l border-border" aria-hidden="true" /> : null}
+              <div key={label} className="relative flex gap-3 pb-8 last:pb-0">
+                {index < safetyChecks.length - 1 ? <span className="absolute top-[18px] bottom-0 left-[8.5px] w-px bg-primary-line" aria-hidden="true" /> : null}
                 <StateMark state="complete" />
                 <span className="text-[14px] leading-5 text-ink">{label}</span>
               </div>
@@ -91,7 +91,7 @@ export function DryRunSummary({
 
 function TechnicalDetails({ dryRun }: { dryRun: DryRunView }) {
   return (
-    <dl className="mt-2 space-y-3 rounded-[10px] border border-border-light bg-surface-muted/60 p-4 font-mono text-[11px] leading-5 text-muted">
+    <dl className="mt-2 space-y-3 rounded-[var(--radius-card)] border border-border-light bg-surface-sunken p-4 font-mono text-[11px] leading-5 text-muted">
       {dryRun.mapping_proof_id ? <TechnicalRow label="MappingProof" value={dryRun.mapping_proof_id} /> : null}
       {dryRun.mapping_proof_sha256 ? <TechnicalRow label="Proof SHA-256" value={dryRun.mapping_proof_sha256} /> : null}
       {dryRun.write_plan_id ? <TechnicalRow label="WritePlan" value={dryRun.write_plan_id} /> : null}

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Source_Serif_4 } from "next/font/google";
 
 import { AppShell } from "./components/app-shell";
 import { AppProviders } from "./components/providers";
@@ -16,6 +16,20 @@ const geistSans = Geist({
 const geistMono = Geist_Mono({
   subsets: ["latin"],
   variable: "--font-geist-mono",
+});
+
+/**
+ * The document reader is the one surface that is not product chrome, so the
+ * frozen preview is set in a text face rather than the UI face. It is used
+ * only inside `.document-page`.
+ */
+const documentSerif = Source_Serif_4({
+  subsets: ["latin"],
+  // The reader renders real italics (Google's SUBTITLE style), so the italic
+  // face is loaded rather than synthesised by the browser.
+  style: ["normal", "italic"],
+  variable: "--font-document-serif",
+  display: "swap",
 });
 
 export const metadata: Metadata = {
@@ -34,7 +48,12 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     <html
       lang="en"
       data-sidebar="expanded"
-      className={cn("h-full antialiased", geistSans.variable, geistMono.variable)}
+      className={cn(
+        "h-full antialiased",
+        geistSans.variable,
+        geistMono.variable,
+        documentSerif.variable,
+      )}
     >
       <head>
         <script dangerouslySetInnerHTML={{ __html: SIDEBAR_BOOTSTRAP }} />

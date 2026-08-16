@@ -41,6 +41,7 @@ import {
   watchDocumentSelection,
   watchErrorCopy,
 } from "../lib/watch-state";
+import { GoogleDocsMark, GoogleDriveMark } from "./brand";
 import { Button, InlineNotice, Skeleton } from "./ui";
 
 const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID ?? "";
@@ -195,10 +196,16 @@ export function WatchWorkspace() {
   return (
     <div className="page-shell">
       <div className="page-measure">
-        <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
           <div className="min-w-0">
+            <span className="pill pill-neutral mb-3 flex w-fit">
+              <icons.watch className="size-3" strokeWidth={ICON_STROKE} aria-hidden="true" />
+              Automatic discovery
+            </span>
             <h1 className="type-page-title">Watch</h1>
-            <p className="type-body-muted mt-2">Keep selected Drive folders in sync with reviewed DocRelay changes.</p>
+            <p className="type-body-muted mt-2 max-w-[42rem]">
+              Keep selected Drive folders in sync with reviewed DocRelay changes.
+            </p>
           </div>
           <WatchAccessStatus
             connection={connection}
@@ -232,21 +239,24 @@ export function WatchWorkspace() {
         <section className="mt-10" aria-labelledby="watching-heading">
           <h2 id="watching-heading" className="type-section-heading">Watching</h2>
           <div className="surface-section mt-3 px-5 py-5 sm:px-6 sm:py-6">
-            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
               <span
-                className="grid size-9 shrink-0 place-items-center rounded-[9px] bg-surface-muted text-muted"
+                className="grid size-10 shrink-0 place-items-center rounded-[11px] border border-border-light bg-surface-sunken text-muted shadow-[var(--shadow-subtle)]"
                 aria-hidden="true"
               >
-                <icons.folderOpen className="size-[18px]" strokeWidth={ICON_STROKE} />
+                <icons.folderOpen className="size-[19px]" strokeWidth={ICON_STROKE} />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-[15px] font-semibold tracking-[-0.018em] text-ink">{watch.root_name}</p>
-                <p className="type-caption mt-0.5">Google Drive</p>
+                <p className="truncate text-[15.5px] font-semibold tracking-[-0.02em] text-ink">{watch.root_name}</p>
+                <p className="type-caption mt-0.5 flex items-center gap-1.5">
+                  <GoogleDriveMark className="size-3" />
+                  Google Drive
+                </p>
               </div>
               <WatchStatePill enabled={watch.enabled} />
             </div>
 
-            <dl className="mt-5 grid gap-x-8 gap-y-5 border-t border-border-light pt-5 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <dl className="mt-5 grid gap-x-8 gap-y-5 border-t border-border-hair pt-5 sm:grid-cols-[minmax(0,1fr)_auto]">
               <div className="min-w-0">
                 <dt className="type-section-heading">Rule</dt>
                 {rules.length === 0 ? (
@@ -257,7 +267,9 @@ export function WatchWorkspace() {
                   <dd className="mt-1.5 space-y-3">
                     {rules.map((rule) => (
                       <div key={rule.rule_id} className="min-w-0">
-                        <p className="text-[13.5px] leading-[1.6] text-ink">“{rule.instruction}”</p>
+                        <p className="border-l-2 border-primary-line pl-3 text-[13.5px] leading-[1.6] text-ink italic">
+                          “{rule.instruction}”
+                        </p>
                         <p className="type-caption mt-0.5">{rule.folder_name}</p>
                         {editing ? (
                           <button
@@ -283,7 +295,7 @@ export function WatchWorkspace() {
               </div>
             </dl>
 
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-light pt-5">
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-hair pt-5">
               <Button busy={scanning} disabled={scanning} onClick={() => void scanNow()}>
                 {latest?.status === "RUNNING" ? "Scanning…" : "Scan now"}
               </Button>
@@ -305,7 +317,7 @@ export function WatchWorkspace() {
             </div>
 
             {editing ? (
-              <div className="mt-5 border-t border-border-light pt-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--motion-duration)]">
+              <div className="mt-5 border-t border-border-hair pt-5 motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--motion-duration)]">
                 <ScheduleEditor
                   watch={watch}
                   onSaved={() => { void load(); }}
@@ -335,8 +347,8 @@ export function WatchWorkspace() {
           <div className="flex items-center justify-between gap-4">
             <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
             {pending.length > 0 ? (
-              <span className="inline-flex h-[22px] items-center rounded-full bg-warning-soft px-2 text-[11.5px] font-medium tabular-nums text-warning">
-                {pending.length}
+              <span className="pill pill-warning tabular-nums">
+                {pending.length} waiting
               </span>
             ) : null}
           </div>
@@ -360,13 +372,13 @@ export function WatchWorkspace() {
               return (
                 <article
                   key={run.run_id}
-                  className="relative flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border-light px-5 py-4 last:border-b-0"
+                  className="relative flex flex-wrap items-start gap-x-4 gap-y-3 border-b border-border-hair px-5 py-4 transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-sunken"
                 >
                   <span
-                    className="absolute inset-y-0 left-0 w-[2px] bg-warning/45"
+                    className="absolute inset-y-0 left-0 w-[2.5px] bg-warning/50"
                     aria-hidden="true"
                   />
-                  <icons.document className="mt-0.5 size-4 shrink-0 text-muted" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  <GoogleDocsMark className="mt-0.5 size-[17px]" />
                   <div className="min-w-[12rem] flex-1">
                     <p className="truncate text-[14.5px] font-medium tracking-[-0.014em] text-ink">{run.document_name}</p>
                     <p className="mt-0.5 text-[12.5px] text-muted">
@@ -412,9 +424,9 @@ export function WatchWorkspace() {
               return (
                 <div
                   key={`${item.provider_file_id}-${item.outcome}`}
-                  className="flex items-center gap-3 border-b border-border-light px-5 py-3 transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-muted/40"
+                  className="flex items-center gap-3 border-b border-border-hair px-5 py-3 transition-colors duration-[var(--motion-duration)] last:border-b-0 hover:bg-surface-sunken"
                 >
-                  <icons.document className="size-4 shrink-0 text-muted-soft" strokeWidth={ICON_STROKE} aria-hidden="true" />
+                  <GoogleDocsMark className="size-[15px] opacity-80" />
                   <p className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{item.name}</p>
                   <ActivityMark label={label} />
                 </div>
@@ -429,14 +441,9 @@ export function WatchWorkspace() {
 
 function WatchStatePill({ enabled }: { enabled: boolean }) {
   return (
-    <span
-      className={cn(
-        "inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[12px] font-medium",
-        enabled ? "bg-accent-soft text-accent" : "bg-surface-muted text-muted",
-      )}
-    >
+    <span className={cn("pill shrink-0", enabled ? "pill-accent" : "pill-neutral")}>
       <span
-        className={cn("size-1.5 rounded-full", enabled ? "bg-accent" : "bg-border")}
+        className={cn("size-[6px] rounded-full", enabled ? "bg-primary" : "bg-muted-soft")}
         aria-hidden="true"
       />
       {enabled ? "Watch enabled" : "Manual only"}
@@ -450,11 +457,16 @@ function ActivityMark({ label }: { label: string }) {
     || label === "Write access required" || label === "Needs review";
   const verified = label === "Verified" || label === "Reviewed";
   return (
-    <span className="flex shrink-0 items-center gap-1.5 text-[12px] text-muted">
+    <span
+      className={cn(
+        "pill shrink-0",
+        attention ? "pill-warning" : verified ? "pill-accent" : "pill-neutral",
+      )}
+    >
       <span
         className={cn(
-          "size-1.5 rounded-full",
-          attention ? "bg-warning" : verified ? "bg-success" : "bg-border",
+          "size-[6px] rounded-full",
+          attention ? "bg-warning" : verified ? "bg-primary" : "bg-muted-soft",
         )}
         aria-hidden="true"
       />
@@ -483,9 +495,9 @@ function WatchAccessStatus({
 }) {
   if (connection?.watch_authorized) {
     return (
-      <p className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border-light bg-surface px-3 py-1.5 text-[12.5px] text-muted">
-        <span className="grid size-3.5 place-items-center rounded-full bg-success text-primary-foreground" aria-hidden="true">
-          <icons.check className="size-2.5" strokeWidth={2.5} />
+      <p className="pill pill-accent h-7 shrink-0 px-2.5">
+        <span className="grid size-3.5 place-items-center rounded-full bg-primary text-primary-foreground" aria-hidden="true">
+          <icons.check className="size-2.5" strokeWidth={2.75} />
         </span>
         Drive access · Watch enabled
       </p>
@@ -521,47 +533,61 @@ function WatchEmpty({
     <section className="page-shell">
       <div className="mx-auto w-full max-w-[600px] pt-4 lg:pt-16">
         <div className="text-center">
-          <h1 className="type-hero-title">Watch a Drive folder</h1>
-          <p className="type-hero-body mx-auto mt-3 max-w-[30rem]">
+          <span className="pill pill-accent mx-auto mb-5 flex w-fit">
+            <icons.shield className="size-3" strokeWidth={2} aria-hidden="true" />
+            Reviewed before write-back
+          </span>
+          <h1 className="type-hero-title text-balance">Watch a Drive folder</h1>
+          <p className="type-hero-body mx-auto mt-3.5 max-w-[30rem] text-pretty">
             Keep a Drive folder in sync with human-reviewed DocRelay changes.
           </p>
         </div>
         {error ? <div className="mt-6"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
 
-        <div className="mx-auto mt-9 flex max-w-[540px] flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-10 pb-8 text-center shadow-[var(--shadow-raised)]">
+        <div className="relative mx-auto mt-11 max-w-[540px]">
           <span
-            className="grid size-[68px] place-items-center rounded-[18px] border border-border-light bg-surface-elevated text-muted shadow-[var(--shadow-subtle)]"
             aria-hidden="true"
-          >
-            <icons.folderOpen className="size-7" strokeWidth={ICON_STROKE} />
-          </span>
-          {!connection || !watchReady ? (
-            <>
-              <h2 className="mt-6 text-[19px] leading-[1.25] font-semibold tracking-[-0.026em] text-ink">
-                Watch access required
-              </h2>
-              <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
-                DocRelay needs read access to discover files in the selected folder.
-              </p>
-              <Button className="mt-7 h-[38px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
-            </>
-          ) : (
-            <>
-              <h2 className="mt-6 text-[19px] leading-[1.25] font-semibold tracking-[-0.026em] text-ink">
-                Choose a folder
-              </h2>
-              <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
-                Select the Drive folder DocRelay should watch, then add a rule and set a schedule.
-              </p>
-              <Button className="mt-7 h-[38px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
-                {pickerBusy ? "Opening Drive…" : "Choose folder"}
-              </Button>
-            </>
-          )}
-          <p className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-light pt-4 text-[12px] text-muted-soft">
-            <icons.shield className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
-            Every discovered change is reviewed before write-back.
-          </p>
+            className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/45"
+          />
+          <span
+            aria-hidden="true"
+            className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[16px] border border-b-0 border-border-light bg-surface/75"
+          />
+          <div className="relative flex flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
+            <span
+              className="grid size-[72px] place-items-center rounded-[20px] border border-border-light bg-surface-elevated text-muted shadow-[var(--shadow-raised)]"
+              aria-hidden="true"
+            >
+              <icons.folderOpen className="size-7" strokeWidth={ICON_STROKE} />
+            </span>
+            {!connection || !watchReady ? (
+              <>
+                <h2 className="mt-6 text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-ink">
+                  Watch access required
+                </h2>
+                <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
+                  DocRelay needs read access to discover files in the selected folder.
+                </p>
+                <Button className="mt-7 h-[40px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
+              </>
+            ) : (
+              <>
+                <h2 className="mt-6 text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-ink">
+                  Choose a folder
+                </h2>
+                <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
+                  Select the Drive folder DocRelay should watch, then add a rule and set a schedule.
+                </p>
+                <Button className="mt-7 h-[40px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
+                  {pickerBusy ? "Opening Drive…" : "Choose folder"}
+                </Button>
+              </>
+            )}
+            <p className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12px] text-muted-soft">
+              <icons.shield className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
+              Every discovered change is reviewed before write-back.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -589,7 +615,7 @@ function ScheduleEditor({ watch, onSaved }: { watch: WatchRoot; onSaved: () => v
             setEnabled(true);
             setIntervalValue(next);
           }}
-          className="h-[34px] rounded-[9px] border border-border bg-surface px-3 text-[13px] font-normal tracking-normal text-ink normal-case outline-none focus-visible:border-ring"
+          className="h-[34px] rounded-[9px] border border-border bg-surface px-3 text-[13px] font-normal tracking-normal text-ink normal-case outline-none transition-colors duration-[var(--motion-duration)] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/20"
         >
           <option value={0}>Manual</option>
           {INTERVALS.map((item) => (
@@ -654,7 +680,7 @@ function RuleEditor({
   }
 
   return (
-    <div className="mt-5 rounded-[10px] border border-border-light bg-background px-4 py-4">
+    <div className="mt-5 rounded-[var(--radius-card)] border border-border-light bg-surface-sunken px-4 py-4">
       <h3 className="text-[13.5px] font-semibold tracking-[-0.015em] text-ink">
         {rule ? `Edit ${rule.folder_name}` : "Add rule"}
       </h3>
@@ -675,7 +701,7 @@ function RuleEditor({
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
             rows={4}
-            className="resize-y rounded-[9px] border border-border bg-surface px-3 py-2.5 text-[13.5px] leading-[1.6] font-normal tracking-normal text-ink normal-case outline-none focus-visible:border-ring"
+            className="resize-y rounded-[10px] border border-border bg-surface px-3.5 py-2.5 text-[13.5px] leading-[1.6] font-normal tracking-normal text-ink normal-case outline-none transition-colors duration-[var(--motion-duration)] focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/20"
           />
         </label>
         <label className="flex items-center gap-2 text-[13px] text-ink">

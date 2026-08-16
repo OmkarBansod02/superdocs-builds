@@ -858,7 +858,7 @@ function ReopenSourceFailure({
         style={splitStyle}
         className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background lg:gap-[var(--workbench-gutter)] lg:p-[var(--workbench-gutter)]"
       >
-        <div className="conversation-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-conversation lg:shrink-0 lg:rounded-[var(--radius-pane)] lg:border lg:border-border-light lg:shadow-[var(--shadow-subtle)]">
+        <div className="conversation-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-conversation lg:shrink-0 lg:rounded-[var(--radius-pane)] lg:border lg:border-border-light lg:shadow-[var(--shadow-pane)]">
           <ConversationPanel
             title={thread.file.name}
             stateLabel="Needs attention"
