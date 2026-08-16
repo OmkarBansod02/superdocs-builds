@@ -8,9 +8,11 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "preview:docs": "tsx scripts/preview-policyset.ts"
   },
   "dependencies": {
+    "docx": "^9.5.1",
     "next": "^16.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
@@ -21,6 +23,8 @@
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.5",
     "eslint-config-next": "^16.3.0",
+    "jszip": "^3.10.1",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3",
     "vitest": "^4.1.10"
   }

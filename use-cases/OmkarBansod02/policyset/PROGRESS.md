@@ -14,9 +14,22 @@ Implemented the deterministic PolicySet domain core for one fictional store, Nor
 
 No SuperDocs calls. No editor UI.
 
+## Phase 2 — complete
+
+Turned the Phase 1 profile/renderers into real DOCX files and added a small server-side SuperDocs adapter.
+
+- `generatePolicyDocuments(profile)` emits exactly four DOCX files from the same PolicyProfile
+- Each file has a document title, effective date, company/contact facts, and that document's managed facts
+- The attorney-review disclaimer is a real Word footer, not a body paragraph
+- SuperDocs adapter covers caller-generated session ids, upload (`replace` / `background`), roster GET with `include_html`, focus, async chat with optional `document_id`, job polling, approve/deny, and focus-then-export for DOCX/PDF
+- `SUPERDOCS_API_KEY` is server-side only; `.env.example` documents it
+- Local preview script writes Northstar DOCX files to `tmp/policyset-preview/`; `--upload` is opt-in and does not start chat
+
+No intake/workspace UI. No HITL. No synchronized ChangeSet execution. No live SuperDocs call was made during this phase.
+
 ## Checks run
 
-- `npm test` — 24 passed
+- `npm test` — 31 passed
 - `npm run typecheck` — passed
 - `npm run lint` — passed
 - `npm run build` — passed (Next.js 16.3.0)
@@ -24,8 +37,7 @@ No SuperDocs calls. No editor UI.
 ## Known limitations
 
 - Profile and changesets are in-memory functions only; there is no database or session store
-- SuperDocs upload, HITL review, focus, and export are not implemented
-- Renderers emit HTML suitable for later DOCX work, not DOCX/PDF files
-- `proposed` is a local status transition only; nothing is sent to SuperDocs
+- HITL review UI, focus/export workspace, and synchronized ChangeSet execution are not implemented
+- The SuperDocs adapter does not implement continue prompts, session-job recovery, retries, or `open_mode=new_focused`
 - Validator covers PolicySet-managed facts, not legal compliance
 - App route is a placeholder page, not a workspace

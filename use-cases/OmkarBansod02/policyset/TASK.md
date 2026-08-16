@@ -10,7 +10,7 @@ Typed profile, four document types, Northstar fixture, explicit fact-to-document
 
 ## Phase 2 — SuperDocs session and four-document workspace
 
-Not started.
+Deterministic DOCX generation from PolicyProfile, a minimal production SuperDocs adapter, and a local preview/upload script. No intake/workspace UI, HITL review, or synchronized ChangeSet execution.
 
 ## Phase 3 — Human-in-the-loop synchronized edit
 
