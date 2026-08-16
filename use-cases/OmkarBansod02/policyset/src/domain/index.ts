@@ -35,6 +35,7 @@ export {
   type PolicyDocumentSet,
   type PolicyDocumentType,
   type PolicyProfile,
+  type ReturnShippingPayer,
   type ValidationIssue,
   type ValidationResult,
 } from "./types";

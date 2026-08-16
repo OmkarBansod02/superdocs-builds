@@ -25,11 +25,23 @@ Turned the Phase 1 profile/renderers into real DOCX files and added a small serv
 - `SUPERDOCS_API_KEY` is server-side only; `.env.example` documents it
 - Local preview script writes Northstar DOCX files to `tmp/policyset-preview/`; `--upload` is opt-in and does not start chat
 
-No intake/workspace UI. No HITL. No synchronized ChangeSet execution. No live SuperDocs call was made during this phase.
+No HITL. No synchronized ChangeSet execution. No live SuperDocs call was made during this phase.
+
+## Phase 3 — complete
+
+Built the user-facing intake → generate → four-document workspace flow. Frontend/product UI only.
+
+- Guided intake on `/` with four sections (Company, Store, Returns & Warranty, Privacy), prefilled from the Northstar Goods fixture
+- Generate Policy Set builds a `PolicyProfile`, runs the deterministic HTML renderers, validates the set, and opens the workspace
+- Workspace shows Policy Set name, company name, consistency status, four document tabs, a document-style preview surface, and a read-only Policy Facts panel sourced from `PolicyProfile`
+- Preview is explicitly a deterministic HTML surface, not SuperDocs
+- Local React state only; localStorage was deferred because it complicated hydration/lint
+
+No SuperDocs browser calls. No AI editing/HITL. No ChangeSet execution. No export.
 
 ## Checks run
 
-- `npm test` — 31 passed
+- `npm test` — 33 passed
 - `npm run typecheck` — passed
 - `npm run lint` — passed
 - `npm run build` — passed (Next.js 16.3.0)
@@ -37,7 +49,8 @@ No intake/workspace UI. No HITL. No synchronized ChangeSet execution. No live Su
 ## Known limitations
 
 - Profile and changesets are in-memory functions only; there is no database or session store
-- HITL review UI, focus/export workspace, and synchronized ChangeSet execution are not implemented
+- HITL review UI, SuperDocs editing, and synchronized ChangeSet execution are not implemented
 - The SuperDocs adapter does not implement continue prompts, session-job recovery, retries, or `open_mode=new_focused`
 - Validator covers PolicySet-managed facts, not legal compliance
-- App route is a placeholder page, not a workspace
+- Workspace preview is deterministic HTML, not a SuperDocs editor
+- Intake/workspace state is not persisted across refresh
