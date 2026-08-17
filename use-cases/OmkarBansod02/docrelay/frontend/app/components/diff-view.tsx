@@ -21,7 +21,7 @@ export function DiffView({ oldText, newText, context, compact = false }: { oldTe
         {compact ? <ArrowRight className="mx-auto hidden size-4 text-muted-soft md:block" aria-hidden="true" /> : null}
         <DiffSide label="Added" text={context?.after.text ?? newText} exactText={newText} explicitSpan={context?.after} highlight={segments.newChanged} tone="added" />
       </div>
-      {context ? <p className="mt-3.5 text-[12px] leading-[1.55] text-muted">Context is read-only. Highlighted exact mutation span: <span className="type-mono text-ink">{JSON.stringify(oldText)} → {JSON.stringify(newText)}</span></p> : null}
+      {context ? <p className="mt-3.5 text-[12.25px] leading-[1.55] text-muted">Context is read-only. Highlighted exact mutation span: <span className="type-mono text-ink">{JSON.stringify(oldText)} → {JSON.stringify(newText)}</span></p> : null}
     </div>
   );
 }
@@ -43,7 +43,7 @@ function DiffSide({ label, text, exactText, explicitSpan, highlight, tone }: { l
       className={`diff-band min-w-0 ${removed ? "diff-band-removed" : "diff-band-added"}`}
     >
       <h3
-        className={`flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.02em] ${
+        className={`flex items-center gap-1.5 text-[11.5px] font-medium uppercase tracking-[0.045em] ${
           removed ? "text-diff-removed-text" : "text-diff-added-text"
         }`}
       >

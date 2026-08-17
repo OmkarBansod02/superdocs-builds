@@ -83,7 +83,7 @@ export function RunsWorkspace() {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] border-collapse text-left">
                 <thead>
-                  <tr className="type-section-heading border-b border-border-light bg-surface-sunken">
+                  <tr className="type-section-heading border-b border-border bg-surface-sunken">
                     <th className="px-5 py-3 font-medium">Document</th>
                     <th className="px-3 py-3 font-medium">Origin</th>
                     <th className="px-3 py-3 font-medium">Matched rule</th>
@@ -104,10 +104,10 @@ export function RunsWorkspace() {
                           <span className="min-w-0 truncate">{run.document_name}</span>
                         </span>
                       </td>
-                      <td className="px-3 py-4 text-[13px] text-muted">
+                      <td className="px-3 py-4 text-[13.25px] text-muted">
                         {run.watch_id ? "Watch" : "Manual"}
                       </td>
-                      <td className="px-3 py-4 text-[13px] text-muted">
+                      <td className="px-3 py-4 text-[13.25px] text-muted">
                         {run.matched_rule_id
                           ? ruleNames.get(run.matched_rule_id) ?? `Rule v${run.matched_rule_version ?? "—"}`
                           : "—"}
@@ -115,7 +115,7 @@ export function RunsWorkspace() {
                       <td className="px-3 py-4">
                         <RunStatus run={run} />
                       </td>
-                      <td className="px-3 py-4 text-[13px] tabular-nums text-muted">
+                      <td className="px-3 py-4 text-[13.25px] tabular-nums text-muted">
                         {formatDateTime(run.updated_at)}
                       </td>
                       <td className="px-5 py-4 text-right">
@@ -157,7 +157,7 @@ function EmptyRuns() {
   return (
     <div className="surface-section mt-8 flex flex-col items-center px-6 py-16 text-center">
       <span
-        className="grid size-11 place-items-center rounded-[13px] border border-border-light bg-surface-sunken shadow-[var(--shadow-subtle)]"
+        className="grid size-11 place-items-center rounded-[12px] border border-border-light bg-surface-sunken shadow-[var(--shadow-subtle)]"
         aria-hidden="true"
       >
         <GoogleDocsMark className="size-[19px]" />

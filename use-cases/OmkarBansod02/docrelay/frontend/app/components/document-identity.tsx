@@ -16,7 +16,7 @@ export function DocumentIdentity({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-[72px] items-center gap-3.5 border-b border-border-light bg-surface px-6 py-4 sm:px-8 lg:px-10">
+    <div className="flex min-h-[72px] items-center gap-3.5 border-b border-border bg-surface px-6 py-4 sm:px-8 lg:px-10">
       <span
         className="grid size-10 shrink-0 place-items-center rounded-[11px] border border-border-light bg-surface-sunken shadow-[var(--shadow-subtle)]"
         aria-hidden="true"
@@ -27,7 +27,7 @@ export function DocumentIdentity({
         <h1 className="truncate text-[16px] font-semibold tracking-[-0.024em] text-ink sm:text-[17px]">
           {document.name}
         </h1>
-        <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] text-muted">
+        <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.75px] text-muted">
           <span>Google Docs</span>
           {document.revision ? (
             <>

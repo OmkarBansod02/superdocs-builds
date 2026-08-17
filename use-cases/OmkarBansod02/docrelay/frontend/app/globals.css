@@ -5,79 +5,90 @@
 @custom-variant dark (&:is(.dark *));
 
 /* ==========================================================================
-   DocRelay — "Quiet Editorial" design system.
+   DocRelay — "Crisp Editorial" design system.
 
-   One warm stone ladder, one accent, one radius family, one motion curve.
-   Product classes (text-ink, text-muted, bg-surface, bg-canvas) and the
-   shadcn primitive tokens (primary / secondary / muted-foreground) both read
-   from the same semantic variables, so a component never invents a colour.
+   One neutral surface ladder, one deep-pine accent, one radius family, one
+   motion curve. Product classes (text-ink, text-muted, bg-surface, bg-canvas)
+   and the shadcn primitive tokens (primary / secondary / muted-foreground)
+   both read from the same semantic variables, so a component never invents a
+   colour.
+
+   The neutrals carry the faintest green cast — enough to stay warm next to
+   the pine, cool enough that no surface reads as beige.
    ========================================================================== */
 :root {
   /* --- Surface ladder -----------------------------------------------------
-     Six deliberate layers. Each step is perceptible on a normal monitor:
-       navigation → working canvas → conversation → document canvas → paper
-     with interactive surfaces sitting a half-step above their container. */
-  --sidebar: #f7f5f1;          /* navigation, recedes behind the work */
-  --background: #edeae4;       /* working canvas the panes sit inside */
-  --conversation: #fcfbf9;     /* conversation pane */
-  --canvas: #e8e4dd;           /* document canvas behind the page */
-  --surface: #ffffff;          /* cards, inputs, controls */
+     Six deliberate layers, each step perceptible on a normal monitor:
+       navigation → working canvas → conversation → document canvas → paper.
+     The document page is the highest value in the product, and it is the only
+     thing that is pure white by default. */
+  --sidebar: #f1f2ee;          /* navigation, quietly separated from the work */
+  --background: #f7f8f5;       /* working canvas the workbench sits inside */
+  --conversation: #fbfcfa;     /* conversation pane */
+  --canvas: #e9ece8;           /* document canvas behind the page */
+  --surface: #ffffff;          /* cards, inputs, controls, document chrome */
   --surface-elevated: #ffffff; /* document paper, popovers, lifted plates */
-  --surface-muted: #f1eee7;    /* quiet fills, hover, skeletons */
-  --surface-sunken: #f6f3ee;   /* secondary bands inside a surface */
+  --surface-muted: #f0f2ee;    /* quiet fills, hover, skeletons */
+  --surface-sunken: #f4f6f3;   /* interactive + secondary bands inside a surface */
 
-  --foreground: #1a1815;
-  --muted-text: #64605a;
-  /* Tertiary metadata only, but still held above 4.5:1 on every surface it is
-     allowed on — small uppercase labels are the hardest text in the product. */
-  --muted-soft: #78736b;
-  --border: #ded9cf;
-  --border-light: #e9e5dc;
-  --border-hair: #efece4;      /* interior rules inside a pane */
+  /* --- Text ---------------------------------------------------------------
+     Three steps only. Primary is a confident near-black; secondary is meant to
+     be read, not skimmed past; metadata is quiet but never faint — every step
+     clears 4.5:1 on every surface it is allowed on. */
+  --foreground: #171a18;
+  --muted-text: #5e6762;
+  --muted-soft: #6f7772;
+
+  /* --- Borders ------------------------------------------------------------
+     Exactly three: structure, light edge, interior hairline. */
+  --border: #d6dbd6;           /* structural: frames, controls, inputs */
+  --border-light: #e1e6e1;     /* light edges on raised surfaces */
+  --border-hair: #e9ede9;      /* interior rules inside a surface */
 
   /* --- Accent -------------------------------------------------------------
      A single deep pine. It marks selection, approval and verified state and
      nothing else, so its presence always means "this is decided". */
-  --primary: #115c40;
-  --primary-hover: #0d4a33;
-  --primary-foreground: #f8fbf9;
-  --primary-soft: #e6f0ea;
-  --primary-line: #bfd6c8;
+  --primary: #0f6b4f;
+  --primary-hover: #0b5a42;
+  --primary-foreground: #ffffff;
+  --primary-soft: #e2f0e9;
+  --primary-line: #b5d4c5;
 
-  --success: #1d6142;
-  --success-soft: #e6f0ea;
-  --warning: #8a5f2c;
-  --warning-soft: #f6edde;
-  --destructive: #9a4f45;
-  --destructive-soft: #f8e9e5;
-  --info: #56606a;
-  --info-soft: #ecedec;
+  --success: #0f6b4f;
+  --success-soft: #e2f0e9;
+  --warning: #8a5a1b;
+  --warning-soft: #f9efdd;
+  --destructive: #a1453b;
+  --destructive-soft: #f9e9e6;
+  --info: #55605b;
+  --info-soft: #ebeeeb;
 
   /* Contextual review tints. Only the exact changed span is ever coloured —
      the surrounding sentence always stays neutral, and the band it sits in is
      paler still so a diff reads as calm evidence rather than an alarm. */
-  --diff-removed-band: #fdf4f2;
-  --diff-removed-edge: #f1dcd7;
-  --diff-removed: #f8d2cc;
-  --diff-removed-text: #8c3a31;
-  --diff-removed-line: #b0605a;
-  --diff-added-band: #f1f8f3;
-  --diff-added-edge: #d6e8dc;
-  --diff-added: #cbe9d6;
-  --diff-added-text: #17573a;
-  --review-mark: #f7f0dc;
-  --review-mark-line: #ddcda6;
+  --diff-removed-band: #fdf3f1;
+  --diff-removed-edge: #eed8d3;
+  --diff-removed: #f7cec7;
+  --diff-removed-text: #8a3229;
+  --diff-removed-line: #ac5a53;
+  --diff-added-band: #eff7f2;
+  --diff-added-edge: #cee5d8;
+  --diff-added: #c3e6d2;
+  --diff-added-text: #0e5537;
+  --review-mark: #faf0d4;
+  --review-mark-line: #ddc793;
 
-  --ring: #115c40;
+  --ring: #0f6b4f;
 
   /* --- Geometry -----------------------------------------------------------
      One radius family across controls, panes and the document page so the
      product reads as a single assembled grid. */
   --radius: 0.5rem;
-  --radius-pane: 14px;
-  --radius-card: 12px;
-  --radius-plate: 18px;
-  --workbench-gutter: 12px;
+  --radius-pane: 12px;
+  --radius-card: 10px;
+  --radius-plate: 16px;
+  --workbench-gutter: 9px;
+  --workbench-inset: 12px;
 
   --sidebar-width: 260px;
   --sidebar-width-collapsed: 64px;
@@ -89,19 +100,21 @@
   --document-width-min: 420px;
 
   /* --- Elevation ----------------------------------------------------------
-     Warm-tinted, low-contrast. Elevation separates layers; it never decorates. */
-  --shadow-subtle: 0 1px 2px rgb(26 24 21 / 0.04);
-  --shadow-raised: 0 1px 2px rgb(26 24 21 / 0.045), 0 3px 8px -2px rgb(26 24 21 / 0.05);
+     Four shadows, no more: a hairline lift, a raised control, the overlay
+     stack (menus, dialogs) and the document paper. Ordinary application UI
+     does not float. */
+  --shadow-subtle: 0 1px 2px rgb(23 26 24 / 0.05);
+  --shadow-raised: 0 1px 2px rgb(23 26 24 / 0.05), 0 2px 6px -3px rgb(23 26 24 / 0.06);
   --shadow-lifted:
-    0 1px 2px rgb(26 24 21 / 0.05),
-    0 8px 20px -8px rgb(26 24 21 / 0.09),
-    0 20px 44px -22px rgb(26 24 21 / 0.11);
-  --shadow-overlay: 0 1px 2px rgb(26 24 21 / 0.07), 0 10px 28px -8px rgb(26 24 21 / 0.16);
-  --shadow-pane: 0 1px 2px rgb(26 24 21 / 0.04), 0 6px 16px -10px rgb(26 24 21 / 0.10);
+    0 1px 2px rgb(23 26 24 / 0.05),
+    0 8px 20px -10px rgb(23 26 24 / 0.10),
+    0 20px 40px -24px rgb(23 26 24 / 0.10);
+  --shadow-overlay: 0 1px 2px rgb(23 26 24 / 0.08), 0 12px 30px -8px rgb(23 26 24 / 0.18);
+  --shadow-pane: 0 1px 2px rgb(23 26 24 / 0.04);
   --shadow-document:
-    0 0 0 1px rgb(26 24 21 / 0.04),
-    0 1px 2px rgb(26 24 21 / 0.05),
-    0 18px 40px -18px rgb(26 24 21 / 0.13);
+    0 0 0 1px rgb(23 26 24 / 0.05),
+    0 1px 2px rgb(23 26 24 / 0.05),
+    0 14px 30px -16px rgb(23 26 24 / 0.14);
 
   --motion-duration: 150ms;
   --motion-duration-lg: 220ms;
@@ -120,11 +133,11 @@
   --sidebar-foreground: var(--foreground);
   --sidebar-primary: var(--primary);
   --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: #ece8e0;
+  --sidebar-accent: #e5e8e2;
   --sidebar-accent-foreground: var(--foreground);
-  --sidebar-border: #e4dfd5;
+  --sidebar-border: #dde2dd;
   --sidebar-ring: var(--primary);
-  --sidebar-muted: #6b665e;
+  --sidebar-muted: #5e6762;
 }
 
 [data-sidebar="collapsed"] {
@@ -254,12 +267,12 @@
   }
 
   :focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--ring) 60%, white);
+    outline: 2px solid color-mix(in srgb, var(--ring) 55%, white);
     outline-offset: 2px;
   }
 
   ::selection {
-    background: color-mix(in srgb, var(--primary) 15%, white);
+    background: color-mix(in srgb, var(--primary) 16%, white);
     color: var(--foreground);
   }
 
@@ -277,11 +290,10 @@
   /* Panes and page surfaces                                                */
   /* ---------------------------------------------------------------------- */
 
-  /* An editor pane: the framing shared by conversation, document and the
-     page-level surfaces. Panes create separation, so no adjacent element
-     repeats the divider. */
+  /* An editor pane: the framing shared by the page-level surfaces. Panes
+     create separation, so no adjacent element repeats the divider. */
   .pane {
-    border: 1px solid var(--border-light);
+    border: 1px solid var(--border);
     border-radius: var(--radius-pane);
     background: var(--surface);
     box-shadow: var(--shadow-pane);
@@ -357,8 +369,8 @@
   }
 
   .pill-neutral {
-    border-color: var(--border-light);
-    background: var(--surface-muted);
+    border-color: var(--border);
+    background: var(--surface-sunken);
     color: var(--muted-text);
   }
 
@@ -369,7 +381,7 @@
   }
 
   .pill-warning {
-    border-color: color-mix(in srgb, var(--warning) 22%, transparent);
+    border-color: color-mix(in srgb, var(--warning) 26%, transparent);
     background: var(--warning-soft);
     color: var(--warning);
   }
@@ -428,11 +440,28 @@
   }
 
   /* ---------------------------------------------------------------------- */
-  /* Workbench split                                                        */
+  /* Workbench                                                              */
   /* ---------------------------------------------------------------------- */
 
-  /* The drag affordance lives inside the gutter, so the split reads as one
-     continuous canvas until the pointer is near it. */
+  /* One frame around both tools. The conversation and the document are
+     regions inside a single workspace, not two cards on a board: the frame
+     owns the outer border and radius, and the only edge between them is the
+     seam in the resize gutter. */
+  .workbench {
+    background: var(--conversation);
+  }
+
+  @media (min-width: 1024px) {
+    .workbench {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pane);
+      box-shadow: var(--shadow-pane);
+      overflow: hidden;
+    }
+  }
+
+  /* The drag affordance lives inside the gutter. A persistent hairline keeps
+     the two tools visibly divided; the grip only appears under the pointer. */
   .split-handle {
     position: relative;
     display: none;
@@ -440,7 +469,7 @@
     flex: 0 0 var(--workbench-gutter);
     cursor: col-resize;
     touch-action: none;
-    background: transparent;
+    background: var(--conversation);
     border: 0;
     padding: 0;
     outline: none;
@@ -450,13 +479,23 @@
     .split-handle { display: block; }
   }
 
+  /* The seam sits on the boundary itself — the gutter is breathing room on the
+     conversation side, not a gap between two cards. */
+  .split-handle::before {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    width: 1px;
+    background: var(--border-light);
+  }
+
   .split-handle::after {
     content: "";
     position: absolute;
-    inset-block: 14%;
-    left: 50%;
+    inset-block: 12%;
+    right: -1px;
     width: 3px;
-    translate: -50% 0;
     border-radius: 999px;
     background: var(--border);
     opacity: 0;
@@ -492,44 +531,45 @@
 
   /* The canvas is a container, so the page responds to the pane it is in
      rather than to the viewport. Resizing the conversation reflows the page
-     margins the way a real editor would. */
+     margins the way a real editor would. It is a flat neutral value: the
+     paper is what should be bright, not the surface behind it. */
   .document-canvas {
     container-type: inline-size;
     container-name: document;
-    background:
-      radial-gradient(120% 60% at 50% 0%, rgb(255 255 255 / 0.5), transparent 62%),
-      var(--canvas);
+    background: var(--canvas);
   }
 
+  /* Paper inside an editor, not a card on a dashboard: a clean white sheet,
+     a hairline edge, and just enough shadow to sit off the canvas. */
   .document-page {
     position: relative;
     width: 100%;
-    max-width: 760px;
+    max-width: 740px;
     padding: 2.75rem 1.875rem;
-    border-radius: 6px;
-    border: 1px solid color-mix(in srgb, var(--border-light) 70%, transparent);
+    border-radius: 4px;
     background: var(--surface-elevated);
     box-shadow: var(--shadow-document);
   }
 
   @container document (min-width: 560px) {
-    .document-page { max-width: 780px; padding: 3.5rem 3.25rem; }
+    .document-page { max-width: 764px; padding: 3.5rem 3.25rem; }
   }
 
   @container document (min-width: 760px) {
-    .document-page { max-width: 800px; padding: 4.25rem 4.5rem; }
+    .document-page { max-width: 788px; padding: 4.25rem 4.5rem; }
   }
 
   @container document (min-width: 980px) {
-    .document-page { max-width: 840px; padding: 4.75rem 5.5rem; }
+    .document-page { max-width: 812px; padding: 4.75rem 5.5rem; }
   }
 
   /* The reader surface is the one place in the product that is not a UI
-     surface, so it gets a text face of its own. */
+     surface, so it gets a text face of its own — and a measure, size and
+     rhythm tuned for reading rather than for scanning chrome. */
   .document-body {
     font-family: var(--font-serif), ui-serif, Georgia, "Times New Roman", serif;
-    font-size: 1.0625rem;
-    line-height: 1.72;
+    font-size: 1.09375rem;
+    line-height: 1.74;
     letter-spacing: 0;
     color: var(--foreground);
     text-wrap: pretty;
@@ -548,7 +588,7 @@
   /* Before/after evidence reads as two stacked plates with a tinted edge,
      never as two loud blocks of colour. */
   .diff-band {
-    border-radius: 10px;
+    border-radius: 9px;
     border: 1px solid;
     padding: 0.625rem 0.75rem 0.75rem;
   }
@@ -591,7 +631,7 @@
   .sheen {
     position: relative;
     overflow: hidden;
-    background: var(--surface-muted);
+    background: var(--surface-sunken);
   }
 
   .sheen::after {
@@ -602,7 +642,7 @@
     background: linear-gradient(
       90deg,
       transparent,
-      color-mix(in srgb, var(--surface-elevated) 70%, transparent),
+      color-mix(in srgb, var(--surface-elevated) 80%, transparent),
       transparent
     );
     animation: docrelay-sheen 1.8s var(--motion-ease) infinite;
@@ -626,127 +666,146 @@
   /* Typography scale                                                       */
   /* ---------------------------------------------------------------------- */
 
+  /* One small, coherent ladder. Size and weight carry hierarchy; colour only
+     ever says how important the text is, never what kind of text it is. */
+
   /* Editorial hero — Workspace start screen and equivalent first impressions. */
   .type-hero-title {
-    font-size: 2rem;
-    line-height: 1.12;
-    font-weight: 600;
-    letter-spacing: -0.038em;
-    color: var(--foreground);
-  }
-
-  @media (min-width: 1024px) {
-    .type-hero-title { font-size: 2.25rem; }
-  }
-
-  .type-hero-body {
-    font-size: 1rem;
-    line-height: 1.62;
-    font-weight: 400;
-    letter-spacing: -0.011em;
-    color: var(--muted-text);
-  }
-
-  .type-page-title {
-    font-size: 1.625rem;
-    line-height: 1.2;
+    font-size: 1.875rem;
+    line-height: 1.14;
     font-weight: 600;
     letter-spacing: -0.032em;
     color: var(--foreground);
   }
 
-  /* Quiet chrome title used in the thin page header rail. */
-  .type-chrome-title {
-    font-size: 0.8125rem;
-    line-height: 1.2;
-    font-weight: 550;
+  @media (min-width: 1024px) {
+    .type-hero-title { font-size: 2.0625rem; }
+  }
+
+  .type-hero-body {
+    font-size: 0.9375rem;
+    line-height: 1.62;
+    font-weight: 400;
     letter-spacing: -0.008em;
+    color: var(--muted-text);
+  }
+
+  /* Primary page title — Watch, Activity, run detail. */
+  .type-page-title {
+    font-size: 1.6875rem;
+    line-height: 1.18;
+    font-weight: 600;
+    letter-spacing: -0.028em;
     color: var(--foreground);
   }
 
+  /* Quiet chrome title used in the thin page header rail. */
+  .type-chrome-title {
+    font-size: 0.84375rem;
+    line-height: 1.2;
+    font-weight: 560;
+    letter-spacing: -0.011em;
+    color: var(--foreground);
+  }
+
+  /* Named title of a document workspace. */
   .type-document-title {
-    font-size: 1.0625rem;
-    line-height: 1.35;
+    font-size: 1.09375rem;
+    line-height: 1.32;
     font-weight: 600;
     letter-spacing: -0.022em;
     color: var(--foreground);
   }
 
+  /* Thread title in the conversation header. */
   .type-conversation-title {
-    font-size: 0.96875rem;
+    font-size: 1rem;
     line-height: 1.3;
-    font-weight: 580;
-    letter-spacing: -0.021em;
+    font-weight: 570;
+    letter-spacing: -0.019em;
     color: var(--foreground);
   }
 
+  /* Section title inside a page — sits above a surface, not inside one. */
+  .type-section-title {
+    font-size: 0.9375rem;
+    line-height: 1.35;
+    font-weight: 590;
+    letter-spacing: -0.016em;
+    color: var(--foreground);
+  }
+
+  /* Small label above a group: quiet, spaced, never smaller than 11.5px. */
   .type-section-heading {
-    font-size: 0.6875rem;
+    font-size: 0.71875rem;
     line-height: 1.4;
     font-weight: 550;
-    letter-spacing: 0.075em;
+    letter-spacing: 0.062em;
     text-transform: uppercase;
     color: var(--muted-soft);
   }
 
   .type-body {
     font-size: 0.9375rem;
-    line-height: 1.62;
+    line-height: 1.6;
     font-weight: 400;
+    letter-spacing: -0.006em;
     color: var(--foreground);
   }
 
   .type-body-muted {
     font-size: 0.9375rem;
-    line-height: 1.62;
+    line-height: 1.6;
     font-weight: 400;
+    letter-spacing: -0.006em;
     color: var(--muted-text);
   }
 
   /* Assistant prose in the conversation column. */
   .type-message {
     font-size: 0.90625rem;
-    line-height: 1.65;
-    letter-spacing: -0.009em;
+    line-height: 1.62;
+    letter-spacing: -0.008em;
     color: var(--foreground);
     text-wrap: pretty;
   }
 
   .type-label {
-    font-size: 0.75rem;
+    font-size: 0.78125rem;
     line-height: 1.4;
     font-weight: 500;
-    letter-spacing: -0.005em;
+    letter-spacing: -0.006em;
     color: var(--muted-text);
   }
 
   /* Speaker name above a conversation turn. */
   .type-speaker {
-    font-size: 0.8125rem;
+    font-size: 0.828125rem;
     line-height: 1.2;
-    font-weight: 570;
-    letter-spacing: -0.011em;
+    font-weight: 580;
+    letter-spacing: -0.013em;
     color: var(--foreground);
   }
 
   .type-button {
-    font-size: 0.8125rem;
+    font-size: 0.828125rem;
     line-height: 1;
-    font-weight: 520;
-    letter-spacing: -0.008em;
+    font-weight: 510;
+    letter-spacing: -0.009em;
   }
 
   .type-nav {
     font-size: 0.859375rem;
     line-height: 1.25;
     font-weight: 500;
-    letter-spacing: -0.014em;
+    letter-spacing: -0.013em;
   }
 
   .type-caption {
-    font-size: 0.75rem;
+    font-size: 0.765625rem;
     line-height: 1.45;
     font-weight: 400;
+    letter-spacing: -0.002em;
     color: var(--muted-text);
   }
 

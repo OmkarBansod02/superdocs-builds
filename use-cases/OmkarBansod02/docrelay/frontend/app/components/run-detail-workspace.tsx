@@ -204,7 +204,7 @@ export function RunDetailWorkspace({ runId }: { runId: string }) {
 
   return (
     <div className="min-h-full bg-background">
-      <div className="chrome-rail justify-start border-b border-border-light bg-surface">
+      <div className="chrome-rail justify-start border-b border-border bg-surface">
         <Button variant="ghost" className="h-8 px-2 text-muted hover:text-ink" asChild>
           <Link href="/runs">
             <icons.arrowLeft className="size-4" strokeWidth={ICON_STROKE} aria-hidden="true" />

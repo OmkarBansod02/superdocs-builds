@@ -161,7 +161,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background">
-        <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border-light bg-sidebar px-3 lg:hidden">
+        <header className="flex h-14 shrink-0 items-center gap-2.5 border-b border-border bg-sidebar px-3 lg:hidden">
           <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
             <SheetTrigger asChild>
               <Button
@@ -317,11 +317,11 @@ function Brand({ compact = false }: { compact?: boolean }) {
     <div className={cn("flex min-w-0 items-center gap-2.5", compact ? "" : "nav-expanded-only")}>
       <DocRelayAvatar className="size-[30px]" />
       <span className="min-w-0">
-        <span className="block truncate text-[15.5px] leading-[1.15] font-semibold tracking-[-0.032em] text-sidebar-foreground">
+        <span className="block truncate text-[15.5px] leading-[1.15] font-semibold tracking-[-0.03em] text-sidebar-foreground">
           DocRelay
         </span>
         {compact ? null : (
-          <span className="mt-[3px] block truncate text-[11px] leading-none font-medium tracking-[-0.004em] text-sidebar-muted">
+          <span className="mt-[3px] block truncate text-[11.75px] leading-none font-medium tracking-[-0.004em] text-sidebar-muted">
             AI-safe Google Docs editing
           </span>
         )}
@@ -403,12 +403,12 @@ function PrimaryNavigation({
               "nav-item type-nav relative flex h-9 min-w-0 items-center rounded-[9px]",
               "transition-[background-color,color] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
               active
-                ? "bg-accent-soft font-medium text-foreground"
-                : "text-sidebar-muted hover:bg-sidebar-accent/70 hover:text-sidebar-foreground",
+                ? "bg-accent-soft font-medium text-primary"
+                : "text-sidebar-muted hover:bg-sidebar-accent hover:text-sidebar-foreground",
             )}
           >
             <Icon
-              className={cn("size-[17px] shrink-0", active ? "text-primary" : "text-sidebar-muted")}
+              className={cn("size-[17px] shrink-0", active ? "text-primary" : "text-muted-soft")}
               strokeWidth={ICON_STROKE}
             />
             <span className="nav-label truncate">{item.label}</span>
@@ -460,7 +460,7 @@ function RecentDocuments({
           ))}
         </ul>
       ) : (
-        <p className="px-[11px] py-1 text-[12.5px] leading-[1.5] text-sidebar-muted">
+        <p className="px-[11px] py-1 text-[12.75px] leading-[1.5] text-muted-soft">
           {connected ? "No documents yet." : "Connect Drive to see documents."}
         </p>
       )}
@@ -500,8 +500,8 @@ function RecentDocumentRow({
       className={cn(
         "group/recent relative min-w-0 rounded-[9px] transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
         "motion-safe:animate-in motion-safe:fade-in motion-safe:duration-[var(--motion-duration)]",
-        active ? "bg-accent-soft" : "hover:bg-sidebar-accent/70",
-        menuOpen && !active ? "bg-sidebar-accent/70" : "",
+        active ? "bg-accent-soft" : "hover:bg-sidebar-accent",
+        menuOpen && !active ? "bg-sidebar-accent" : "",
       )}
     >
       <Tooltip>
@@ -518,10 +518,10 @@ function RecentDocumentRow({
             <span className="block min-w-0 flex-1">
               {/* Two lines, then an ellipsis: a long agreement title stays
                   readable instead of collapsing to a few words. */}
-              <span className="line-clamp-2 text-[13.25px] leading-[1.38] font-medium tracking-[-0.014em] text-sidebar-foreground">
+              <span className="line-clamp-2 text-[13.5px] leading-[1.38] font-medium tracking-[-0.014em] text-sidebar-foreground">
                 {document.name}
               </span>
-              <span className="mt-[3px] block truncate text-[11.5px] leading-[1.4] text-sidebar-muted">
+              <span className="mt-[3px] block truncate text-[11.75px] leading-[1.4] text-muted-soft">
                 {active ? (timestamp ? `Open · ${timestamp}` : "Open") : timestamp}
               </span>
             </span>
@@ -595,7 +595,7 @@ function AccountArea({
       aria-label={`Account · Google Drive ${connected ? "connected" : "not connected"}`}
       className={cn(
         "nav-item flex w-full min-w-0 items-center rounded-[10px] py-2 text-left",
-        "transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent/70 aria-expanded:bg-sidebar-accent/70",
+        "transition-colors duration-[var(--motion-duration)] hover:bg-sidebar-accent aria-expanded:bg-sidebar-accent",
       )}
     >
       <span className="relative grid shrink-0 place-items-center">
@@ -614,10 +614,10 @@ function AccountArea({
         />
       </span>
       <span className="nav-label min-w-0 flex-1">
-        <span className="block truncate text-[13px] leading-[1.35] font-medium text-sidebar-foreground">
+        <span className="block truncate text-[13.25px] leading-[1.35] font-medium text-sidebar-foreground">
           Account
         </span>
-        <span className="block truncate text-[11.5px] leading-[1.4] text-sidebar-muted">
+        <span className="block truncate text-[11.75px] leading-[1.4] text-muted-soft">
           Drive · {connected ? "Connected" : "Not connected"}
         </span>
       </span>

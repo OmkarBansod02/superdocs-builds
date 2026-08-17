@@ -40,7 +40,7 @@ export function ProcessingState({
         <section className={embedded ? "py-2" : "mx-auto max-w-[760px] px-5 py-14 sm:px-8 lg:py-20"}>
           <h2 className="type-page-title">SuperDocs status is temporarily delayed</h2>
           <div className="mt-6"><InlineNotice tone="info">SuperDocs is taking longer than expected to report this run&apos;s status. No cloud write was made.</InlineNotice></div>
-          <p className="mt-5 text-[14px] leading-6 text-muted">The run and its last verified state are saved. Checking again only reads <span className="font-mono text-[12px]">jobs.get</span>; it does not repeat the edit request.</p>
+          <p className="mt-5 text-[14px] leading-6 text-muted">The run and its last verified state are saved. Checking again only reads <span className="font-mono text-[12.25px]">jobs.get</span>; it does not repeat the edit request.</p>
           {onCheckStatus ? <Button variant="secondary" className="mt-7" busy={checking} disabled={checking} onClick={() => { setChecking(true); void onCheckStatus().finally(() => setChecking(false)); }}><RefreshCw className="size-4" />{checking ? "Checking status…" : "Check status again"}</Button> : null}
         </section>
       </div>
@@ -69,7 +69,7 @@ export function ProcessingState({
               <span className="absolute -left-[37px] bg-background"><StateMark state={step.state} /></span>
               <div>
                 <p className={`text-[14px] ${step.state === "current" ? "font-medium text-ink" : "text-muted"}`}>{step.label}</p>
-                {step.detail ? <p className="mt-1 text-[12px] text-muted">{step.detail}</p> : null}
+                {step.detail ? <p className="mt-1 text-[12.25px] text-muted">{step.detail}</p> : null}
               </div>
             </li>
           ))}

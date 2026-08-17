@@ -237,8 +237,8 @@ export function WatchWorkspace() {
         ) : null}
 
         <section className="mt-10" aria-labelledby="watching-heading">
-          <h2 id="watching-heading" className="type-section-heading">Watching</h2>
-          <div className="surface-section mt-3 px-5 py-5 sm:px-6 sm:py-6">
+          <h2 id="watching-heading" className="type-section-title">Watching</h2>
+          <div className="surface-section mt-3.5 px-5 py-5 sm:px-6 sm:py-6">
             <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
               <span
                 className="grid size-10 shrink-0 place-items-center rounded-[11px] border border-border-light bg-surface-sunken text-muted shadow-[var(--shadow-subtle)]"
@@ -345,7 +345,7 @@ export function WatchWorkspace() {
 
         <section className="mt-10" aria-labelledby="needs-review-heading">
           <div className="flex items-center justify-between gap-4">
-            <h2 id="needs-review-heading" className="type-section-heading">Needs review</h2>
+            <h2 id="needs-review-heading" className="type-section-title">Needs review</h2>
             {pending.length > 0 ? (
               <span className="pill pill-warning tabular-nums">
                 {pending.length} waiting
@@ -356,9 +356,9 @@ export function WatchWorkspace() {
               a raised surface, a warm edge, and the action in reach. */}
           <div
             className={cn(
-              "mt-3 overflow-hidden rounded-[var(--radius-pane)] border bg-surface",
+              "mt-3.5 overflow-hidden rounded-[var(--radius-pane)] border bg-surface",
               pending.length > 0
-                ? "border-warning/25 shadow-[var(--shadow-raised)]"
+                ? "border-warning/30 shadow-[var(--shadow-raised)]"
                 : "border-border-light shadow-[var(--shadow-subtle)]",
             )}
           >
@@ -381,11 +381,11 @@ export function WatchWorkspace() {
                   <GoogleDocsMark className="mt-0.5 size-[17px]" />
                   <div className="min-w-[12rem] flex-1">
                     <p className="truncate text-[14.5px] font-medium tracking-[-0.014em] text-ink">{run.document_name}</p>
-                    <p className="mt-0.5 text-[12.5px] text-muted">
+                    <p className="mt-0.5 text-[12.75px] text-muted">
                       {action.kind === "review" ? proposalCountLabel(run.proposal_count) : action.statusLabel}
                     </p>
                     {action.kind === "authorize" && action.detail ? (
-                      <p className="mt-2 max-w-[36rem] text-[12.5px] leading-[1.6] text-muted">{action.detail}</p>
+                      <p className="mt-2 max-w-[36rem] text-[12.75px] leading-[1.6] text-muted">{action.detail}</p>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -411,8 +411,8 @@ export function WatchWorkspace() {
         </section>
 
         <section className="mt-10" aria-labelledby="activity-heading">
-          <h2 id="activity-heading" className="type-section-heading">Recent activity</h2>
-          <div className="surface-section mt-3 overflow-hidden">
+          <h2 id="activity-heading" className="type-section-title">Recent activity</h2>
+          <div className="surface-section mt-3.5 overflow-hidden">
             {latestItems.length === 0 ? (
               <EmptySurfaceRow
                 tone="neutral"
@@ -507,7 +507,7 @@ function WatchAccessStatus({
   return (
     <div className="surface-section shrink-0 px-4 py-3.5">
       <p className="text-[13.5px] font-medium text-ink">Watch access required</p>
-      <p className="mt-1 max-w-[22rem] text-[12.5px] leading-[1.6] text-muted">
+      <p className="mt-1 max-w-[22rem] text-[12.75px] leading-[1.6] text-muted">
         DocRelay needs read access to discover files in the selected folder.
       </p>
       <Button className="mt-3" onClick={onEnable}>Enable watch access</Button>

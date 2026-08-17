@@ -856,9 +856,9 @@ function ReopenSourceFailure({
     <MotionPanel className="flex h-full min-h-0 flex-col">
       <div
         style={splitStyle}
-        className="flex min-h-0 min-w-0 flex-1 overflow-hidden bg-background lg:gap-[var(--workbench-gutter)] lg:p-[var(--workbench-gutter)]"
+        className="workbench flex min-h-0 min-w-0 flex-1 overflow-hidden lg:m-[var(--workbench-inset)]"
       >
-        <div className="conversation-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-conversation lg:shrink-0 lg:rounded-[var(--radius-pane)] lg:border lg:border-border-light lg:shadow-[var(--shadow-pane)]">
+        <div className="conversation-pane flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-conversation lg:shrink-0">
           <ConversationPanel
             title={thread.file.name}
             stateLabel="Needs attention"
@@ -883,9 +883,11 @@ function ReopenSourceFailure({
             />
           </ConversationPanel>
         </div>
+        <div className="split-handle pointer-events-none" aria-hidden="true" />
+
         <section
           aria-label="Current Google document"
-          className="pane hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 lg:grid"
+          className="hidden min-h-0 min-w-0 flex-1 place-items-center bg-canvas px-8 lg:grid"
         >
           <div className="max-w-[26rem] text-center">
             <span

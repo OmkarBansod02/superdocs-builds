@@ -252,11 +252,11 @@ export function SourceChooser({
               ["Verified", "The write is backed up, applied, then checked."],
             ].map(([title, detail], index) => (
               <li key={title} className="min-w-0">
-                <p className="flex items-center gap-1.5 text-[12.5px] leading-4 font-medium tracking-[-0.008em] text-foreground">
-                  <span className="type-mono text-[10.5px] text-muted-soft">{index + 1}</span>
+                <p className="flex items-center gap-1.5 text-[13px] leading-4 font-medium tracking-[-0.01em] text-foreground">
+                  <span className="type-mono text-[11.5px] text-muted-soft">{index + 1}</span>
                   {title}
                 </p>
-                <p className="mt-1 text-[12px] leading-[1.55] text-muted">{detail}</p>
+                <p className="mt-1 text-[12.5px] leading-[1.55] text-muted">{detail}</p>
               </li>
             ))}
           </ol>
@@ -288,7 +288,7 @@ function DriveSelectionPlate({
     <>
       <span
         className={cn(
-          "grid size-[72px] place-items-center rounded-[20px] border border-border-light bg-surface-elevated",
+          "grid size-[72px] place-items-center rounded-[18px] border border-border-light bg-surface-elevated",
           "shadow-[var(--shadow-raised)] transition-transform duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
           connected && !busy ? "group-hover/plate:-translate-y-0.5" : "",
         )}
@@ -299,7 +299,7 @@ function DriveSelectionPlate({
       <span className="mt-6 block text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-foreground">
         {connected ? "Choose a Google Doc" : "Connect Google Drive"}
       </span>
-      <span className="mx-auto mt-2.5 block max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
+      <span className="mx-auto mt-2.5 block max-w-[25.5rem] text-[13.75px] leading-[1.62] text-muted">
         {connected
           ? "DocRelay reads the document you select and freezes its revision before anything changes."
           : "Authorize Drive once. DocRelay only ever reads the documents you pick."}
@@ -308,7 +308,7 @@ function DriveSelectionPlate({
   );
 
   const footnote = (
-    <span className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12px] text-muted-soft">
+    <span className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12.25px] text-muted-soft">
       <icons.lock className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
       Only Google Docs are supported.
     </span>
@@ -320,15 +320,15 @@ function DriveSelectionPlate({
           matter, not from decoration. */}
       <span
         aria-hidden="true"
-        className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/45"
+        className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[12px] border border-b-0 border-border-light bg-surface/50"
       />
       <span
         aria-hidden="true"
-        className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[16px] border border-b-0 border-border-light bg-surface/75"
+        className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/80"
       />
 
       {loading ? (
-        <div className="relative rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 shadow-[var(--shadow-lifted)]">
+        <div className="relative rounded-[var(--radius-plate)] border border-border bg-surface px-8 pt-11 pb-8 shadow-[var(--shadow-lifted)]">
           <SelectorSkeleton />
         </div>
       ) : connected ? (
@@ -340,8 +340,8 @@ function DriveSelectionPlate({
           className={cn(
             "group/plate relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border bg-surface px-8 pt-11 pb-8 text-center",
             "transition-[box-shadow,border-color,background-color,translate] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
-            "border-border-light shadow-[var(--shadow-lifted)]",
-            "hover:border-border hover:shadow-[0_2px_4px_rgb(26_24_21/0.05),0_14px_32px_-12px_rgb(26_24_21/0.14),0_28px_60px_-30px_rgb(26_24_21/0.16)]",
+            "border-border shadow-[var(--shadow-lifted)]",
+            "hover:border-muted-soft/45 hover:shadow-[0_2px_4px_rgb(23_26_24/0.05),0_14px_32px_-14px_rgb(23_26_24/0.13),0_28px_56px_-30px_rgb(23_26_24/0.14)]",
             "focus-visible:border-ring",
             "disabled:pointer-events-none",
           )}
@@ -363,7 +363,7 @@ function DriveSelectionPlate({
           {footnote}
         </button>
       ) : (
-        <div className="relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
+        <div className="relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border border-border bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
           {body}
           <Button onClick={onConnect} className="mt-7 h-[40px] px-5">
             Connect Google Drive
@@ -388,7 +388,7 @@ function InlineStatus({
   return (
     <div
       role="status"
-      className="flex w-full items-start gap-2.5 rounded-[10px] border border-border-light bg-surface/60 px-3.5 py-3"
+      className="flex w-full items-start gap-2.5 rounded-[10px] border border-border bg-surface px-3.5 py-3 shadow-[var(--shadow-subtle)]"
     >
       <icons.warning
         className="mt-px size-4 shrink-0 text-warning"
@@ -396,8 +396,8 @@ function InlineStatus({
         aria-hidden="true"
       />
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-medium text-foreground">{title}</p>
-        <p className="mt-0.5 text-[12.5px] leading-[1.55] text-muted">{description}</p>
+        <p className="text-[13.25px] font-medium text-foreground">{title}</p>
+        <p className="mt-0.5 text-[12.75px] leading-[1.55] text-muted">{description}</p>
       </div>
       {action ? <div className="shrink-0">{action}</div> : null}
     </div>
@@ -414,7 +414,7 @@ function DriveConnectionStatus({
   if (loading && !connected) return null;
 
   return (
-    <p className="inline-flex items-center gap-1.5 text-[12.5px] whitespace-nowrap text-muted">
+    <p className="inline-flex items-center gap-1.5 text-[12.75px] whitespace-nowrap text-muted">
       <span
         className={cn("size-1.5 shrink-0 rounded-full", connected ? "bg-success" : "bg-border")}
         aria-hidden="true"
