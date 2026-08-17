@@ -1,15 +1,29 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { PanelLeft, PanelRight, SquarePen } from "lucide-react";
 import {
   POLICY_DOCUMENT_TYPES,
   type ChangeSet,
   type PolicyDocumentType,
-  type ValidationResult,
 } from "@/domain";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { AiCommandBar } from "./AiCommandBar";
+import { DOCUMENT_TITLES } from "./document-meta";
 import { DocumentPreview } from "./DocumentPreview";
+import { DocumentRail, type DocumentStatus } from "./DocumentRail";
+import { EditReviewPanel, EditStatusLine } from "./EditReview";
 import type { PolicyWorkspaceState } from "./generate-workspace";
 import { PolicyFactsPanel } from "./PolicyFactsPanel";
+import { AppHeader, ConsistencyStatus } from "./shell";
+import { SynchronizedReviewDialog } from "./SynchronizedReviewDialog";
 import {
   getSuperDocsJob,
   getSuperDocsSynchronizedJob,
@@ -22,11 +36,19 @@ import {
 } from "./superdocs-api";
 import type {
   SuperDocsJobView,
-  PolicyDocumentContentStateMap,
   SuperDocsTargetedJob,
   SuperDocsWorkspaceSession,
 } from "./superdocs-contract";
 import { applyPolicyEditOutcome } from "./workspace-edit";
+import {
+  activeSynchronizedChangeSet,
+  isEditBusy,
+  isSynchronizedBusy,
+  withUpdatedJob,
+  type EditState,
+  type EditTarget,
+  type SynchronizedState,
+} from "./workspace-state";
 import {
   approveSynchronizedChangeSet,
   commitValidatedSynchronizedChange,
@@ -34,13 +56,6 @@ import {
   proposeReturnWindowChangeSet,
   rejectSynchronizedChangeSet,
 } from "./changeset-workflow";
-
-const TAB_LABELS: Record<PolicyDocumentType, string> = {
-  terms: "Terms",
-  privacy: "Privacy",
-  warranty: "Warranty",
-  returns: "Returns",
-};
 
 export function WorkspaceView({
   workspace,
@@ -67,6 +82,8 @@ export function WorkspaceView({
   const [superDocsDocuments, setSuperDocsDocuments] = useState<
     ReadonlySet<PolicyDocumentType>
   >(() => new Set());
+  const [navOpen, setNavOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const operationControllersRef = useRef(new Set<AbortController>());
   const { profile, documents, validation } = workspace;
   const editBusy = isEditBusy(editState.stage);
@@ -229,7 +246,7 @@ export function WorkspaceView({
       setInstruction("");
       setEditState({
         stage: "completed",
-        message: `${TAB_LABELS[target.documentType]} updated from SuperDocs`,
+        message: `${DOCUMENT_TITLES[target.documentType]} updated from SuperDocs`,
       });
     } catch (error) {
       if (!controller.signal.aborted) {
@@ -322,7 +339,7 @@ export function WorkspaceView({
           .reason;
         markSynchronizedFailed(
           changeSet,
-          `${failedDocumentType ? `${TAB_LABELS[failedDocumentType]}: ` : ""}${errorMessage(reason)}`,
+          `${failedDocumentType ? `${DOCUMENT_TITLES[failedDocumentType]}: ` : ""}${errorMessage(reason)}`,
         );
         return;
       }
@@ -339,7 +356,7 @@ export function WorkspaceView({
         );
         markSynchronizedFailed(
           changeSet,
-          `SuperDocs completed the ${TAB_LABELS[emptyBatch.documentType]} job without a reviewable proposal. The canonical return window remains unchanged.`,
+          `SuperDocs completed the ${DOCUMENT_TITLES[emptyBatch.documentType]} job without a reviewable proposal. The canonical return window remains unchanged.`,
         );
         return;
       }
@@ -446,7 +463,7 @@ export function WorkspaceView({
           completions[completionFailureIndex] as PromiseRejectedResult
         ).reason;
         throw new Error(
-          `SuperDocs did not finish applying the approved update${failedDocumentType ? ` for ${TAB_LABELS[failedDocumentType]}` : ""} (${errorMessage(reason)}). This is a partial-apply condition: two SuperDocs jobs are not one atomic transaction, so the other document's edit may already be applied. Nothing was committed to the canonical PolicyProfile; document state may require manual recovery.`,
+          `SuperDocs did not finish applying the approved update${failedDocumentType ? ` for ${DOCUMENT_TITLES[failedDocumentType]}` : ""} (${errorMessage(reason)}). This is a partial-apply condition: two SuperDocs jobs are not one atomic transaction, so the other document's edit may already be applied. Nothing was committed to the canonical PolicyProfile; document state may require manual recovery.`,
         );
       }
 
@@ -530,107 +547,107 @@ export function WorkspaceView({
     );
   }
 
+  const activeChangeSet = activeSynchronizedChangeSet(synchronizedState);
+  const reviewingCount = synchronizedBusy
+    ? (activeChangeSet?.affectedDocuments.length ?? 0)
+    : editBusy
+      ? 1
+      : 0;
+
+  const documentStatuses = deriveDocumentStatuses({
+    workspace,
+    editState,
+    synchronizedState,
+    superDocsDocuments,
+  });
+
+  const inspector: ReactNode =
+    editState.stage === "awaiting_review" ? (
+      <EditReviewPanel
+        state={editState}
+        onApprove={() => handleReview(true)}
+        onReject={() => handleReview(false)}
+      />
+    ) : (
+      <PolicyFactsPanel
+        profile={profile}
+        returnWindowInput={returnWindowInput}
+        disabled={operationBusy}
+        proposeError={
+          synchronizedState.stage === "error" ? synchronizedState.message : null
+        }
+        onReturnWindowInputChange={(value) => {
+          if (synchronizedState.stage === "error") {
+            setSynchronizedState({ stage: "idle" });
+          }
+          setReturnWindowInput(value);
+        }}
+        onProposeReturnWindow={handleProposeSynchronizedUpdate}
+      />
+    );
+
+  const navigation = (
+    <DocumentRail
+      active={activeTab}
+      statuses={documentStatuses}
+      disabled={operationBusy}
+      onSelect={(documentType) => {
+        setActiveTab(documentType);
+        setNavOpen(false);
+      }}
+    />
+  );
+
   return (
-    <div className="app-frame workspace">
-      <header className="chrome workspace-chrome">
-        <div className="chrome-identity">
-          <p className="brand">Policy Set</p>
-          <p className="chrome-subtitle">{profile.company.legalName}</p>
-        </div>
-        <div className="workspace-chrome-actions">
-          <ConsistencyStatus validation={validation} />
-          <button className="text-button" type="button" onClick={onEditIntake}>
-            Edit intake
-          </button>
-        </div>
-      </header>
+    <div className="flex h-screen flex-col overflow-hidden">
+      <AppHeader
+        context={profile.company.legalName}
+        leading={
+          <Button
+            variant="quiet"
+            size="icon"
+            className="lg:hidden"
+            aria-label="Open policy documents"
+            onClick={() => setNavOpen(true)}
+          >
+            <PanelLeft />
+          </Button>
+        }
+      >
+        <ConsistencyStatus
+          validation={validation}
+          reviewingCount={reviewingCount}
+        />
+        <Separator orientation="vertical" className="mx-1 h-4" />
+        <Button variant="quiet" size="sm" onClick={onEditIntake}>
+          <SquarePen />
+          <span className="hidden sm:inline">Edit intake</span>
+        </Button>
+        <Button
+          variant="quiet"
+          size="icon"
+          className="xl:hidden"
+          aria-label="Open policy facts"
+          onClick={() => setInspectorOpen(true)}
+        >
+          <PanelRight />
+        </Button>
+      </AppHeader>
 
-      <div className="workspace-body">
-        <section className="workspace-main" aria-label="Policy documents">
-          <div className="document-tabs" role="tablist" aria-label="Documents">
-            {POLICY_DOCUMENT_TYPES.map((documentType) => (
-              <button
-                key={documentType}
-                type="button"
-                role="tab"
-                aria-selected={activeTab === documentType}
-                className={
-                  activeTab === documentType
-                    ? "document-tab is-active"
-                    : "document-tab"
-                }
-                disabled={operationBusy}
-                onClick={() => setActiveTab(documentType)}
-              >
-                {TAB_LABELS[documentType]}
-              </button>
-            ))}
-          </div>
+      <div className="flex min-h-0 flex-1">
+        <aside className="hidden w-[15.5rem] shrink-0 border-r border-line bg-chrome lg:block">
+          {navigation}
+        </aside>
 
-          <section className="ai-edit" aria-labelledby="ai-edit-heading">
-            <div className="ai-edit-heading-row">
-              <div>
-                <h2 id="ai-edit-heading">AI Edit</h2>
-                <p>
-                  Language-only edits apply to the selected {TAB_LABELS[activeTab]} document.
-                  Use Policy Facts for synchronized managed-fact changes.
-                </p>
-              </div>
-              <ConnectionStatus
-                state={connectionState}
-                error={connectionError}
-              />
+        <main className="flex min-w-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-8 sm:px-8 sm:py-10">
+            <div className="mx-auto mb-3 w-full max-w-[46rem]">
+              <p className="text-right text-[11px] font-medium uppercase tracking-[0.09em] text-faint">
+                {superDocsDocuments.has(activeTab)
+                  ? "Edited in SuperDocs"
+                  : "Deterministic draft"}
+              </p>
             </div>
-
-            {session ? (
-              <div className="ai-edit-controls">
-                <label htmlFor="superdocs-instruction">
-                  Tell SuperDocs what to change…
-                </label>
-                <textarea
-                  id="superdocs-instruction"
-                  rows={2}
-                  value={instruction}
-                  disabled={operationBusy}
-                  onChange={(event) => setInstruction(event.target.value)}
-                  placeholder="Make the warranty claim instructions clearer and more concise."
-                />
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={!instruction.trim() || operationBusy}
-                  onClick={handleProposeEdit}
-                >
-                  Propose edit
-                </button>
-              </div>
-            ) : (
-              <button
-                className="primary-button"
-                type="button"
-                disabled={connectionState === "connecting" || operationBusy}
-                onClick={handleInitialize}
-              >
-                {connectionState === "connecting"
-                  ? "Connecting…"
-                  : "Start SuperDocs editing"}
-              </button>
-            )}
-
-            <EditStatus
-              state={editState}
-              onApprove={() => handleReview(true)}
-              onReject={() => handleReview(false)}
-            />
-            <SynchronizedChangeStatus
-              state={synchronizedState}
-              session={session}
-              onApprove={() => handleSynchronizedReview(true)}
-              onReject={() => handleSynchronizedReview(false)}
-            />
-          </section>
-
-          <div className="document-stage" role="tabpanel">
             <DocumentPreview
               documentType={activeTab}
               html={documents[activeTab]}
@@ -642,321 +659,121 @@ export function WorkspaceView({
               }
             />
           </div>
-        </section>
 
-        <PolicyFactsPanel
-          profile={profile}
-          returnWindowInput={returnWindowInput}
-          activeChangeSet={activeSynchronizedChangeSet(synchronizedState)}
-          disabled={operationBusy}
-          onReturnWindowInputChange={setReturnWindowInput}
-          onProposeReturnWindow={handleProposeSynchronizedUpdate}
-        />
+          <AiCommandBar
+            documentTitle={DOCUMENT_TITLES[activeTab]}
+            connectionState={connectionState}
+            connectionError={connectionError}
+            hasSession={session !== null}
+            instruction={instruction}
+            busy={operationBusy}
+            status={
+              <>
+                <EditStatusLine
+                  state={editState}
+                  onDismiss={() => setEditState({ stage: "idle" })}
+                />
+                {editState.stage === "awaiting_review" ? (
+                  <div className="flex items-center gap-2 rounded-[var(--radius-control)] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn xl:hidden">
+                    <span className="flex-1">
+                      {editState.job.proposals.length} proposed{" "}
+                      {editState.job.proposals.length === 1
+                        ? "change"
+                        : "changes"}{" "}
+                      awaiting review
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setInspectorOpen(true)}
+                    >
+                      Review
+                    </Button>
+                  </div>
+                ) : null}
+              </>
+            }
+            onInstructionChange={setInstruction}
+            onSubmit={handleProposeEdit}
+            onConnect={handleInitialize}
+          />
+        </main>
+
+        <aside className="hidden w-[20.5rem] shrink-0 border-l border-line bg-chrome xl:block">
+          {inspector}
+        </aside>
       </div>
+
+      <Sheet open={navOpen} onOpenChange={setNavOpen}>
+        <SheetContent side="left" className="p-0">
+          <SheetTitle className="sr-only">Policy documents</SheetTitle>
+          <SheetDescription className="sr-only">
+            Select which policy document to work on.
+          </SheetDescription>
+          {navigation}
+        </SheetContent>
+      </Sheet>
+
+      <Sheet open={inspectorOpen} onOpenChange={setInspectorOpen}>
+        <SheetContent side="right" className="w-[21rem] p-0">
+          <SheetTitle className="sr-only">Policy facts</SheetTitle>
+          <SheetDescription className="sr-only">
+            Canonical facts shared across the policy set.
+          </SheetDescription>
+          {inspector}
+        </SheetContent>
+      </Sheet>
+
+      <SynchronizedReviewDialog
+        state={synchronizedState}
+        onApprove={() => handleSynchronizedReview(true)}
+        onReject={() => handleSynchronizedReview(false)}
+        onDismiss={() => setSynchronizedState({ stage: "idle" })}
+      />
     </div>
   );
 }
 
-type EditTarget = {
-  documentType: PolicyDocumentType;
-  documentId: string;
-};
-
-type EditState =
-  | { stage: "idle" }
-  | { stage: "submitting"; target: EditTarget }
-  | { stage: "processing"; target: EditTarget; job: SuperDocsJobView }
-  | { stage: "awaiting_review"; target: EditTarget; job: SuperDocsJobView }
-  | {
-      stage: "applying";
-      target: EditTarget;
-      job: SuperDocsJobView;
-      message: string;
-    }
-  | { stage: "completed"; message: string }
-  | { stage: "error"; message: string };
-
-type SynchronizedState =
-  | { stage: "idle" }
-  | { stage: "error"; message: string }
-  | { stage: "preparing"; changeSet: ChangeSet }
-  | {
-      stage: "processing";
-      changeSet: ChangeSet;
-      preEditState: PolicyDocumentContentStateMap;
-      jobs: readonly SuperDocsTargetedJob[];
-    }
-  | {
-      stage: "awaiting_review";
-      changeSet: ChangeSet;
-      preEditState: PolicyDocumentContentStateMap;
-      jobs: readonly SuperDocsTargetedJob[];
-    }
-  | {
-      stage: "applying";
-      changeSet: ChangeSet;
-      preEditState: PolicyDocumentContentStateMap;
-      jobs: readonly SuperDocsTargetedJob[];
-      message: string;
-    }
-  | { stage: "rejected"; changeSet: ChangeSet; message: string }
-  | { stage: "failed"; changeSet: ChangeSet; message: string }
-  | {
-      stage: "synchronized";
-      changeSet: ChangeSet;
-      unchangedDocuments: readonly PolicyDocumentType[];
-    };
-
-/** Replaces one job's entry within a "processing"-stage jobs array. No-op for any other stage. */
-function withUpdatedJob(
-  state: SynchronizedState,
-  documentType: PolicyDocumentType,
-  nextJob: SuperDocsJobView,
-): SynchronizedState {
-  if (state.stage !== "processing") {
-    return state;
-  }
-  return {
-    ...state,
-    jobs: state.jobs.map((targeted) =>
-      targeted.documentType === documentType
-        ? { documentType, job: nextJob }
-        : targeted,
-    ),
-  };
-}
-
-function ConnectionStatus({
-  state,
-  error,
+/** Derives per-document rail state from real workspace, edit and job state. */
+function deriveDocumentStatuses({
+  workspace,
+  editState,
+  synchronizedState,
+  superDocsDocuments,
 }: {
-  state: "idle" | "connecting" | "connected" | "error";
-  error: string | null;
-}) {
-  if (state === "idle") {
-    return <p className="connection-status">Not connected</p>;
-  }
-  if (state === "connecting") {
-    return <p className="connection-status">Uploading four documents…</p>;
-  }
-  if (state === "connected") {
-    return <p className="connection-status is-connected">● Connected</p>;
-  }
-  return <p className="connection-status is-error">{error}</p>;
-}
+  workspace: PolicyWorkspaceState;
+  editState: EditState;
+  synchronizedState: SynchronizedState;
+  superDocsDocuments: ReadonlySet<PolicyDocumentType>;
+}): Record<PolicyDocumentType, DocumentStatus> {
+  const statuses = {} as Record<PolicyDocumentType, DocumentStatus>;
 
-function EditStatus({
-  state,
-  onApprove,
-  onReject,
-}: {
-  state: EditState;
-  onApprove: () => void;
-  onReject: () => void;
-}) {
-  if (state.stage === "idle") {
-    return null;
-  }
-  if (state.stage === "submitting") {
-    return <p className="edit-message" role="status">Submitting edit…</p>;
-  }
-  if (state.stage === "processing") {
-    return (
-      <p className="edit-message" role="status">
-        SuperDocs is preparing proposals
-        {state.job.progress === null ? "…" : ` — ${state.job.progress}%`}
-      </p>
-    );
-  }
-  if (state.stage === "applying") {
-    return <p className="edit-message" role="status">{state.message}</p>;
-  }
-  if (state.stage === "completed") {
-    return <p className="edit-message is-success" role="status">{state.message}</p>;
-  }
-  if (state.stage === "error") {
-    return <p className="edit-message is-error" role="alert">{state.message}</p>;
+  for (const documentType of POLICY_DOCUMENT_TYPES) {
+    statuses[documentType] = superDocsDocuments.has(documentType)
+      ? "updated"
+      : "idle";
   }
 
-  return (
-    <div className="review-panel" aria-label="SuperDocs proposed changes">
-      <div className="review-panel-heading">
-        <div>
-          <p className="review-eyebrow">Review required</p>
-          <h3>{TAB_LABELS[state.target.documentType]} proposals</h3>
-        </div>
-        <span>{state.job.proposals.length} change{state.job.proposals.length === 1 ? "" : "s"}</span>
-      </div>
-      <div className="proposal-list">
-        {state.job.proposals.map((proposal, index) => (
-          <article className="proposal" key={proposal.changeId}>
-            <p className="proposal-document">
-              {TAB_LABELS[state.target.documentType]} · Change {index + 1}
-            </p>
-            <p className="proposal-explanation">
-              {proposal.explanation || "SuperDocs proposed a language edit."}
-            </p>
-            <div className="proposal-comparison">
-              <div>
-                <h4>Before</h4>
-                <p>{readableHtml(proposal.beforeHtml, "No previous text")}</p>
-              </div>
-              <div>
-                <h4>After</h4>
-                <p>{readableHtml(proposal.afterHtml, "Text removed")}</p>
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-      <div className="review-actions">
-        <button className="primary-button" type="button" onClick={onApprove}>
-          Approve changes
-        </button>
-        <button className="secondary-button" type="button" onClick={onReject}>
-          Reject changes
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function SynchronizedChangeStatus({
-  state,
-  session,
-  onApprove,
-  onReject,
-}: {
-  state: SynchronizedState;
-  session: SuperDocsWorkspaceSession | null;
-  onApprove: () => void;
-  onReject: () => void;
-}) {
-  if (state.stage === "idle") {
-    return null;
-  }
-  if (state.stage === "error") {
-    return <p className="edit-message is-error" role="alert">{state.message}</p>;
-  }
-  if (state.stage === "preparing") {
-    return (
-      <p className="edit-message" role="status">
-        Capturing the authoritative four-document state…
-      </p>
-    );
-  }
-  if (state.stage === "processing") {
-    return (
-      <p className="edit-message" role="status">
-        SuperDocs is preparing synchronized proposals for{" "}
-        {state.jobs
-          .map(
-            (targeted) =>
-              `${TAB_LABELS[targeted.documentType]}${targeted.job.progress === null ? "" : ` (${targeted.job.progress}%)`}`,
-          )
-          .join(", ")}
-        …
-      </p>
-    );
-  }
-  if (state.stage === "applying") {
-    return <p className="edit-message" role="status">{state.message}</p>;
-  }
-  if (state.stage === "failed") {
-    return (
-      <div className="edit-message is-error" role="alert">
-        <strong>Synchronized update blocked.</strong> {state.message}
-        <p>Nothing was committed. Review the proposal scope and document consistency before trying again.</p>
-      </div>
-    );
-  }
-  if (state.stage === "rejected") {
-    return <p className="edit-message" role="status">{state.message}</p>;
-  }
-  if (state.stage === "synchronized") {
-    return (
-      <div className="sync-success" role="status">
-        <strong>Synchronized</strong>
-        {state.changeSet.affectedDocuments.map((documentType) => (
-          <span key={documentType}>{TAB_LABELS[documentType]} updated</span>
-        ))}
-        {state.unchangedDocuments.map((documentType) => (
-          <span key={documentType}>{TAB_LABELS[documentType]} unchanged</span>
-        ))}
-        <span>Return window: {String(state.changeSet.nextValue)} days</span>
-      </div>
-    );
+  if (isEditBusy(editState.stage) && "target" in editState) {
+    statuses[editState.target.documentType] =
+      editState.stage === "awaiting_review" ? "review" : "working";
   }
 
-  if (!session) {
-    return (
-      <p className="edit-message is-error" role="alert">
-        The SuperDocs session is no longer available. Nothing was approved.
-      </p>
-    );
+  if (isSynchronizedBusy(synchronizedState.stage)) {
+    const changeSet = activeSynchronizedChangeSet(synchronizedState);
+    for (const documentType of changeSet?.affectedDocuments ?? []) {
+      statuses[documentType] =
+        synchronizedState.stage === "awaiting_review" ? "review" : "working";
+    }
   }
 
-  const totalProposals = state.jobs.reduce(
-    (sum, targeted) => sum + targeted.job.proposals.length,
-    0,
-  );
+  for (const issue of workspace.validation.issues) {
+    for (const documentType of issue.documents ?? []) {
+      statuses[documentType] = "issue";
+    }
+  }
 
-  return (
-    <div className="review-panel synchronized-review" aria-label="Synchronized proposed changes">
-      <div className="review-panel-heading">
-        <div>
-          <p className="review-eyebrow">Review required</p>
-          <h3>Canonical fact: Return window</h3>
-          <p className="canonical-change">
-            {String(state.changeSet.previousValue)} → {String(state.changeSet.nextValue)} days
-          </p>
-        </div>
-        <span>{totalProposals} change{totalProposals === 1 ? "" : "s"}</span>
-      </div>
-      <div className="proposal-groups">
-        {state.changeSet.affectedDocuments.map((documentType) => {
-          const proposals =
-            state.jobs.find((targeted) => targeted.documentType === documentType)
-              ?.job.proposals ?? [];
-          return (
-            <section className="proposal-group" key={documentType}>
-              <h4>{TAB_LABELS[documentType]}</h4>
-              <div className="proposal-list">
-                {proposals.map((proposal, index) => (
-                  <article className="proposal" key={proposal.changeId}>
-                    <p className="proposal-document">
-                      {TAB_LABELS[documentType]} · Change {index + 1}
-                    </p>
-                    <p className="proposal-explanation">
-                      {proposal.explanation || "SuperDocs proposed the managed return-window update."}
-                    </p>
-                    <div className="proposal-comparison">
-                      <div>
-                        <h4>Before</h4>
-                        <p>{readableHtml(proposal.beforeHtml, "No previous text")}</p>
-                      </div>
-                      <div>
-                        <h4>After</h4>
-                        <p>{readableHtml(proposal.afterHtml, "Text removed")}</p>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-            </section>
-          );
-        })}
-      </div>
-      <div className="review-actions">
-        <button className="primary-button" type="button" onClick={onApprove}>
-          Approve synchronized update
-        </button>
-        <button className="secondary-button" type="button" onClick={onReject}>
-          Reject update
-        </button>
-      </div>
-    </div>
-  );
+  return statuses;
 }
 
 async function pollUntilReview(
@@ -1104,49 +921,6 @@ function pollDelay(signal: AbortSignal): Promise<void> {
   });
 }
 
-function isEditBusy(stage: EditState["stage"]): boolean {
-  return (
-    stage === "submitting" ||
-    stage === "processing" ||
-    stage === "awaiting_review" ||
-    stage === "applying"
-  );
-}
-
-function isSynchronizedBusy(stage: SynchronizedState["stage"]): boolean {
-  return (
-    stage === "preparing" ||
-    stage === "processing" ||
-    stage === "awaiting_review" ||
-    stage === "applying"
-  );
-}
-
-function activeSynchronizedChangeSet(
-  state: SynchronizedState,
-): ChangeSet | null {
-  return "changeSet" in state ? state.changeSet : null;
-}
-
-function readableHtml(value: string | null, fallback: string): string {
-  if (value === null || value.trim() === "") {
-    return fallback;
-  }
-  return value
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replaceAll("&nbsp;", " ")
-    .replaceAll("&quot;", '"')
-    .replaceAll("&#39;", "'")
-    .replaceAll("&gt;", ">")
-    .replaceAll("&lt;", "<")
-    .replaceAll("&amp;", "&")
-    .replace(/\s*\n\s*/g, "\n")
-    .replace(/[ \t]+/g, " ")
-    .trim();
-}
-
 function jobFailureMessage(job: SuperDocsJobView): string {
   return job.errorCode
     ? `SuperDocs could not complete the edit (${job.errorCode}).`
@@ -1157,25 +931,4 @@ function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
     : "The SuperDocs operation could not be completed.";
-}
-
-function ConsistencyStatus({ validation }: { validation: ValidationResult }) {
-  if (validation.ok) {
-    return (
-      <p className="status status-ok" role="status">
-        ✓ Policy set consistent
-      </p>
-    );
-  }
-
-  return (
-    <div className="status status-attention" role="status">
-      <p>Policy set needs attention</p>
-      <ul>
-        {validation.issues.map((issue) => (
-          <li key={`${issue.code}:${issue.message}`}>{issue.message}</li>
-        ))}
-      </ul>
-    </div>
-  );
 }

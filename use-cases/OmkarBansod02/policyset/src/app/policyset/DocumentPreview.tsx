@@ -8,9 +8,9 @@ import { parseRendererHtml } from "@/documents/parse-html";
 import { POLICY_DOCUMENT_TITLES } from "@/documents/spec";
 
 /**
- * Deterministic HTML preview of a generated policy document.
- * This is not the SuperDocs editor. Later phases replace this surface
- * with SuperDocs editing behavior.
+ * The rendered policy document. This is the primary artifact of the product,
+ * so it is presented as a page — editorial type on a white sheet — rather than
+ * as another panel of application chrome.
  */
 export function DocumentPreview({
   documentType,
@@ -24,34 +24,40 @@ export function DocumentPreview({
   source?: "deterministic" | "superdocs";
 }) {
   const body = previewBody(html, profile.company.legalName);
-  const title =
-    body.title ?? POLICY_DOCUMENT_TITLES[documentType];
+  const title = body.title ?? POLICY_DOCUMENT_TITLES[documentType];
 
   return (
     <article
-      className="document-preview"
+      className="mx-auto w-full max-w-[46rem] rounded-[var(--radius-card)] border border-line bg-surface shadow-sheet"
       data-preview-surface={
         source === "superdocs" ? "superdocs-html" : "deterministic-html"
       }
       data-policy-document={documentType}
     >
-      <p className="document-kicker">
-        {source === "superdocs" ? "SuperDocs content" : "Deterministic preview"}
-      </p>
-      <header className="document-header">
-        <h1>{title}</h1>
-        <p className="document-meta">
-          {profile.company.legalName}
-          <span aria-hidden="true"> · </span>
-          Effective {formatEffectiveDate(profile.company.effectiveDate)}
-        </p>
-      </header>
-      <div className="document-body">
-        {body.nodes}
+      <div className="px-7 py-10 sm:px-14 sm:py-14">
+        <header>
+          <h1 className="font-serif text-[1.75rem] font-semibold leading-[1.2] tracking-[-0.015em] text-ink text-balance">
+            {title}
+          </h1>
+          <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.1em] text-muted">
+            {profile.company.legalName}
+            <span aria-hidden="true" className="px-1.5 text-faint">
+              ·
+            </span>
+            Effective {formatEffectiveDate(profile.company.effectiveDate)}
+          </p>
+        </header>
+
+        <hr className="my-9 border-t border-line" />
+
+        <div className="policy-document">{body.nodes}</div>
+
+        <footer className="mt-12 border-t border-line pt-5">
+          <p className="text-xs leading-relaxed text-muted">
+            {ATTORNEY_REVIEW_DISCLAIMER}
+          </p>
+        </footer>
       </div>
-      <footer className="document-disclaimer">
-        {ATTORNEY_REVIEW_DISCLAIMER}
-      </footer>
     </article>
   );
 }

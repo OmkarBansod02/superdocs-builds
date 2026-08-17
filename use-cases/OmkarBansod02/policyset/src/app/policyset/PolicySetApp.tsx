@@ -5,6 +5,7 @@ import {
   clonePolicyProfile,
   NORTHSTAR_GOODS_PROFILE,
 } from "@/domain";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { generatePolicyWorkspace, type PolicyWorkspaceState } from "./generate-workspace";
 import { intakeFromProfile, profileFromIntake, type IntakeFormState } from "./intake";
 import { IntakeView } from "./IntakeView";
@@ -33,26 +34,35 @@ export function PolicySetApp() {
 
   if (view === "workspace" && workspace) {
     return (
-      <WorkspaceView
-        workspace={workspace}
-        onWorkspaceChange={setWorkspace}
-        onEditIntake={() => {
-          setIntake(intakeFromProfile(clonePolicyProfile(workspace.profile)));
-          setView("intake");
-        }}
-      />
+      <TooltipProvider delayDuration={200}>
+        <WorkspaceView
+          workspace={workspace}
+          onWorkspaceChange={setWorkspace}
+          onEditIntake={() => {
+            setIntake(intakeFromProfile(clonePolicyProfile(workspace.profile)));
+            setView("intake");
+          }}
+        />
+      </TooltipProvider>
     );
   }
 
   return (
-    <IntakeView
-      value={intake}
-      error={error}
-      onChange={(next) => {
-        setError(null);
-        setIntake(next);
-      }}
-      onGenerate={handleGenerate}
-    />
+    <TooltipProvider delayDuration={200}>
+      <IntakeView
+        value={intake}
+        error={error}
+        canCancel={workspace !== null}
+        onChange={(next) => {
+          setError(null);
+          setIntake(next);
+        }}
+        onGenerate={handleGenerate}
+        onCancel={() => {
+          setError(null);
+          setView("workspace");
+        }}
+      />
+    </TooltipProvider>
   );
 }
