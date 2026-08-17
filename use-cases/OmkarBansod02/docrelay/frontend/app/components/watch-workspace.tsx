@@ -529,66 +529,60 @@ function WatchEmpty({
   onChooseFolder: () => void;
 }) {
   const watchReady = Boolean(connection?.watch_authorized);
+  const ready = Boolean(connection) && watchReady;
   return (
     <section className="page-shell">
-      <div className="mx-auto w-full max-w-[600px] pt-4 lg:pt-16">
-        <div className="text-center">
-          <span className="pill pill-accent mx-auto mb-5 flex w-fit">
-            <icons.shield className="size-3" strokeWidth={2} aria-hidden="true" />
-            Reviewed before write-back
-          </span>
-          <h1 className="type-hero-title text-balance">Watch a Drive folder</h1>
-          <p className="type-hero-body mx-auto mt-3.5 max-w-[30rem] text-pretty">
-            Keep a Drive folder in sync with human-reviewed DocRelay changes.
-          </p>
-        </div>
-        {error ? <div className="mt-6"><InlineNotice tone="warning">{error}</InlineNotice></div> : null}
+      {/* The same starting composition as the Workspace hero — one left-aligned
+          column carrying a single selection row — so the two entry points into
+          the product read as the same product. */}
+      <div className="mx-auto w-full max-w-[568px] pt-4 lg:pt-14">
+        <h1 className="type-hero-title text-balance">Watch a Drive folder</h1>
+        <p className="type-hero-body mt-3.5 max-w-[29rem] text-pretty">
+          Keep a Drive folder in sync with human-reviewed DocRelay changes.
+        </p>
 
-        <div className="relative mx-auto mt-11 max-w-[540px]">
-          <span
-            aria-hidden="true"
-            className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/45"
-          />
-          <span
-            aria-hidden="true"
-            className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[16px] border border-b-0 border-border-light bg-surface/75"
-          />
-          <div className="relative flex flex-col items-center rounded-[var(--radius-plate)] border border-border-light bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
-            <span
-              className="grid size-[72px] place-items-center rounded-[20px] border border-border-light bg-surface-elevated text-muted shadow-[var(--shadow-raised)]"
-              aria-hidden="true"
-            >
-              <icons.folderOpen className="size-7" strokeWidth={ICON_STROKE} />
-            </span>
-            {!connection || !watchReady ? (
-              <>
-                <h2 className="mt-6 text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-ink">
-                  Watch access required
-                </h2>
-                <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
-                  DocRelay needs read access to discover files in the selected folder.
-                </p>
-                <Button className="mt-7 h-[40px] px-5" onClick={onEnableWatch}>Enable Watch access</Button>
-              </>
-            ) : (
-              <>
-                <h2 className="mt-6 text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-ink">
-                  Choose a folder
-                </h2>
-                <p className="mx-auto mt-2.5 max-w-[25.5rem] text-[13.5px] leading-[1.62] text-muted">
-                  Select the Drive folder DocRelay should watch, then add a rule and set a schedule.
-                </p>
-                <Button className="mt-7 h-[40px] px-5" busy={pickerBusy} onClick={onChooseFolder}>
-                  {pickerBusy ? "Opening Drive…" : "Choose folder"}
-                </Button>
-              </>
+        <div className="mt-8 flex w-full flex-col gap-3 lg:mt-9">
+          {error ? <InlineNotice tone="warning">{error}</InlineNotice> : null}
+
+          <div
+            className={cn(
+              "flex w-full flex-col items-stretch gap-3.5 rounded-[14px] border p-4 text-left",
+              "border-border bg-surface shadow-[var(--shadow-raised)]",
+              "sm:flex-row sm:items-center sm:gap-4 sm:py-3.5 sm:pr-3.5 sm:pl-[18px]",
             )}
-            <p className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12px] text-muted-soft">
-              <icons.shield className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
-              Every discovered change is reviewed before write-back.
-            </p>
+          >
+            <span className="flex min-w-0 flex-1 items-center gap-3.5">
+              <icons.folderOpen
+                className="size-[25px] shrink-0 text-muted"
+                strokeWidth={ICON_STROKE}
+                aria-hidden="true"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[16px] leading-[1.3] font-semibold tracking-[-0.024em] text-ink">
+                  {ready ? "Choose a folder" : "Watch access required"}
+                </span>
+                <span className="mt-[3px] block text-[12.75px] leading-[1.45] text-muted">
+                  {ready
+                    ? "Select the folder to watch, then add a rule and a schedule."
+                    : "DocRelay needs read access to discover files in the folder."}
+                </span>
+              </span>
+            </span>
+            {ready ? (
+              <Button className="h-[36px] shrink-0 px-4" busy={pickerBusy} onClick={onChooseFolder}>
+                {pickerBusy ? "Opening…" : "Choose folder"}
+              </Button>
+            ) : (
+              <Button className="h-[36px] shrink-0 px-4" onClick={onEnableWatch}>
+                Enable access
+              </Button>
+            )}
           </div>
         </div>
+
+        <p className="mt-5 text-[12.5px] leading-5 text-muted-soft">
+          Every discovered change is reviewed before write-back.
+        </p>
       </div>
     </section>
   );

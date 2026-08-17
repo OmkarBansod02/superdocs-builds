@@ -362,7 +362,7 @@ function NewDocumentButton({
         "bg-primary text-[13.5px] leading-none font-medium tracking-[-0.012em] text-primary-foreground",
         "shadow-[var(--shadow-raised)]",
         "transition-[background-color,box-shadow,translate] duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
-        "hover:bg-primary-hover hover:shadow-[var(--shadow-lifted)] active:translate-y-px",
+        "hover:bg-primary-hover hover:shadow-[var(--shadow-raised)] active:translate-y-px",
       )}
     >
       <icons.plus className="size-4 shrink-0" strokeWidth={2.25} aria-hidden="true" />

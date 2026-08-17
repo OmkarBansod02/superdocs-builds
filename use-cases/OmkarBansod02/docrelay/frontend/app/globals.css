@@ -25,6 +25,7 @@
   --sidebar: #f1f2ee;          /* navigation, quietly separated from the work */
   --background: #f7f8f5;       /* working canvas the workbench sits inside */
   --conversation: #fbfcfa;     /* conversation pane */
+  --chrome: #fbfcfa;           /* the workbench's single top band, both tools */
   --canvas: #e9ece8;           /* document canvas behind the page */
   --surface: #ffffff;          /* cards, inputs, controls, document chrome */
   --surface-elevated: #ffffff; /* document paper, popovers, lifted plates */
@@ -154,6 +155,7 @@
   --color-foreground: var(--foreground);
   --color-ink: var(--foreground);
   --color-conversation: var(--conversation);
+  --color-chrome: var(--chrome);
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-surface-elevated: var(--surface-elevated);
@@ -330,10 +332,11 @@
     max-width: 980px;
   }
 
-  /* Thin chrome rail at the top of a full-bleed workspace screen. */
+  /* Thin chrome rail at the top of a full-bleed workspace screen. Same height
+     as the workbench band, so every screen's top chrome sits on one line. */
   .chrome-rail {
     display: flex;
-    height: 3.25rem;
+    height: 3.5rem;
     flex-shrink: 0;
     align-items: center;
     justify-content: space-between;
@@ -460,8 +463,21 @@
     }
   }
 
-  /* The drag affordance lives inside the gutter. A persistent hairline keeps
-     the two tools visibly divided; the grip only appears under the pointer. */
+  /* The workbench's top band. Both tools mount the same bar — same height,
+     same tone, same hairline — so a single strip of chrome runs unbroken
+     across the whole workspace and the two panes read as one product. */
+  .chrome-band {
+    display: flex;
+    height: 3.5rem;
+    flex-shrink: 0;
+    align-items: center;
+    background: var(--chrome);
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  /* The drag affordance lives inside the gutter. At rest the boundary is only
+     an interior hairline; the grip appears under the pointer and commits to
+     the accent while the split is actually being dragged. */
   .split-handle {
     position: relative;
     display: none;
@@ -469,7 +485,12 @@
     flex: 0 0 var(--workbench-gutter);
     cursor: col-resize;
     touch-action: none;
-    background: var(--conversation);
+    /* The gutter carries the chrome band's hairline across itself, so the band
+       runs unbroken from the conversation header into the document toolbar
+       instead of stopping at each pane's edge. */
+    background:
+      linear-gradient(var(--border-light), var(--border-light)) 0 3.5rem / 100% 1px no-repeat,
+      var(--conversation);
     border: 0;
     padding: 0;
     outline: none;
@@ -479,38 +500,42 @@
     .split-handle { display: block; }
   }
 
-  /* The seam sits on the boundary itself — the gutter is breathing room on the
-     conversation side, not a gap between two cards. */
+  /* Below the band the seam sits on the boundary itself — the gutter is
+     breathing room on the conversation side, not a gap between two cards. */
   .split-handle::before {
     content: "";
     position: absolute;
-    inset-block: 0;
+    inset-block: 3.5rem 0;
     right: 0;
     width: 1px;
-    background: var(--border-light);
+    background: var(--border-hair);
+    transition: background-color var(--motion-duration) var(--motion-ease);
+  }
+
+  .split-handle:hover::before {
+    background: var(--border);
   }
 
   .split-handle::after {
     content: "";
     position: absolute;
-    inset-block: 12%;
-    right: -1px;
-    width: 3px;
+    inset-block: calc(3.5rem + 14px) 14px;
+    right: -1.5px;
+    width: 4px;
     border-radius: 999px;
-    background: var(--border);
+    background: var(--muted-soft);
     opacity: 0;
     transition: opacity var(--motion-duration) var(--motion-ease),
       background-color var(--motion-duration) var(--motion-ease);
   }
 
-  .split-handle:hover::after,
-  .split-handle:focus-visible::after,
-  .split-handle[data-dragging="true"]::after {
-    opacity: 1;
+  .split-handle:hover::after {
+    opacity: 0.5;
   }
 
   .split-handle:focus-visible::after,
   .split-handle[data-dragging="true"]::after {
+    opacity: 1;
     background: var(--primary);
   }
 
@@ -539,28 +564,30 @@
     background: var(--canvas);
   }
 
-  /* Paper inside an editor, not a card on a dashboard: a clean white sheet,
-     a hairline edge, and just enough shadow to sit off the canvas. */
+  /* Paper inside an editor, not a card on a dashboard: a clean white sheet, a
+     near-square corner, a hairline edge and one restrained shadow. The page
+     grows its margins faster than its measure, so the column of text stays at
+     a readable length however wide the document pane is pulled. */
   .document-page {
     position: relative;
     width: 100%;
-    max-width: 740px;
-    padding: 2.75rem 1.875rem;
-    border-radius: 4px;
+    max-width: 720px;
+    padding: 2.5rem 1.75rem 3.5rem;
+    border-radius: 3px;
     background: var(--surface-elevated);
     box-shadow: var(--shadow-document);
   }
 
   @container document (min-width: 560px) {
-    .document-page { max-width: 764px; padding: 3.5rem 3.25rem; }
+    .document-page { max-width: 748px; padding: 3.75rem 3.5rem 5rem; }
   }
 
   @container document (min-width: 760px) {
-    .document-page { max-width: 788px; padding: 4.25rem 4.5rem; }
+    .document-page { max-width: 772px; padding: 4.5rem 4.75rem 6rem; }
   }
 
   @container document (min-width: 980px) {
-    .document-page { max-width: 812px; padding: 4.75rem 5.5rem; }
+    .document-page { max-width: 792px; padding: 5rem 5.5rem 6.5rem; }
   }
 
   /* The reader surface is the one place in the product that is not a UI
@@ -568,9 +595,9 @@
      rhythm tuned for reading rather than for scanning chrome. */
   .document-body {
     font-family: var(--font-serif), ui-serif, Georgia, "Times New Roman", serif;
-    font-size: 1.09375rem;
-    line-height: 1.74;
-    letter-spacing: 0;
+    font-size: 1.078125rem;
+    line-height: 1.72;
+    letter-spacing: 0.001em;
     color: var(--foreground);
     text-wrap: pretty;
   }
@@ -671,22 +698,22 @@
 
   /* Editorial hero — Workspace start screen and equivalent first impressions. */
   .type-hero-title {
-    font-size: 1.875rem;
-    line-height: 1.14;
+    font-size: 1.9375rem;
+    line-height: 1.1;
     font-weight: 600;
-    letter-spacing: -0.032em;
+    letter-spacing: -0.034em;
     color: var(--foreground);
   }
 
   @media (min-width: 1024px) {
-    .type-hero-title { font-size: 2.0625rem; }
+    .type-hero-title { font-size: 2.1875rem; }
   }
 
   .type-hero-body {
-    font-size: 0.9375rem;
-    line-height: 1.62;
+    font-size: 0.96875rem;
+    line-height: 1.6;
     font-weight: 400;
-    letter-spacing: -0.008em;
+    letter-spacing: -0.01em;
     color: var(--muted-text);
   }
 

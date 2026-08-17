@@ -216,25 +216,19 @@ export function SourceChooser({
         <DriveConnectionStatus connected={Boolean(connection)} loading={loading} />
       </header>
 
-      {/* Editorial composition: one focal column, balanced in the canvas rather
-          than pinned to the top, with the Drive selection carrying the mass. */}
+      {/* The application's starting state, not a landing page: one left-aligned
+          editorial column balanced in the canvas, carrying a single focal
+          control. Nothing here is framed that does not need framing. */}
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex min-h-full w-full max-w-[640px] flex-col justify-center px-6 pt-12 pb-20 lg:pt-14 lg:pb-24">
-          <div className="mx-auto max-w-[34rem] text-center">
-            <span className="pill pill-accent mx-auto mb-5 flex w-fit">
-              <icons.shield className="size-3" strokeWidth={2} aria-hidden="true" />
-              Reviewed before write-back
-            </span>
-            <h2 className="type-hero-title text-balance">Start with a document</h2>
-            <p className="type-hero-body mx-auto mt-3.5 max-w-[27rem] text-pretty">
-              Connect a Google Doc and let DocRelay prepare reviewed, verifiable changes.
-            </p>
-          </div>
+        <div className="mx-auto flex min-h-full w-full max-w-[568px] flex-col justify-center px-6 pt-12 pb-16 lg:pb-20">
+          <h2 className="type-hero-title text-balance">Start with a document</h2>
+          <p className="type-hero-body mt-3.5 max-w-[29rem] text-pretty">
+            Connect a Google Doc and let DocRelay prepare reviewed, verifiable changes.
+          </p>
 
-          {/* gap clears the stacked sheets peeking above the plate */}
-          <div className="mt-9 flex w-full flex-col gap-5 lg:mt-11">
+          <div className="mt-8 flex w-full flex-col gap-3 lg:mt-9">
             {notices}
-            <DriveSelectionPlate
+            <DriveSelector
               loading={loading}
               connected={Boolean(connection)}
               busy={pickerBusy}
@@ -243,35 +237,42 @@ export function SourceChooser({
             />
           </div>
 
-          {/* Three quiet facts, not feature marketing: what actually happens
-              to a document between choosing it and a verified write. */}
-          <ol className="mt-9 grid gap-x-6 gap-y-3 sm:grid-cols-3">
+          {/* The guarantee, stated once as a quiet caption rather than as three
+              instructional columns. */}
+          <ul className="mt-5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[12.5px] leading-5 text-muted-soft">
             {[
-              ["Frozen", "The revision is captured before anything changes."],
-              ["Reviewed", "You approve each proposed change on its own."],
-              ["Verified", "The write is backed up, applied, then checked."],
-            ].map(([title, detail], index) => (
-              <li key={title} className="min-w-0">
-                <p className="flex items-center gap-1.5 text-[13px] leading-4 font-medium tracking-[-0.01em] text-foreground">
-                  <span className="type-mono text-[11.5px] text-muted-soft">{index + 1}</span>
-                  {title}
-                </p>
-                <p className="mt-1 text-[12.5px] leading-[1.55] text-muted">{detail}</p>
+              "Revision frozen before any edit",
+              "You approve each change",
+              "Write backed up and verified",
+            ].map((fact, index) => (
+              <li key={fact} className="flex items-center gap-2.5">
+                {index > 0 ? (
+                  <span className="size-[3px] shrink-0 rounded-full bg-border" aria-hidden="true" />
+                ) : null}
+                {fact}
               </li>
             ))}
-          </ol>
+          </ul>
         </div>
       </div>
     </section>
   );
 }
 
+/** Shared geometry for every state of the selector, so nothing shifts. */
+const SELECTOR_SHELL =
+  "flex w-full flex-col items-stretch gap-3.5 rounded-[14px] border p-4 text-left"
+  + " sm:flex-row sm:items-center sm:gap-4 sm:py-3.5 sm:pr-3.5 sm:pl-[18px]";
+
 /**
- * The product's primary action. It is one large, calm target: a page-like
- * plate resting on a short stack, so the first impression is a document
- * product rather than a settings form.
+ * The product's one focal action.
+ *
+ * A single selection row rather than a large onboarding card: Drive's own mark
+ * states the source, the type states the action, and the accent control on the
+ * right is the only filled surface on the screen. Depth is one restrained
+ * shadow that tightens slightly under the pointer — the row never lifts.
  */
-function DriveSelectionPlate({
+function DriveSelector({
   loading,
   connected,
   busy,
@@ -284,94 +285,65 @@ function DriveSelectionPlate({
   onConnect: () => void;
   onChoose: () => void;
 }) {
-  const body = (
-    <>
-      <span
-        className={cn(
-          "grid size-[72px] place-items-center rounded-[18px] border border-border-light bg-surface-elevated",
-          "shadow-[var(--shadow-raised)] transition-transform duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
-          connected && !busy ? "group-hover/plate:-translate-y-0.5" : "",
-        )}
-        aria-hidden="true"
-      >
-        <GoogleDriveMark className="h-[30px] w-[34px]" />
-      </span>
-      <span className="mt-6 block text-[19.5px] leading-[1.25] font-semibold tracking-[-0.028em] text-foreground">
-        {connected ? "Choose a Google Doc" : "Connect Google Drive"}
-      </span>
-      <span className="mx-auto mt-2.5 block max-w-[25.5rem] text-[13.75px] leading-[1.62] text-muted">
-        {connected
-          ? "DocRelay reads the document you select and freezes its revision before anything changes."
-          : "Authorize Drive once. DocRelay only ever reads the documents you pick."}
-      </span>
-    </>
-  );
+  if (loading) return <SelectorSkeleton />;
 
-  const footnote = (
-    <span className="mt-8 flex w-full items-center justify-center gap-1.5 border-t border-border-hair pt-4 text-[12.25px] text-muted-soft">
-      <icons.lock className="size-3 shrink-0" strokeWidth={ICON_STROKE} aria-hidden="true" />
-      Only Google Docs are supported.
+  const identity = (
+    <span className="flex min-w-0 flex-1 items-center gap-3.5">
+      <GoogleDriveMark className="h-[26px] w-[29px]" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[16px] leading-[1.3] font-semibold tracking-[-0.024em] text-foreground">
+          {connected ? "Choose a Google Doc" : "Connect Google Drive"}
+        </span>
+        <span className="mt-[3px] block text-[12.75px] leading-[1.45] text-muted">
+          {connected
+            ? "Opens the Google Drive picker. Google Docs only."
+            : "Authorize once — DocRelay only reads the documents you pick."}
+        </span>
+      </span>
     </span>
   );
 
-  return (
-    <div className="relative">
-      {/* A short stack behind the plate: depth from the product's own subject
-          matter, not from decoration. */}
-      <span
-        aria-hidden="true"
-        className="absolute inset-x-12 -top-[18px] h-[19px] rounded-t-[12px] border border-b-0 border-border-light bg-surface/50"
-      />
-      <span
-        aria-hidden="true"
-        className="absolute inset-x-6 -top-[9px] h-[11px] rounded-t-[14px] border border-b-0 border-border-light bg-surface/80"
-      />
+  if (!connected) {
+    return (
+      <div className={cn(SELECTOR_SHELL, "border-border bg-surface shadow-[var(--shadow-raised)]")}>
+        {identity}
+        <Button onClick={onConnect} className="h-[36px] shrink-0 px-4">
+          Connect
+        </Button>
+      </div>
+    );
+  }
 
-      {loading ? (
-        <div className="relative rounded-[var(--radius-plate)] border border-border bg-surface px-8 pt-11 pb-8 shadow-[var(--shadow-lifted)]">
-          <SelectorSkeleton />
-        </div>
-      ) : connected ? (
-        <button
-          type="button"
-          onClick={onChoose}
-          disabled={busy}
-          aria-busy={busy}
-          className={cn(
-            "group/plate relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border bg-surface px-8 pt-11 pb-8 text-center",
-            "transition-[box-shadow,border-color,background-color,translate] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
-            "border-border shadow-[var(--shadow-lifted)]",
-            "hover:border-muted-soft/45 hover:shadow-[0_2px_4px_rgb(23_26_24/0.05),0_14px_32px_-14px_rgb(23_26_24/0.13),0_28px_56px_-30px_rgb(23_26_24/0.14)]",
-            "focus-visible:border-ring",
-            "disabled:pointer-events-none",
-          )}
-        >
-          {body}
-          <span
-            className={cn(
-              "type-button mt-7 inline-flex h-[40px] items-center justify-center gap-2 rounded-[10px] px-5",
-              "bg-primary text-primary-foreground shadow-[var(--shadow-raised)]",
-              "transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
-              busy ? "opacity-80" : "group-hover/plate:bg-primary-hover",
-            )}
-          >
-            {busy ? (
-              <icons.refresh className="size-3.5 animate-spin" strokeWidth={ICON_STROKE} aria-hidden="true" />
-            ) : null}
-            {busy ? "Opening Drive…" : "Choose from Drive"}
-          </span>
-          {footnote}
-        </button>
-      ) : (
-        <div className="relative flex w-full flex-col items-center rounded-[var(--radius-plate)] border border-border bg-surface px-8 pt-11 pb-8 text-center shadow-[var(--shadow-lifted)]">
-          {body}
-          <Button onClick={onConnect} className="mt-7 h-[40px] px-5">
-            Connect Google Drive
-          </Button>
-          {footnote}
-        </div>
+  return (
+    <button
+      type="button"
+      onClick={onChoose}
+      disabled={busy}
+      aria-busy={busy}
+      className={cn(
+        SELECTOR_SHELL,
+        "group/selector border-border bg-surface shadow-[var(--shadow-raised)]",
+        "transition-[border-color,box-shadow] duration-[var(--motion-duration-lg)] ease-[var(--motion-ease)]",
+        "hover:border-muted-soft/40 hover:shadow-[0_1px_2px_rgb(23_26_24/0.05),0_10px_24px_-14px_rgb(23_26_24/0.16)]",
+        "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25 focus-visible:outline-none",
+        "disabled:pointer-events-none",
       )}
-    </div>
+    >
+      {identity}
+      <span
+        className={cn(
+          "type-button inline-flex h-[36px] shrink-0 items-center justify-center gap-1.5 rounded-[9px] px-4",
+          "bg-primary text-primary-foreground shadow-[var(--shadow-subtle)]",
+          "transition-colors duration-[var(--motion-duration)] ease-[var(--motion-ease)]",
+          busy ? "opacity-85" : "group-hover/selector:bg-primary-hover",
+        )}
+      >
+        {busy ? (
+          <icons.refresh className="size-3.5 animate-spin" strokeWidth={ICON_STROKE} aria-hidden="true" />
+        ) : null}
+        {busy ? "Opening…" : "Browse Drive"}
+      </span>
+    </button>
   );
 }
 
@@ -388,7 +360,7 @@ function InlineStatus({
   return (
     <div
       role="status"
-      className="flex w-full items-start gap-2.5 rounded-[10px] border border-border bg-surface px-3.5 py-3 shadow-[var(--shadow-subtle)]"
+      className="flex w-full items-start gap-2.5 rounded-[12px] border border-border bg-surface px-3.5 py-3 shadow-[var(--shadow-subtle)]"
     >
       <icons.warning
         className="mt-px size-4 shrink-0 text-warning"
@@ -411,30 +383,37 @@ function DriveConnectionStatus({
   connected: boolean;
   loading: boolean;
 }) {
-  if (loading && !connected) return null;
-
   return (
     <p className="inline-flex items-center gap-1.5 text-[12.75px] whitespace-nowrap text-muted">
       <span
-        className={cn("size-1.5 shrink-0 rounded-full", connected ? "bg-success" : "bg-border")}
+        className={cn(
+          "size-1.5 shrink-0 rounded-full",
+          connected ? "bg-success" : loading ? "bg-muted-soft live-dot" : "bg-border",
+        )}
         aria-hidden="true"
       />
       Google Drive
       <span className="text-muted-soft">·</span>
-      {connected ? "Connected" : "Not connected"}
+      {connected ? "Connected" : loading ? "Checking…" : "Not connected"}
     </p>
   );
 }
 
+/** Same shell, same height: the row never resizes when the check resolves. */
 function SelectorSkeleton() {
   return (
-    <div className="flex w-full flex-col items-center" aria-hidden="true">
-      <Skeleton className="size-[72px] rounded-[20px]" />
-      <Skeleton className="mt-6 h-5 w-48" />
-      <Skeleton className="mt-3.5 h-3.5 w-full max-w-[24rem]" />
-      <Skeleton className="mt-2 h-3.5 w-3/5" />
-      <Skeleton className="mt-7 h-[40px] w-[11.5rem] rounded-[10px]" />
-      <Skeleton className="mt-9 h-3 w-44" />
+    <div
+      className={cn(SELECTOR_SHELL, "border-border-light bg-surface")}
+      aria-hidden="true"
+    >
+      <span className="flex min-w-0 flex-1 items-center gap-3.5">
+        <Skeleton className="size-[26px] shrink-0 rounded-[7px]" />
+        <span className="min-w-0 flex-1">
+          <Skeleton className="h-[15px] w-[11rem]" />
+          <Skeleton className="mt-2 h-3 w-[16rem] max-w-full" />
+        </span>
+      </span>
+      <Skeleton className="h-[36px] w-[7.5rem] shrink-0 rounded-[9px]" />
     </div>
   );
 }
