@@ -41,9 +41,16 @@ export function validatePolicySet(
     }
 
     const occurrences = parseManagedFields(html);
+    const hasStructuredFacts = html.includes("data-managed-field=");
     for (const fieldPath of fieldsForDocument(documentType)) {
       const expected = formatManagedValue(profile, fieldPath);
-      const found = occurrences.get(fieldPath) ?? [];
+      const structured = occurrences.get(fieldPath) ?? [];
+      const found =
+        structured.length > 0 || hasStructuredFacts
+          ? structured
+          : plainTextContainsManagedValue(html, fieldPath, expected)
+            ? [expected]
+            : [];
 
       if (found.length === 0 || found.some((value) => value !== expected)) {
         pushFieldMismatch(issues, documentType, fieldPath, expected, found);
@@ -56,8 +63,8 @@ export function validatePolicySet(
   const warrantyDoc = documents.warranty;
 
   if (terms && returnsDoc) {
-    const termsWindow = firstField(terms, "returns.windowDays");
-    const returnsWindow = firstField(returnsDoc, "returns.windowDays");
+    const termsWindow = firstReturnWindow(terms);
+    const returnsWindow = firstReturnWindow(returnsDoc);
     if (
       termsWindow !== undefined &&
       returnsWindow !== undefined &&
@@ -98,7 +105,7 @@ export function validatePolicySet(
     if (!html) {
       continue;
     }
-    const actual = firstField(html, "returns.windowDays");
+    const actual = firstReturnWindow(html);
     if (actual !== undefined && actual !== expectedWindow) {
       issues.push({
         code: "stale_managed_fact",
@@ -110,6 +117,78 @@ export function validatePolicySet(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+export function validateReturnWindowTransition(
+  previousValue: number,
+  nextValue: number,
+  documents: Partial<Record<PolicyDocumentType, string>>,
+  affectedDocuments: readonly PolicyDocumentType[],
+): ValidationResult {
+  const issues: ValidationIssue[] = [];
+
+  for (const documentType of affectedDocuments) {
+    const html = documents[documentType];
+    if (!html) {
+      issues.push({
+        code: "missing_required_document",
+        message: `Missing required document: ${documentType}.`,
+        documents: [documentType],
+      });
+      continue;
+    }
+
+    const values = returnWindowValues(html);
+    if (!values.includes(nextValue)) {
+      issues.push({
+        code: "managed_transition_incomplete",
+        message: `Document "${documentType}" does not contain the new ${nextValue}-day managed return window.`,
+        documents: [documentType],
+        fieldPath: "returns.windowDays",
+      });
+    }
+    if (values.includes(previousValue)) {
+      issues.push({
+        code: "stale_managed_fact",
+        message: `Document "${documentType}" still contains the stale ${previousValue}-day managed return window.`,
+        documents: [documentType],
+        fieldPath: "returns.windowDays",
+      });
+    }
+  }
+
+  return { ok: issues.length === 0, issues };
+}
+
+export function returnWindowValues(html: string): number[] {
+  const text = htmlToPolicyText(html);
+  const values = new Set<number>();
+  const patterns = [
+    /return window\s*\(days\)\s*:?\s*(\d+)/gi,
+    /within\s+(\d+)\s+days?\b/gi,
+    /\b(\d+)[ -]day\s+(?:return\s+)?window\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = Number(match[1]);
+      if (Number.isInteger(value)) {
+        values.add(value);
+      }
+    }
+  }
+
+  return [...values];
+}
+
+export function htmlToPolicyText(html: string): string {
+  return decodeHtml(
+    html
+      .replace(/<br\s*\/?>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseManagedFields(html: string): Map<ManagedFieldPath, string[]> {
@@ -134,6 +213,34 @@ function firstField(
   path: ManagedFieldPath,
 ): string | undefined {
   return parseManagedFields(html).get(path)?.[0];
+}
+
+function firstReturnWindow(html: string): string | undefined {
+  return (
+    firstField(html, "returns.windowDays") ??
+    returnWindowValues(html)[0]?.toString()
+  );
+}
+
+function plainTextContainsManagedValue(
+  html: string,
+  fieldPath: ManagedFieldPath,
+  expected: string,
+): boolean {
+  const text = htmlToPolicyText(html);
+  if (
+    fieldPath === "store.minimumCustomerAge" ||
+    fieldPath === "returns.windowDays" ||
+    fieldPath === "returns.processingDays" ||
+    fieldPath === "warranty.durationMonths"
+  ) {
+    return new RegExp(`(^|\\D)${escapeRegExp(expected)}(\\D|$)`).test(text);
+  }
+  return text.includes(expected);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function pushFieldMismatch(

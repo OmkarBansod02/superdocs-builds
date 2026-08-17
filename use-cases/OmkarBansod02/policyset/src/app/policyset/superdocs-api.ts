@@ -1,8 +1,9 @@
-import type { PolicyProfile } from "@/domain";
+import type { ChangeSet, PolicyDocumentType, PolicyProfile } from "@/domain";
 import type {
   SuperDocsJobView,
   SuperDocsReviewView,
   SuperDocsSessionDocumentView,
+  SuperDocsSynchronizedStartView,
   SuperDocsWorkspaceSession,
 } from "./superdocs-contract";
 
@@ -73,6 +74,60 @@ export async function refreshSuperDocsDocuments(
     documents: readonly SuperDocsSessionDocumentView[];
   }>(`${API_ROOT}/session?${search}`, { signal, cache: "no-store" });
   return response.documents;
+}
+
+export async function startSuperDocsSynchronizedChange(
+  input: {
+    sessionId: string;
+    documentIds: Record<PolicyDocumentType, string>;
+    changeSet: ChangeSet;
+  },
+  signal?: AbortSignal,
+): Promise<SuperDocsSynchronizedStartView> {
+  return requestJson(`${API_ROOT}/synchronized`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export async function getSuperDocsSynchronizedJob(
+  input: {
+    jobId: string;
+    sessionId: string;
+    documentType: PolicyDocumentType;
+    documentIds: Record<PolicyDocumentType, string>;
+    changeSet: ChangeSet;
+  },
+  signal?: AbortSignal,
+): Promise<SuperDocsJobView> {
+  return requestJson(
+    `${API_ROOT}/synchronized/jobs/${encodeURIComponent(input.jobId)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(input),
+      signal,
+      cache: "no-store",
+    },
+  );
+}
+
+export async function submitSuperDocsSynchronizedReview(
+  input: {
+    jobId: string;
+    sessionId: string;
+    documentType: PolicyDocumentType;
+    documentIds: Record<PolicyDocumentType, string>;
+    changeSet: ChangeSet;
+    approved: boolean;
+  },
+  signal?: AbortSignal,
+): Promise<SuperDocsReviewView> {
+  return requestJson(`${API_ROOT}/synchronized/review`, {
+    method: "POST",
+    body: JSON.stringify(input),
+    signal,
+  });
 }
 
 async function requestJson<T>(

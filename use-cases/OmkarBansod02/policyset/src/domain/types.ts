@@ -118,7 +118,9 @@ export type ValidationIssueCode =
   | "effective_date_mismatch"
   | "return_window_mismatch"
   | "warranty_duration_mismatch"
-  | "stale_managed_fact";
+  | "stale_managed_fact"
+  | "managed_transition_incomplete"
+  | "untouched_document_changed";
 
 export type ValidationIssue = {
   code: ValidationIssueCode;

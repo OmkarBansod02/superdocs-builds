@@ -8,6 +8,20 @@ export {
 } from "./changeset";
 export { NORTHSTAR_GOODS_PROFILE } from "./fixtures/northstar";
 export {
+  RETURN_WINDOW_COVERAGE_MODEL,
+  RETURN_WINDOW_OCCURRENCE_PATTERNS,
+  describeManagedOccurrence,
+  findReturnWindowOccurrences,
+  isReturnWindowOccurrenceUpdated,
+  isStructuralPartChunk,
+  returnWindowCoverageModelFor,
+  splitPolicyDocumentChunks,
+  type ManagedOccurrence,
+  type ManagedOccurrenceKind,
+  type ManagedOccurrencePattern,
+  type PolicyDocumentChunk,
+} from "./managed-occurrences";
+export {
   applyManagedField,
   clonePolicyProfile,
   formatMailingAddress,
@@ -39,4 +53,9 @@ export {
   type ValidationIssue,
   type ValidationResult,
 } from "./types";
-export { validatePolicySet } from "./validator";
+export {
+  htmlToPolicyText,
+  returnWindowValues,
+  validatePolicySet,
+  validateReturnWindowTransition,
+} from "./validator";

@@ -9,6 +9,7 @@ export type SuperDocsProposal = {
   changeId: string;
   operation: "edit" | "create" | "delete";
   documentId: string;
+  chunkId: string | null;
   beforeHtml: string | null;
   afterHtml: string | null;
   explanation: string | null;
@@ -33,6 +34,29 @@ export type SuperDocsSessionDocumentView = {
   documentId: string;
   title: string | null;
   html: string | null;
+  normalizedContent: string | null;
+  sha256: string | null;
+};
+
+export type PolicyDocumentContentState = {
+  documentId: string;
+  normalizedContent: string;
+  sha256: string;
+};
+
+export type PolicyDocumentContentStateMap = Record<
+  PolicyDocumentType,
+  PolicyDocumentContentState
+>;
+
+export type SuperDocsTargetedJob = {
+  documentType: PolicyDocumentType;
+  job: SuperDocsJobView;
+};
+
+export type SuperDocsSynchronizedStartView = {
+  jobs: readonly SuperDocsTargetedJob[];
+  preEditState: PolicyDocumentContentStateMap;
 };
 
 export type SuperDocsReviewView = {

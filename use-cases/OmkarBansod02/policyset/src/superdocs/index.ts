@@ -11,15 +11,34 @@ export {
   SuperDocsRequestError,
 } from "./errors";
 export {
+  evaluateReturnWindowCoverage,
+  type ManagedCoverageProblem,
+  type ManagedCoverageResult,
+} from "./managed-coverage";
+export {
   PolicySetSuperDocsSafetyError,
   assertPendingChangesTargetDocument,
+  assertSynchronizedProposalCoverage,
+  assertSynchronizedProposalGate,
+  assertSynchronizedProposalSafety,
+  assertTargetedProposalGate,
+  buildTargetedSynchronizedInstruction,
   createPolicySetSuperDocsClient,
   getPolicyDocumentEditJob,
+  getPolicyTargetedSynchronizedJob,
   getPolicySetSessionDocuments,
   initializePolicySetSession,
+  startPolicySynchronizedEdit,
   startPolicyDocumentEdit,
   submitPolicyDocumentReview,
+  submitPolicyTargetedSynchronizedReview,
 } from "./policyset";
+export {
+  classifyProposalTarget,
+  persistPendingProposalEvidence,
+  type ProposalEvidenceOptions,
+  type ProposalTargetClassification,
+} from "./proposal-evidence";
 export {
   DOCX_MIME,
   PDF_MIME,

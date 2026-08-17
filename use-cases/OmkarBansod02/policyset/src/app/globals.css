@@ -592,6 +592,109 @@ button {
   font-weight: 600;
 }
 
+.shared-fact-editor {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 2px solid var(--ink);
+}
+
+.shared-fact-eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.shared-fact-editor label {
+  display: block;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.shared-fact-current {
+  margin: 4px 0 10px;
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+
+.shared-fact-input-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  font-size: 12px;
+}
+
+.shared-fact-input-row input {
+  width: 82px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+
+.shared-fact-editor .primary-button {
+  width: 100%;
+  padding-inline: 8px;
+  font-size: 11px;
+}
+
+.shared-fact-change {
+  margin-top: 10px;
+  padding: 9px 10px;
+  background: var(--paper);
+  font-size: 11px;
+}
+
+.shared-fact-change p {
+  margin: 0 0 5px;
+}
+
+.shared-fact-change ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.canonical-change {
+  margin: 5px 0 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.proposal-groups {
+  display: grid;
+  gap: 1px;
+  background: var(--line-strong);
+}
+
+.proposal-group {
+  background: var(--surface);
+}
+
+.proposal-group > h4 {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+}
+
+.sync-success {
+  display: grid;
+  gap: 3px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--paper);
+  color: var(--ok);
+  font-size: 12px;
+}
+
+.edit-message p {
+  margin: 5px 0 0;
+}
+
 .status {
   margin: 0;
   font-size: 12px;

@@ -439,7 +439,8 @@ function parsePendingChange(value: unknown): PendingChange {
   return {
     changeId: requiredString(value, "change_id"),
     operation: operation as ProposalOperation,
-    documentId: requiredString(value, "document_id"),
+    documentId:
+      typeof value.document_id === "string" ? value.document_id : "",
     chunkId: optionalString(value.chunk_id, { allowEmpty: true }),
     oldHtml: optionalString(value.old_html, { allowEmpty: true }),
     newHtml: optionalString(value.new_html, { allowEmpty: true }),

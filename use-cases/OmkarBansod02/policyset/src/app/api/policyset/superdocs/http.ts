@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 
 import {
   getManagedFieldValue,
+  isManagedFieldPath,
   MANAGED_FIELD_PATHS,
+  POLICY_DOCUMENT_TYPES,
   parseManagedFieldValue,
+  type ChangeSet,
+  type ChangeSetStatus,
+  type PolicyDocumentType,
   type PolicyProfile,
 } from "@/domain";
 import {
@@ -53,6 +58,70 @@ export function requiredBoolean(
     throw new PolicySetRequestError(`${key} must be a boolean.`);
   }
   return value;
+}
+
+export function requiredChangeSet(value: unknown): ChangeSet {
+  if (!isRecord(value)) {
+    throw new PolicySetRequestError("changeSet must be an object.");
+  }
+  const fieldPath = value.fieldPath;
+  if (typeof fieldPath !== "string" || !isManagedFieldPath(fieldPath)) {
+    throw new PolicySetRequestError("changeSet has an unmanaged field path.");
+  }
+  const id = value.id;
+  if (typeof id !== "string" || id.trim() === "") {
+    throw new PolicySetRequestError("changeSet id must be provided.");
+  }
+  const status = value.status;
+  if (!isChangeSetStatus(status)) {
+    throw new PolicySetRequestError("changeSet has an invalid status.");
+  }
+  if (
+    !Array.isArray(value.affectedDocuments) ||
+    value.affectedDocuments.some((item) => !isPolicyDocumentType(item))
+  ) {
+    throw new PolicySetRequestError(
+      "changeSet affectedDocuments must contain PolicySet document types.",
+    );
+  }
+  const previous = parseManagedFieldValue(fieldPath, value.previousValue);
+  const next = parseManagedFieldValue(fieldPath, value.nextValue);
+  if (!previous.ok || !next.ok) {
+    throw new PolicySetRequestError(
+      !previous.ok ? previous.error.message : next.ok ? "Invalid ChangeSet." : next.error.message,
+    );
+  }
+
+  return {
+    id,
+    fieldPath,
+    previousValue: previous.value,
+    nextValue: next.value,
+    affectedDocuments: [...value.affectedDocuments],
+    status,
+  };
+}
+
+export function requiredPolicyDocumentType(value: unknown): PolicyDocumentType {
+  if (!isPolicyDocumentType(value)) {
+    throw new PolicySetRequestError(
+      "documentType must be a PolicySet document type.",
+    );
+  }
+  return value;
+}
+
+export function requiredDocumentIds(
+  value: unknown,
+): Record<PolicyDocumentType, string> {
+  if (!isRecord(value)) {
+    throw new PolicySetRequestError("documentIds must be an object.");
+  }
+  const documentIds = {} as Record<PolicyDocumentType, string>;
+  for (const documentType of POLICY_DOCUMENT_TYPES) {
+    documentIds[documentType] = requiredString(value, documentType);
+  }
+  return documentIds;
 }
 
 export function requiredPolicyProfile(value: unknown): PolicyProfile {
@@ -109,4 +178,18 @@ export function routeError(error: unknown): NextResponse {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPolicyDocumentType(value: unknown): value is PolicyDocumentType {
+  return (
+    typeof value === "string" &&
+    (POLICY_DOCUMENT_TYPES as readonly string[]).includes(value)
+  );
+}
+
+function isChangeSetStatus(value: unknown): value is ChangeSetStatus {
+  return (
+    typeof value === "string" &&
+    ["pending", "proposed", "approved", "rejected", "failed"].includes(value)
+  );
 }
