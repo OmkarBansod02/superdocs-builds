@@ -2,268 +2,275 @@
 
 **Safe AI write-back for cloud documents.**
 
-DocRelay is a safety-first control plane between an authoritative cloud document and
-[SuperDocs](https://superdocs.app). The cloud file remains the source of truth.
+Teams keep important documents in Google Drive. DocRelay lets SuperDocs prepare AI-assisted edits while Google Drive remains authoritative: every supported write is explicitly reviewed, backed up, revision-guarded, re-read, and structurally verified before success is reported.
 
-The Phase 3 backend adds the production SuperDocs REST boundary and a durable,
-machine-driven human-review workflow to the Phase 2 Google source layer. It freshly
-ingests one exact Google baseline revision, starts one explicitly targeted async edit,
-persists every review round/proposal/decision, recovers the same job after restart,
-focuses the exact target after actual completion, and stores a hashed reviewed DOCX
-artifact. It does **not** map changes to Google ranges or write anything to Google.
-The frontend remains intentionally unpolished and is not the review authority.
+Built by Omkar Bansod for the SuperDocs Engineer Task.
 
-## Implemented boundary
+## Screenshot
 
-```text
-browser
-  └─ OAuth redirect/callback (authorization code + state + PKCE)
-       └─ FastAPI
-            ├─ encrypted server-side OAuth credentials
-            ├─ Drive files.get metadata/capabilities/parents
-            ├─ Docs documents.get native structure + opaque revisionId
-            ├─ Drive files.export as DOCX
-            └─ PostgreSQL source and immutable baseline evidence
-```
+A current public-safe product screenshot is not yet checked in. The images under `frontend/design-concepts/` are design references rather than implementation evidence, so they are intentionally not embedded here.
 
-Phase 3 continues from that boundary:
+## Why DocRelay
 
-```text
-immutable Google A/DOCX
-  → private baseline artifact + fresh SuperDocs session
-  → multipart upload + exact roster target
-  → async ask_every_time job
-  → durable polling / explicit review rounds
-  → completed job
-  → exact focus + strict DOCX export
-  → reviewed artifact identity/hash
-  → STOP (no Google mapping or mutation)
-```
+Cloud documents are authoritative, but AI editing workflows often end in a manual upload/download cycle or a whole-file replacement that can erase concurrent human work and unrelated structure.
 
-Every external SuperDocs mutation-like operation is checkpointed before dispatch.
-Lost upload/job-start/review/focus outcomes remain `UNKNOWN` until deterministic
-session/job state reconciles them. A restart never launches a replacement edit merely
-because local memory was lost.
+Generating a change is not the hard part. The hard part is returning a reviewed change to the original cloud document only when its source revision, permissions, mapping, backup, and resulting structure can all be proved. DocRelay is the control plane for that boundary; SuperDocs remains the editing and review engine.
 
-The source identity is `(Google connection/principal, provider file ID)`. Filename,
-title, and path are display/location metadata only. A baseline is accepted only by
-this bounded protocol:
+## What it does
+
+- Captures an explicitly selected native Google Doc and freezes its revision, native canonical form, and DOCX export.
+- Sends that frozen DOCX to SuperDocs for an async, human-in-the-loop edit job.
+- Persists proposals and requires an approve/reject decision for every proposal in the current review round.
+- Maps only a deliberately narrow, uniquely provable Google Docs text-replacement subset.
+- Produces a sealed `MappingProof` and `WritePlan`; dry-run reports the exact intended operations without mutating Google.
+- Creates and verifies a separate Google Drive backup before the authoritative mutation.
+- Applies one `documents.batchUpdate` guarded by Google Docs `requiredRevisionId`.
+- Re-reads the entire native document and compares it with the expected canonical postimage.
+- Reconstructs a document-scoped conversation from durable run history and supports reviewed DOCX export.
+- Discovers eligible documents on scheduled Google Drive folder scans and routes each into the same review/write pipeline.
+- Exposes the same domain workflow over REST and stateless Streamable HTTP MCP.
+
+## The safety contract
 
 ```text
-Docs documents.get → revision A
-Drive files.export → DOCX bytes
-Docs documents.get → revision A2
-accept only when A == A2; otherwise discard the export and retry (maximum 3)
+Google revision A
+      ↓
+Frozen baseline (native structure + DOCX)
+      ↓
+SuperDocs proposal
+      ↓
+Human review
+      ↓
+MappingProof + sealed WritePlan
+      ↓
+Permission + revision check
+      ↓
+Independent Google Drive backup
+      ↓
+requiredRevisionId guarded write
+      ↓
+Full provider re-read + canonical comparison
+      ↓
+WRITE_VERIFIED
 ```
 
-`revisionId` is opaque. DocRelay does not parse or sort it and does not substitute
-Drive `modifiedTime`, file version, title, or path for concurrency authority.
+The commit path is intentionally strict:
 
-The production Google transport exposes only `get_file`, `get_document`, and
-`export_docx`; all provider requests in that transport are HTTP GETs. There is no
-`files.create/update/copy`, permission mutation, or `documents.batchUpdate` code in
-Phase 2.
+1. Read Google Docs revision A, export DOCX, and read the revision again; accept the capture only when both opaque revision IDs match.
+2. Re-capture before starting a run and freeze the native hashes, canonical payload, DOCX hash, provider identity, and revision.
+3. Upload that artifact to a fresh SuperDocs session and start an explicitly targeted `ask_every_time` edit.
+4. Persist each proposal and every explicit review decision.
+5. Normalize only approved edits and prove each Google-native range uniquely. Unsupported or ambiguous approved changes stop the entire plan.
+6. Seal the approval lineage, baseline, exact provider requests, and complete expected postimage into a deterministic WritePlan.
+7. Immediately before backup, re-check identity, revision, native hashes, structure, write/copy capabilities, and—on watched runs—the frozen root path and exact-file authorization.
+8. Create a same-parent Drive copy and verify that it is separate, independently readable, structurally equal to the baseline, correctly located, and no broader in effective permissions.
+9. Re-check the source after backup, then submit one native batch update with revision A as `requiredRevisionId`.
+10. Re-read Google Docs and report `WRITE_VERIFIED` only when identity, advanced revision, intended ranges, and the complete canonical postimage all match.
 
-## Requirements
+**If DocRelay cannot prove a mutation is safe, it does not write it.**
 
-- [uv](https://docs.astral.sh/uv/) 0.11 or newer
-- Python 3.12–3.14
-- Node.js 20.9 or newer and npm (only for the unchanged frontend shell)
-- Docker with Compose for PostgreSQL 17
-- A Google Cloud project only when exercising live OAuth/Google reads
+External effects are checkpointed before dispatch. When a backup or write response is lost, DocRelay records an `UNKNOWN` outcome and reconciles observable provider state where that is safe; it does not blindly retry an effect that may already have happened. An unknown backup-copy outcome remains an operator-attention state because there is no proven safe way to discover the exact copy.
 
-## Local setup
+## Concurrency: the failure case we designed for
 
-From this directory:
+```text
+T0  DocRelay reads Google revision A
+T1  SuperDocs prepares edits based on A
+T2  A person edits the Google Doc → revision B
+T3  DocRelay attempts to commit its A-based plan
+```
+
+DocRelay compares the current opaque Google Docs revision before backup and again after backup. The actual write also carries `writeControl.requiredRevisionId = A`, so a last-moment race is rejected by Google rather than converted into a stale overwrite. Revision B remains authoritative.
+
+A conflict is durable and offers only explicit `CANCEL` or `REVIEW_LATEST` choices. Neither choice executes the stale plan; V1 does not perform an automatic merge.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    UI[Next.js review workspace] <--> API[FastAPI REST + MCP]
+    Worker[Workflow / Watch worker] --> Domain[DocRelay domain services]
+    API --> Domain
+    Domain <--> DB[(PostgreSQL workflow and effect state)]
+    Domain <--> Artifacts[(Private baseline / export artifacts)]
+    Domain <--> Google[Google Drive + Docs]
+    Domain <--> SuperDocs[SuperDocs REST API]
+```
+
+FastAPI owns the web and machine interfaces. Domain services own review, mapping, planning, Watch, and write-back policy. PostgreSQL stores workflow transitions, immutable evidence lineage, idempotency keys, scan claims, conflicts, and external-effect outcomes. The worker resumes SuperDocs jobs and claims scheduled Watch scans from the same durable state. The local filesystem artifact store holds hashed baseline and reviewed DOCX files; multi-process deployment requires shared protected durable storage for that directory.
+
+## Why Google Drive + native Google Docs
+
+The V1 provider was selected for the safety primitives it exposes:
+
+- Google Drive is the real cloud source of truth, selected through OAuth and Google Picker.
+- Google Docs exposes an opaque editor revision ID used as concurrency authority.
+- `documents.batchUpdate` supports surgical `deleteContentRange` and `insertText` operations plus `requiredRevisionId` write control.
+- `drive.files.copy` creates an independently addressable backup instead of treating revision history as the backup.
+- Drive metadata exposes the edit/copy capabilities and file authorization needed for fail-closed permission checks.
+
+The implementation does not substitute filenames, paths, `modifiedTime`, or sortable revision assumptions for provider identity and concurrency authority.
+
+## SuperDocs integration
+
+For each cloud revision, DocRelay freezes a freshly captured DOCX and uploads it to a new SuperDocs session. It verifies the returned session/document roster, starts `/chat/async` against that exact document with `approval_mode=ask_every_time`, and persists the job identity before polling.
+
+Pending change batches become durable proposals. DocRelay submits the complete per-item decision set to SuperDocs, handles an explicit continuation prompt when returned, waits for actual job completion, focuses the exact target document, and exports a hashed reviewed DOCX. Restart recovery reconciles the same session/job where provider state can prove the outcome; uncertain upload, paid job-start, review, or focus effects are quarantined rather than casually repeated.
+
+SuperDocs is responsible for document editing, proposals, Review, continuation, and export. DocRelay owns the Google baseline, authorization, mapping proof, backup, guarded write, and post-write verification. The reviewed DOCX is evidence and a downloadable artifact; it is not uploaded wholesale over the Google Doc.
+
+## Review and dry-run
+
+Every current proposal must receive an explicit approve or reject decision. Rejected proposals are retained as review evidence but do not enter the WritePlan. Multiple approved edits can share one plan only when every edit is independently supported and their frozen Google ranges do not overlap; requests are ordered from the highest baseline index to the lowest so variable-length replacements do not invalidate later coordinates.
+
+Dry-run builds or recovers the deterministic MappingProof and WritePlan and returns the exact source revision, mapped ranges, before/after text, planned Google requests, backup action, and verification checks. The dry-run service performs no Google backup or content mutation. SuperDocs processing happens earlier in the workflow and can still consume SuperDocs/model usage even if the user stops after dry-run.
+
+## Structural fidelity
+
+DocRelay makes a programmatic, bounded claim—not a visual claim about arbitrary Google Docs fidelity.
+
+The canonical baseline retains tabs, body structure and indexes, paragraphs, runs and styles, links, lists, tables, headers, footers, footnotes, section/document properties, named styles/ranges, and inline/positioned objects while removing suggestion overlays. Planning applies only the intended range operations to a copy of that frozen canonical value to derive the expected postimage.
+
+After writing, DocRelay fetches the complete native Google document again. Verification requires the expected schema and canonical hash, exact canonical payload equality, new text at every intended range, removal of each old preimage, unchanged provider identity, and an advanced revision. Any unrelated structural difference produces `VERIFICATION_FAILED`, never `WRITE_VERIFIED`.
+
+## Real versioned backup
+
+Before changing the source, DocRelay creates a separate native Google Doc with `drive.files.copy` in the source's proven My Drive parent. It ties the copy to the run/plan through app properties and persists its opaque file ID.
+
+The copy must then be independently readable and prove all of the following: different file identity, native Google Docs MIME type, expected parent, complete canonical equality with the frozen baseline, and effective permissions no broader than the source. A failed or unprovable backup blocks the authoritative write. DocRelay does not mutate ACLs to make a backup pass.
+
+## Watch Mode
+
+```text
+Selected owned My Drive folder
+  → interval scan
+  → recursive, parent-bounded discovery
+  → nearest enabled ancestor rule
+  → one frozen version + one independent run per changed document
+  → SuperDocs proposal and explicit human review
+  → the same dry-run / backup / guarded-write / verification path
+```
+
+Watch supports persisted interval schedules from 60 seconds to 24 hours (five minutes by default), manual scans, paginated recursive discovery, scan leases/recovery, and a configured maximum item count. Rules are immutable versions attached to folders inside the selected root; the nearest enabled ancestor rule wins and is snapshotted onto the discovered document version.
+
+The `(watched item, provider version)` checkpoint and database uniqueness constraints deduplicate repeated or concurrent scans of the same version. Discovery uses the explicit Watch OAuth profile (`openid + drive.file + drive.readonly`), stays within an owned My Drive root, and rejects Shared Drives, shared-with-me roots, cycles, duplicate identities, incomplete searches, and items that move during capture.
+
+Watch never implies approval or write authority. It creates independent runs that surface for human review. Because read-only folder discovery does not grant `drive.file` write authority, each watched source must be selected/confirmed through Picker before backup or write-back, and the entire frozen root path is revalidated at the commit boundary.
+
+## Machine interface
+
+FastAPI exposes compact REST resources under `/api/v1` for Google connections/sources, runs, review, dry-run, authorization, conflict decisions, export, and Watch. Development OpenAPI is available at `/api/docs`.
+
+The same application services are mounted as a stateless Streamable HTTP MCP server at `/mcp`. MCP can inspect scans/runs, submit explicit review decisions, prepare dry-runs, verify exact-file authorization, invoke write-back, resolve conflicts, and retrieve reviewed-export metadata. It cannot bypass the same review lineage, authorization, backup, revision, or verification gates used by the UI and REST API.
+
+## Multi-document
+
+“Multi-document” currently means a Watch scan can discover and track many documents, create one durable independent run per eligible document version, and present grouped scan/root summaries. Runs do not share approval or write state, so one document's conflict or failure does not corrupt a sibling run.
+
+There is no cross-document reasoning, shared SuperDocs multi-document editing session, batch approval, or batch write. Each source is ingested into its own SuperDocs session and committed independently. This keeps cloud revision and human-review authority unambiguous.
+
+## Tech stack
+
+| Layer | Main technologies |
+|---|---|
+| Backend | Python 3.12+, FastAPI, Pydantic, SQLAlchemy async, Alembic |
+| Durable state | PostgreSQL 17; private filesystem artifact store |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, shadcn/Radix components |
+| Integrations | Google Drive API, Google Docs API, Google Picker/GIS, SuperDocs REST API |
+| Machine interface | REST/OpenAPI and MCP Streamable HTTP |
+
+## Quick start
+
+### Prerequisites
+
+- Python 3.12–3.14 and [uv](https://docs.astral.sh/uv/)
+- Node.js 20.9+ and npm
+- Docker with Compose
+- A SuperDocs API key for edit/review/export workflows
+- A Google Cloud project for real Google selection and write-back
+
+### 1. Configure the environment
+
+```bash
+cp .env.example backend/.env
+cp frontend/.env.local.example frontend/.env.local
+```
+
+Fill in the documented placeholders; never put server secrets in `frontend/.env.local`.
+
+For Google, enable the Drive, Docs, and Picker APIs. Create a Web application OAuth client with this local redirect URI:
+
+```text
+http://localhost:8000/api/v1/google/oauth/callback
+```
+
+Generate a Fernet keyring for encrypted server-side OAuth credential storage:
+
+```bash
+cd backend
+uv run python -c 'import json; from cryptography.fernet import Fernet; print(json.dumps({"v1": Fernet.generate_key().decode()}))'
+```
+
+Place the generated value in `OAUTH_TOKEN_ENCRYPTION_KEYS` in `backend/.env`. The frontend additionally needs the public OAuth client ID, a browser-restricted Picker API key, and the Google Cloud project number.
+
+### 2. Start PostgreSQL and migrate
+
+From the repository root:
 
 ```bash
 docker compose up -d postgresql
-cp .env.example backend/.env
 
 cd backend
 uv sync --all-groups
 uv run alembic upgrade head
+```
+
+### 3. Start the backend and worker
+
+Backend terminal, from `backend/`:
+
+```bash
 uv run uvicorn docrelay.main:app --reload --port 8000
 ```
 
-Run the database-backed Phase 3 poller in a second process when desired:
+Worker terminal, also from `backend/`:
 
 ```bash
 uv run python -m docrelay.worker
 ```
 
-The API and worker must use the same `DOCRELAY_ARTIFACT_DIR`. The default private
-local store is `backend/.docrelay-artifacts/`, which is ignored by Git. A deployed
-multi-process installation must place it on appropriately protected shared durable
-storage.
+The worker resumes SuperDocs jobs and scheduled Watch scans. API and worker must share `DATABASE_URL` and `DOCRELAY_ARTIFACT_DIR`.
 
-The backend runs without Google configuration; Google status then reports
-`oauth_configured: false`. Health endpoints are `GET /health/live` and
-`GET /health/ready`; development OpenAPI is at `/api/docs`.
+### 4. Start the frontend
 
-The unchanged frontend shell can still be started separately with `npm ci` and
-`npm run dev` from `frontend/`.
-
-## Google Cloud and OAuth setup
-
-1. Create or select a Google Cloud project.
-2. Enable the **Google Drive API** and **Google Docs API**. Google Picker API will be
-   needed by the separately implemented frontend selection flow.
-3. Configure the OAuth consent screen. For an External app in Testing, add the
-   synthetic/public-safe Google account under **Test users**.
-4. Create an OAuth client of type **Web application**.
-5. Add this exact authorized redirect URI for local development:
-
-   ```text
-   http://localhost:8000/api/v1/google/oauth/callback
-   ```
-
-6. Generate an application encryption keyring outside source control:
-
-   ```bash
-   cd backend
-   uv run python -c 'import json; from cryptography.fernet import Fernet; print(json.dumps({"v1": Fernet.generate_key().decode()}))'
-   ```
-
-7. Set these together in `backend/.env`:
-
-   ```dotenv
-   GOOGLE_OAUTH_CLIENT_ID=your-web-client-id.apps.googleusercontent.com
-   GOOGLE_OAUTH_CLIENT_SECRET=your-web-client-secret
-   GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/api/v1/google/oauth/callback
-   OAUTH_TOKEN_ENCRYPTION_KEYS={"v1":"your-generated-fernet-key"}
-   OAUTH_TOKEN_ENCRYPTION_PRIMARY_VERSION=v1
-   DOCRELAY_OWNER_SUBJECT=your-stable-application-user-subject
-   ```
-
-Start authorization by opening:
-
-```text
-http://localhost:8000/api/v1/google/oauth/authorize
+```bash
+cd frontend
+npm ci
+npm run dev
 ```
 
-The callback returns a safe connection response. It never returns the access token,
-refresh token, client secret, stored Google principal subject, or raw credential.
-The one-time callback `state` is hashed in PostgreSQL, paired with a hashed HttpOnly
-browser nonce, expires after 10 minutes, and carries an encrypted PKCE verifier.
-Authorization-code query parameters are redacted from the access log.
+Open [http://localhost:3000](http://localhost:3000). Backend liveness/readiness are available at `/health/live` and `/health/ready` on port 8000.
 
-OAuth and token behavior follows Google's [web-server OAuth
-flow](https://developers.google.com/identity/protocols/oauth2/web-server), [OAuth
-security practices](https://developers.google.com/identity/protocols/oauth2/resources/best-practices),
-and [OpenID Connect subject guidance](https://developers.google.com/identity/openid-connect/reference).
-Redirect URI matching is exact. Offline access and consent are requested so Google
-can issue a server-side refresh token. Refresh-token `invalid_grant` transitions the
-connection to `REAUTH_REQUIRED` and removes unusable local credentials. Disconnect
-revokes with Google before removing the encrypted local credential.
+## Configuration
 
-## Scope decision
+See [`.env.example`](.env.example) and [`frontend/.env.local.example`](frontend/.env.local.example) for public-safe starter templates. Variables omitted from the templates use the defaults documented in `backend/src/docrelay/core/config.py`.
 
-The current scopes are exactly:
-
-```text
-openid
-https://www.googleapis.com/auth/drive.file
-```
-
-- **GOOGLE DOCUMENTED:** `openid` permits retrieval of the stable, opaque Google
-  `sub`. DocRelay persists that subject and deliberately does not request or persist
-  email/profile data.
-- **GOOGLE DOCUMENTED:** Google's current [Drive scope
-  guidance](https://developers.google.com/workspace/drive/api/guides/api-specific-auth)
-  recommends the non-sensitive `drive.file` scope with Google Picker for
-  user-selected/app-authorized files. It avoids the restricted broad Drive scopes
-  and their additional verification/security-assessment burden.
-- **GOOGLE DOCUMENTED:** [Google Picker requires an access
-  token](https://developers.google.com/workspace/drive/picker/guides/web-picker).
-  Picker uses a separate browser-memory GIS token and sends only the selected opaque
-  file ID to the backend. The backend exposes no token and provides no Drive-wide
-  listing.
-- **INFERENCE (fail-closed):** official documentation found for this phase does not
-  guarantee that selecting a folder with `drive.file` grants durable access to
-  **future manually added descendants**. DocRelay therefore makes no watch-mode
-  claim. A staged broader scope will be considered only after the documented live
-  experiment proves it necessary. Watcher/folder execution is not implemented.
-
-Although `drive.file` technically allows changes to individually authorized files,
-least privilege is also enforced at the application boundary: the production Google
-transport still constructs no Google content mutation request.
-
-## Credential storage
-
-Google credentials are serialized only inside a versioned application envelope and
-authenticated-encrypted with Fernet. PostgreSQL stores ciphertext, a non-secret key
-version, and expiry timestamps; the encryption keys exist only in environment
-configuration. Ciphertext is context-bound to the connection UUID, preventing a row
-from being substituted onto another connection.
-
-For key rotation, add a new key version, make it
-`OAUTH_TOKEN_ENCRYPTION_PRIMARY_VERSION`, and retain the old key until existing rows
-have been refreshed/reconnected and re-encrypted. Normal token refresh updates the
-encrypted payload and supports refresh-token rotation. This is intentionally a small
-application encryption boundary, not a local imitation of KMS.
-
-## Backend API
-
-| Method and path | Behavior |
+| Group | Important variables |
 |---|---|
-| `GET /api/v1/google/connections` | Safe configuration and connection lifecycle status. |
-| `GET /api/v1/google/oauth/authorize` | Persists state/PKCE evidence and redirects to Google. |
-| `GET /api/v1/google/oauth/callback` | Validates state/browser binding, exchanges the code, resolves opaque `sub`, and stores encrypted credentials. |
-| `POST /api/v1/google/connections/{connection_id}/disconnect` | Revokes and disconnects the connection. |
-| `POST /api/v1/google/connections/{connection_id}/sources` | Validates one explicitly authorized native Google Doc ID and captures an A → DOCX → A baseline. |
-| `POST /api/v1/runs` | Starts or deduplicates one SuperDocs edit intent for a selected immutable baseline. |
-| `GET /api/v1/runs/{run_id}` | Returns durable stage/session/document/job/review/export status. |
-| `POST /api/v1/runs/{run_id}/resume` | Reconciles/polls the same persisted job and advances one safe step. |
-| `GET /api/v1/runs/{run_id}/proposals` | Lists immutable proposals and decisions across review rounds. |
-| `POST /api/v1/runs/{run_id}/decisions` | Submits one complete explicit per-proposal decision set. |
-| `POST /api/v1/runs/{run_id}/continue` | Resolves only a real `continue_prompt` gate. |
-| `GET /api/v1/runs/{run_id}/export` | Returns safe reviewed artifact metadata, never document bytes. |
+| Database/runtime | `DATABASE_URL`, `DOCRELAY_ARTIFACT_DIR`, `DOCRELAY_OWNER_SUBJECT`, `APP_ENV`, `LOG_LEVEL` |
+| SuperDocs | `SUPERDOCS_API_KEY`, `SUPERDOCS_API_BASE`, `SUPERDOCS_HTTP_TIMEOUT_SECONDS`, `PHASE3_WORKER_POLL_SECONDS` |
+| Google server | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI`, `OAUTH_TOKEN_ENCRYPTION_KEYS`, `OAUTH_TOKEN_ENCRYPTION_PRIMARY_VERSION` |
+| Frontend/Picker | `NEXT_PUBLIC_DOCRELAY_API_URL`, `NEXT_PUBLIC_GOOGLE_OAUTH_CLIENT_ID`, `NEXT_PUBLIC_GOOGLE_PICKER_API_KEY`, `NEXT_PUBLIC_GOOGLE_CLOUD_PROJECT_NUMBER` |
+| Browser/MCP policy | `CORS_ORIGINS`, `MCP_ALLOWED_HOSTS`, `MCP_ALLOWED_ORIGINS` |
+| Watch bounds | `WATCH_WORKER_CLAIM_LIMIT`, `WATCH_SCAN_LEASE_SECONDS`, `WATCH_MAX_ITEMS_PER_SCAN` |
 
-Example source registration after the file has been explicitly authorized:
+The normal single-file OAuth profile requests `openid + drive.file`. Enabling Watch requires a separate explicit authorization profile that adds the restricted `drive.readonly` scope. OAuth credentials are stored server-side in an authenticated-encrypted envelope; browser Picker tokens remain in memory and are not sent to the backend.
 
-```bash
-curl -X POST http://localhost:8000/api/v1/google/connections/CONNECTION_UUID/sources \
-  -H 'Content-Type: application/json' \
-  -d '{"file_id":"OPAQUE_GOOGLE_FILE_ID"}'
-```
+## Testing
 
-The response contains safe identity, capability, parent, revision, hash, size,
-canonicalizer-version, timestamp, and attempt evidence. It excludes native document
-content, DOCX bytes, and credentials. Only native Google Docs with MIME type
-`application/vnd.google-apps.document` are accepted; PDFs, uploaded DOCX files,
-Sheets, Slides, and arbitrary Drive types fail as `UNSUPPORTED_SOURCE_TYPE`.
+### Deterministic/local tests
 
-Provider errors are classified into reauthorization, permission denied, file not
-found, unsupported/trashed source, changed-during-capture, rate limited, unavailable,
-and invalid-response outcomes. Provider bodies, authorization headers, document
-bodies, and DOCX bytes are not logged.
-
-Starting a run requires the source UUID and immutable capture UUID returned by source
-registration. DocRelay repeats the read-only `A → DOCX → A` capture and requires the
-opaque revision plus native raw/canonical hashes to match before sending bytes to
-SuperDocs. The newly exported per-run DOCX bytes are then frozen in the private
-artifact store; Google DOCX packages are not assumed byte-reproducible across export
-requests:
-
-```bash
-curl -X POST http://localhost:8000/api/v1/runs \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "source_id":"SOURCE_UUID",
-    "baseline_capture_id":"CAPTURE_UUID",
-    "instruction":"Change 45 days to 30 days and nothing else."
-  }'
-```
-
-Review decisions use local immutable proposal UUIDs. The submitted set must equal the
-entire current proposal set; omissions and duplicates are rejected before any
-provider call. `changes_summary` is not used as the approval ledger or a completion
-signal.
-
-## Tests
-
-Deterministic checks do not require Google credentials:
+These checks use fakes or SQLite where appropriate and require no Google or SuperDocs credentials:
 
 ```bash
 cd backend
@@ -271,70 +278,97 @@ uv run pytest -m 'not live_google and not live_superdocs and not postgresql'
 uv run ruff check src tests alembic
 uv run ruff format --check src tests alembic
 uv run mypy src
+
+cd ../frontend
+npm test
+npm run typecheck
+npm run lint
 ```
 
-Run the real PostgreSQL integration test after `docker compose up -d postgresql`:
+The deterministic suite covers zero-mutation dry-run, complete/mixed review, unique and multi-approved mapping, stale revisions before/after backup and at the atomic guard, backup/ACL failure, unknown outcomes, restart and concurrent execution, exact postimage verification, Watch scheduling/deduplication/path movement, and REST/MCP gate parity.
+
+Run PostgreSQL-specific constraints, indexes, JSONB, and immutable-trigger verification after starting the Compose service:
 
 ```bash
+cd backend
 DOCRELAY_TEST_POSTGRES_URL=postgresql+asyncpg://docrelay:docrelay@localhost:5432/docrelay \
   uv run pytest -m postgresql
 ```
 
-It verifies JSONB operators/types, constraints, indexes, the immutable baseline and
-reviewed-export triggers, and an actually rejected evidence update.
+### Live integration verification
 
-### Opt-in live Google test
+Live checks are opt-in and must use synthetic/public-safe files. Complete backend OAuth first; the tests take persisted UUIDs and opaque file IDs, never copied access tokens.
 
-Use only synthetic/public-safe files. Complete the backend OAuth flow first and use
-the persisted connection UUID. With an explicitly app-authorized native Google Doc
-and an explicitly app-authorized unsupported file, run:
+Read/capture Google verification:
 
 ```bash
+cd backend
 DOCRELAY_RUN_LIVE_GOOGLE=1 \
 DOCRELAY_LIVE_GOOGLE_CONNECTION_ID=connection-uuid \
 DOCRELAY_LIVE_GOOGLE_FILE_ID=native-google-doc-id \
-DOCRELAY_LIVE_GOOGLE_UNSUPPORTED_FILE_ID=unsupported-drive-file-id \
-uv run pytest -m live_google
+DOCRELAY_LIVE_GOOGLE_UNSUPPORTED_FILE_ID=unsupported-file-id \
+uv run pytest -q tests/test_google_live.py
 ```
 
-Add `DOCRELAY_LIVE_FORCE_REFRESH=1` to observe a real refresh through the persisted
-server credential. The test accepts no copied access token and never mutates Google
-content. Normal test runs skip this module.
-
-### Opt-in live Phase 3 proof
-
-The single bounded proof uses an already registered synthetic Google Doc whose
-selected baseline contains `45 days`. It performs one SuperDocs edit job,
-reconstructs the local orchestration service while review is pending, explicitly
-approves the sole proposal, exports, and checks the DOCX XML for `30 days` and absence
-of `45 days`:
+SuperDocs upload → review → restart recovery → export verification:
 
 ```bash
 DOCRELAY_RUN_LIVE_SUPERDOCS=1 \
 DOCRELAY_LIVE_GOOGLE_SOURCE_ID=source-uuid \
 DOCRELAY_LIVE_GOOGLE_BASELINE_CAPTURE_ID=capture-uuid \
-uv run pytest -q -m live_superdocs
+uv run pytest -q tests/test_superdocs_live.py
 ```
 
-The test refuses to run without the opt-in flag and both opaque IDs. It never calls a
-Google mutation endpoint.
+Bounded real Google backup/write and stale-conflict verification:
 
-## Canonicalization
+```bash
+DOCRELAY_RUN_LIVE_PHASE6=1 \
+DOCRELAY_LIVE_PHASE6_SUCCESS_FILE_ID=dedicated-success-google-doc-id \
+DOCRELAY_LIVE_PHASE6_CONFLICT_FILE_ID=dedicated-conflict-google-doc-id \
+uv run pytest -q tests/test_phase6_live.py
+```
 
-`docrelay.google-native-canonical.v1` is a provider-specific baseline representation,
-not a generic editor AST. It retains tab identity/hierarchy, structural indexes,
-paragraphs/runs/styles/links/lists, tables, headers, footers, footnotes,
-document/section properties, named styles/ranges, and inline/positioned objects while
-removing suggestion overlays. Both raw-native and canonical SHA-256 hashes are
-recorded, along with the DOCX SHA-256 and byte size. Raw provider bodies and DOCX
-bytes are not persisted by the Phase 2 baseline table.
+This test intentionally requires two dedicated synthetic native Google Docs: it creates a real backup, writes the success document, and simulates a concurrent edit in the conflict document. The repository records a live single-replacement success and stale-write rejection. Live Watch restricted-scope discovery and live multi-approved write remain manual/pending evidence.
 
-## Not implemented
+## Supported scope and limitations
 
-- reliable watched-folder discovery or scheduling;
-- mapping/compiler or WritePlan generation runtime;
-- provider backup, Google writes, permissions changes, or `batchUpdate`;
-- folder watcher/rule execution, MCP, polished review UI, or deployment.
+DocRelay deliberately prefers a bounded proven write subset over best-effort mutation of arbitrary Google Docs structure.
 
-These are deliberate phase boundaries. Phase 3 stops at the reviewed SuperDocs
-artifact and does not begin provider-native mapping.
+- V1 targets explicitly authorized native Google Docs in My Drive-compatible locations with one provable parent; Watch roots must be owned My Drive folders. Uploaded DOCX/PDF, Sheets, Slides, Shared Drives, shared-with-me Watch roots, and multi-parent/ambiguous backup destinations are not write-back targets.
+- A writable replacement must be a unique internal ordinary-ASCII text span in a top-level `NORMAL_TEXT`, non-list body paragraph represented by one plain text run, with no formatting delta. Variable UTF-16 lengths and multiple non-overlapping approved replacements are supported.
+- Heading/title edits, tables, lists, headers/footers, multi-run or styled-span edits, creates/appends/deletes, non-ASCII replacements, overlapping ranges, and ambiguous repeated preimages fail closed. Those structures are still retained and compared during post-write verification.
+- The document preview is a read-only rendering of the frozen canonical source, not a replacement Google Docs editor and not visual fidelity proof.
+- Watch requires the restricted `drive.readonly` scope for unattended discovery. The code enforces a selected owned-root boundary, but production use still requires the applicable Google verification, security, privacy, and retention work; the live restricted-scope descendant-discovery proof remains pending.
+- Watch deduplicates an already-enqueued provider version. It does not currently persist a dedicated suppression marker for the new provider version created by DocRelay's own successful write, so post-write self-trigger suppression is not claimed.
+- Watched documents require exact-file Picker authorization before write-back because discovery authority is not write authority.
+- Multi-document support is multiple independent document runs and grouped summaries, not cross-document reasoning or a shared SuperDocs session.
+- The UI conversation is reconstructed from durable instructions and run outcomes; it is not a general free-form chat history independent of document runs.
+- Outcome-uncertain provider and SuperDocs effects are reconciled or quarantined, never assumed successful and never automatically repeated without proof. An unknown backup copy requires operator attention.
+- Application-user authentication, tenant isolation, role-based access control, and a production authorization boundary are not implemented. `DOCRELAY_OWNER_SUBJECT` models one trusted application owner for this vertical slice.
+- The default artifact store is local disk. Multiple processes or hosts require a protected shared durable artifact directory.
+
+## Engineering trade-offs
+
+1. **Cloud remains authoritative.** Each new cloud revision starts from a fresh capture and SuperDocs ingestion; neither the local preview nor SuperDocs durable state replaces Google.
+2. **Native surgical writes over file replacement.** DocRelay compiles exact ranges to Google Docs operations and never falls back to global text replacement or whole-document upload.
+3. **Proof before breadth.** Unsupported structure stops planning instead of widening the mapper heuristically.
+4. **Durable effects over in-memory orchestration.** PostgreSQL checkpoints intent before external calls so restart recovery can reconcile instead of guess.
+5. **Human approval before mutation.** Watch and machine interfaces can discover and prepare work, but cannot turn discovery into implicit approval.
+6. **Unknown is a first-class outcome.** An ambiguous external response is safer as attention/reconciliation state than as an automatic retry.
+
+## Repository layout
+
+```text
+backend/
+  src/docrelay/        FastAPI, domain services, provider adapters, MCP, worker
+  alembic/             PostgreSQL schema and immutable-evidence migrations
+  tests/               deterministic, PostgreSQL, and opt-in live verification
+frontend/
+  app/                 Next.js workspace, Watch, runs, review, and write-back UI
+  __tests__/           Vitest interaction and safety-state coverage
+docker-compose.yml     local PostgreSQL 17
+```
+
+## Built for the SuperDocs Engineer Task
+
+Built by Omkar Bansod for the SuperDocs Engineer Task. This submission implements the assigned **Cloud-storage knowledge sync with write-back** use case: real Google cloud reads, SuperDocs-assisted reviewed edits, recoverable backup, guarded same-document write-back, structural verification, scheduled folder discovery, and human/machine control surfaces—with the bounded scope and remaining live-proof conditions documented above.
