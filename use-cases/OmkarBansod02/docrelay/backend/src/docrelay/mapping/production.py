@@ -4,7 +4,7 @@ from copy import deepcopy
 from datetime import datetime
 from enum import StrEnum
 from html.parser import HTMLParser
-from typing import Any, Literal, NoReturn, Self
+from typing import Any, Literal, NoReturn, Self, cast
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
@@ -26,11 +26,39 @@ from docrelay.domain.write_plan import (
 )
 from docrelay.integrations.google.canonical import sha256_json
 
-MAPPER_VERSION = "docrelay.google-plain-text-mapper.v3"
-COMPILER_VERSION = "docrelay.google-write-plan-compiler.v3"
+MAPPER_VERSION = "docrelay.google-supported-block-mapper.v4"
+COMPILER_VERSION = "docrelay.google-write-plan-compiler.v4"
 MAPPING_SCHEMA_VERSION = "docrelay.mapping-proof.v1"
 VERIFIER_VERSION = "docrelay.google-native-canonical.v2"
 _ASCII_PLAIN_TEXT = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*")
+_SUPPORTED_REVIEW_BLOCK_TAGS = frozenset({"p", "h1", "h2", "h3", "h4", "h5", "h6"})
+_BENIGN_REVIEW_WRAPPER_TAGS = frozenset({"div", "section"})
+_SUPPORTED_NAMED_STYLES = frozenset(
+    {
+        "NORMAL_TEXT",
+        "TITLE",
+        "SUBTITLE",
+        "HEADING_1",
+        "HEADING_2",
+        "HEADING_3",
+        "HEADING_4",
+        "HEADING_5",
+        "HEADING_6",
+    }
+)
+
+type SupportedNamedStyle = Literal[
+    "NORMAL_TEXT",
+    "TITLE",
+    "SUBTITLE",
+    "HEADING_1",
+    "HEADING_2",
+    "HEADING_3",
+    "HEADING_4",
+    "HEADING_5",
+    "HEADING_6",
+]
+type ReviewBlockSignature = tuple[tuple[str, tuple[tuple[str, str | None], ...]], ...]
 
 
 class MappingFailureCode(StrEnum):
@@ -174,11 +202,25 @@ class ProviderLocation(_FrozenModel):
     edit_end_index: int = Field(gt=0)
 
 
-class StructuralEligibility(_FrozenModel):
+class LegacyStructuralEligibility(_FrozenModel):
     one_root_tab: Literal[True] = True
     body_segment: Literal[True] = True
     top_level_paragraph: Literal[True] = True
     normal_text: Literal[True] = True
+    non_list: Literal[True] = True
+    one_plain_text_run: Literal[True] = True
+    no_formatting_delta: Literal[True] = True
+    internal_ascii_token: Literal[True] = True
+    equal_utf16_length: bool
+    exact_preimage: Literal[True] = True
+    minimum_range: Literal[True] = True
+
+
+class StructuralEligibility(_FrozenModel):
+    one_root_tab: Literal[True] = True
+    body_segment: Literal[True] = True
+    top_level_paragraph: Literal[True] = True
+    supported_named_style: SupportedNamedStyle
     non_list: Literal[True] = True
     one_plain_text_run: Literal[True] = True
     no_formatting_delta: Literal[True] = True
@@ -198,7 +240,7 @@ class MappedReplacement(_FrozenModel):
     new_paragraph_sha256: Sha256
     location: ProviderLocation
     candidate_count: Literal[1] = 1
-    eligibility: StructuralEligibility
+    eligibility: LegacyStructuralEligibility | StructuralEligibility
 
 
 class MappingProofPayload(_FrozenModel):
@@ -207,7 +249,8 @@ class MappingProofPayload(_FrozenModel):
         "docrelay.google-plain-token-mapper.v1",
         "docrelay.google-plain-text-mapper.v2",
         "docrelay.google-plain-text-mapper.v3",
-    ] = "docrelay.google-plain-text-mapper.v3"
+        "docrelay.google-supported-block-mapper.v4",
+    ] = "docrelay.google-supported-block-mapper.v4"
     status: Literal["SUPPORTED"] = "SUPPORTED"
     status_reason: Literal[
         "ALL_V1_CONSTRAINTS_PASSED",
@@ -229,7 +272,7 @@ class MappingProofPayload(_FrozenModel):
     location: ProviderLocation
     replacements: tuple[MappedReplacement, ...] = Field(min_length=1)
     candidate_count: Literal[1] = 1
-    eligibility: StructuralEligibility
+    eligibility: LegacyStructuralEligibility | StructuralEligibility
 
     @model_validator(mode="after")
     def replacements_match_singular_fields(self) -> Self:
@@ -289,43 +332,61 @@ class SealedMappingProof(_FrozenModel):
         )
 
 
-class _ParagraphParser(HTMLParser):
+class _SupportedBlockParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.attrs: tuple[tuple[str, str | None], ...] | None = None
+        self.signature: list[tuple[str, tuple[tuple[str, str | None], ...]]] = []
         self.parts: list[str] = []
-        self.inside = False
-        self.closed = False
+        self.stack: list[str] = []
+        self.block_count = 0
+        self.block_closed = False
         self.invalid = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "p" or self.inside or self.attrs is not None or self.closed:
+        if len({name for name, _ in attrs}) != len(attrs) or self.block_closed:
             self.invalid = True
             return
-        if len({name for name, _ in attrs}) != len(attrs):
+        normalized_attrs = tuple(sorted(attrs))
+        if tag in _BENIGN_REVIEW_WRAPPER_TAGS:
+            if self.block_count or any(item in _SUPPORTED_REVIEW_BLOCK_TAGS for item in self.stack):
+                self.invalid = True
+                return
+        elif tag in _SUPPORTED_REVIEW_BLOCK_TAGS:
+            if self.block_count or any(item in _SUPPORTED_REVIEW_BLOCK_TAGS for item in self.stack):
+                self.invalid = True
+                return
+            self.block_count = 1
+        else:
             self.invalid = True
             return
-        self.attrs = tuple(sorted(attrs))
-        self.inside = True
+        self.signature.append((tag, normalized_attrs))
+        self.stack.append(tag)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.invalid = True
 
     def handle_endtag(self, tag: str) -> None:
-        if tag != "p" or not self.inside or self.closed:
+        if not self.stack or self.stack[-1] != tag:
             self.invalid = True
             return
-        self.inside = False
-        self.closed = True
+        self.stack.pop()
+        if tag in _SUPPORTED_REVIEW_BLOCK_TAGS:
+            self.block_closed = True
 
     def handle_data(self, data: str) -> None:
-        if not self.inside:
-            if data:
+        if not any(item in _SUPPORTED_REVIEW_BLOCK_TAGS for item in self.stack):
+            if data.strip():
                 self.invalid = True
             return
         self.parts.append(data)
 
     def handle_comment(self, data: str) -> None:
+        self.invalid = True
+
+    def handle_decl(self, decl: str) -> None:
+        self.invalid = True
+
+    def handle_pi(self, data: str) -> None:
         self.invalid = True
 
     def unknown_decl(self, data: str) -> None:
@@ -354,12 +415,12 @@ def normalize_reviewed_change(proposal: ReviewedProposal) -> SemanticReplacement
             "proposal lacks strict edit evidence",
         )
 
-    old_attrs, old_paragraph = _parse_plain_paragraph(proposal.old_html)
-    new_attrs, new_paragraph = _parse_plain_paragraph(proposal.new_html)
-    if old_attrs != new_attrs:
+    old_signature, old_paragraph = _parse_supported_block(proposal.old_html)
+    new_signature, new_paragraph = _parse_supported_block(proposal.new_html)
+    if old_signature != new_signature:
         raise MappingFailure(
             MappingFailureCode.FORMATTING_DELTA,
-            "paragraph attributes changed",
+            "proposal block structure or attributes changed",
         )
     prefix_length = 0
     maximum_prefix = min(len(old_paragraph), len(new_paragraph))
@@ -498,10 +559,13 @@ def map_replacement(
             candidate_count=1,
         )
     style = paragraph.get("paragraphStyle")
-    if not isinstance(style, dict) or style.get("namedStyleType") != "NORMAL_TEXT":
+    if not isinstance(style, dict):
+        _malformed("paragraph style is malformed")
+    named_style = style.get("namedStyleType")
+    if named_style not in _SUPPORTED_NAMED_STYLES:
         raise MappingFailure(
             MappingFailureCode.UNSUPPORTED_PARAGRAPH_STYLE,
-            "paragraph is not ordinary NORMAL_TEXT",
+            "paragraph named style is outside the supported text-bearing set",
             candidate_count=1,
         )
     if paragraph.get("positionedObjectIds") not in (None, []):
@@ -580,7 +644,8 @@ def map_replacement(
         edit_end_index=edit_end,
     )
     eligibility = StructuralEligibility(
-        equal_utf16_length=_utf16_length(change.old_text) == _utf16_length(change.new_text)
+        supported_named_style=cast(SupportedNamedStyle, named_style),
+        equal_utf16_length=_utf16_length(change.old_text) == _utf16_length(change.new_text),
     )
     mapped = MappedReplacement(
         lineage=lineage,
@@ -1024,8 +1089,8 @@ def _apply_one_splice(
     )
 
 
-def _parse_plain_paragraph(html: str) -> tuple[tuple[tuple[str, str | None], ...], str]:
-    parser = _ParagraphParser()
+def _parse_supported_block(html: str) -> tuple[ReviewBlockSignature, str]:
+    parser = _SupportedBlockParser()
     try:
         parser.feed(html)
         parser.close()
@@ -1034,14 +1099,21 @@ def _parse_plain_paragraph(html: str) -> tuple[tuple[tuple[str, str | None], ...
             MappingFailureCode.MALFORMED_REVIEW_HTML,
             "proposal HTML is malformed",
         ) from exc
-    if parser.invalid or parser.inside or not parser.closed or parser.attrs is None:
+    if parser.invalid or parser.stack or not parser.block_closed or parser.block_count != 1:
         code = (
             MappingFailureCode.FORMATTING_DELTA
-            if "<" in html and html.lstrip().startswith("<p")
+            if "<" in html
+            and any(
+                html.lstrip().lower().startswith(f"<{tag}") for tag in _SUPPORTED_REVIEW_BLOCK_TAGS
+            )
             else MappingFailureCode.MALFORMED_REVIEW_HTML
         )
-        raise MappingFailure(code, "proposal must contain one plain paragraph")
-    return parser.attrs, "".join(parser.parts)
+        raise MappingFailure(
+            code,
+            "DocRelay can safely write text changes to a single supported paragraph or "
+            "heading. This proposal changes unsupported document structure.",
+        )
+    return tuple(parser.signature), "".join(parser.parts)
 
 
 def _one_root_tab(

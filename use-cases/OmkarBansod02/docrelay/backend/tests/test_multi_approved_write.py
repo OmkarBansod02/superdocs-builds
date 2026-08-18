@@ -586,7 +586,9 @@ async def _seed_run(
                 ),
                 warnings=[],
                 final_version_id="final-a",
-                exported_at=NOW,
+                # Production plans expire 24 hours after export. Keep the integration
+                # fixture current instead of coupling it to the historical proof timestamp.
+                exported_at=datetime.now(UTC),
             )
         )
         await session.commit()

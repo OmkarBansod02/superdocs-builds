@@ -12,7 +12,9 @@ from docrelay.mapping.production import (
     BaselineSnapshot,
     MappingFailure,
     MappingFailureCode,
+    MappingProofPayload,
     ReviewedProposal,
+    SealedMappingProof,
     compile_write_plan,
     map_replacement,
     normalize_reviewed_change,
@@ -30,6 +32,7 @@ def _paragraph(
     start: int = 162,
     bullet: dict[str, str] | None = None,
     runs: list[dict[str, object]] | None = None,
+    paragraph_style: dict[str, object] | None = None,
 ) -> dict[str, object]:
     content = f"{text}\n"
     end = start + len(content.encode("utf-16-le")) // 2
@@ -37,7 +40,7 @@ def _paragraph(
         "startIndex": start,
         "endIndex": end,
         "type": "paragraph",
-        "paragraphStyle": {"namedStyleType": "NORMAL_TEXT"},
+        "paragraphStyle": paragraph_style or {"namedStyleType": "NORMAL_TEXT"},
         "bullet": bullet,
         "positionedObjectIds": [],
         "runs": runs
@@ -194,6 +197,26 @@ def test_approved_unique_supported_replacement_produces_exact_proof_and_plan() -
     }
 
 
+def test_legacy_normal_text_mapping_proof_shape_keeps_its_integrity_round_trip() -> None:
+    _, _, current = _supported_mapping()
+    legacy_payload = current.payload.model_dump(mode="json")
+    legacy_payload["mapper_version"] = "docrelay.google-plain-text-mapper.v3"
+    legacy_eligibility = {
+        key: value
+        for key, value in legacy_payload["eligibility"].items()
+        if key != "supported_named_style"
+    }
+    legacy_eligibility["normal_text"] = True
+    legacy_payload["eligibility"] = legacy_eligibility
+    legacy_payload["replacements"][0]["eligibility"] = legacy_eligibility
+
+    sealed = SealedMappingProof.seal(MappingProofPayload.model_validate(legacy_payload))
+    round_tripped = SealedMappingProof.model_validate(sealed.model_dump(mode="json"))
+
+    assert round_tripped == sealed
+    assert "supported_named_style" not in sealed.payload.eligibility.model_dump(mode="json")
+
+
 @pytest.mark.parametrize(
     ("old_value", "new_value", "delta"),
     [
@@ -242,6 +265,73 @@ def test_variable_length_replacement_shifts_complete_trailing_postimage(
     expected_body[1]["runs"][0]["endIndex"] += delta
     assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
     assert expected_body[1]["runs"][0]["text"] == "Trailing content stays exact.\n"
+
+
+@pytest.mark.parametrize(
+    ("named_style", "html_tag"),
+    [
+        ("TITLE", "h1"),
+        ("SUBTITLE", "h2"),
+        ("HEADING_1", "h1"),
+        ("HEADING_2", "h2"),
+        ("HEADING_3", "h3"),
+        ("HEADING_4", "h4"),
+        ("HEADING_5", "h5"),
+        ("HEADING_6", "h6"),
+    ],
+)
+def test_supported_named_style_replacement_preserves_complete_paragraph_metadata(
+    named_style: str, html_tag: str
+) -> None:
+    old_heading = "DocRelay Contract 45 Draft"
+    new_heading = "DocRelay Contract 30 Draft"
+    paragraph_style = {
+        "namedStyleType": named_style,
+        "headingId": "h.stable-provider-id",
+        "direction": "LEFT_TO_RIGHT",
+        "keepWithNext": True,
+    }
+    target = _paragraph(old_heading, start=10, paragraph_style=paragraph_style)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(
+            old_html=f'<{html_tag} data-chunk-id="same">{old_heading}</{html_tag}>',
+            new_html=f'<{html_tag} data-chunk-id="same">{new_heading}</{html_tag}>',
+        )
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert proof.payload.eligibility.supported_named_style == named_style
+    expected = deepcopy(baseline.canonical_payload)
+    expected_paragraph = expected["tabs"][0]["body"][0]
+    expected_paragraph["runs"][0]["text"] = f"{new_heading}\n"
+    assert expected_paragraph["paragraphStyle"] == paragraph_style
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+    requests = plan.payload.provider_operations[0].requests
+    assert all("updateParagraphStyle" not in request for request in requests)
+
+
+def test_benign_wrapper_chain_normalizes_to_one_supported_block() -> None:
+    change = normalize_reviewed_change(
+        _proposal(
+            old_html=(
+                '<section data-layout="review">\n<div class="chunk">'
+                '<h2 data-id="same">Payment is due within 45 days.</h2>'
+                "</div>\n</section>"
+            ),
+            new_html=(
+                '<section data-layout="review">\n<div class="chunk">'
+                '<h2 data-id="same">Payment is due within 30 days.</h2>'
+                "</div>\n</section>"
+            ),
+        )
+    )
+
+    assert change.old_paragraph == "Payment is due within 45 days."
+    assert change.new_paragraph == "Payment is due within 30 days."
+    assert change.old_text == "45"
+    assert change.new_text == "30"
 
 
 def test_live_omitted_zero_start_on_leading_section_break_is_supported() -> None:
@@ -405,6 +495,31 @@ def test_paragraph_boundary_replacement_is_unsupported() -> None:
         )
 
     assert error.value.code is MappingFailureCode.FORMATTING_DELTA
+
+
+@pytest.mark.parametrize(
+    "new_html",
+    [
+        "<table><tr><td>Payment is due within 30 days.</td></tr></table>",
+        "<ul><li>Payment is due within 30 days.</li></ul>",
+        (
+            "<div><p>Payment is due within 30 days.</p>"
+            "<span hidden>Undisclosed sibling content.</span></div>"
+        ),
+    ],
+)
+def test_structural_or_hidden_sibling_proposal_remains_unsupported(new_html: str) -> None:
+    with pytest.raises(MappingFailure) as error:
+        normalize_reviewed_change(_proposal(new_html=new_html))
+
+    assert error.value.code in {
+        MappingFailureCode.MALFORMED_REVIEW_HTML,
+        MappingFailureCode.FORMATTING_DELTA,
+    }
+    assert error.value.safe_message == (
+        "DocRelay can safely write text changes to a single supported paragraph or heading. "
+        "This proposal changes unsupported document structure."
+    )
 
 
 def test_old_preimage_missing_fails_closed() -> None:
