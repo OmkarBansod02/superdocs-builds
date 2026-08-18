@@ -527,8 +527,11 @@ the network path, and there is no reproduction. It is not recorded in
   never left 30 in a live run. The explicit-targeted-job fallback was run live
   once and failed at job start (probable session-level job-in-flight
   restriction, see above); it has not yet produced a reviewable batch.
-- The session-lock experiment is prepared but has not been run. Until it does,
-  whether two pinned jobs can coexist in one session is unknown, and no
-  mitigation (sequenced starts vs. a session per affected document) has been
-  chosen or implemented.
+- The instrumented session-lock experiment was attempted once: the Terms
+  pinned job started and reached `awaiting_approval`, but it failed the
+  managed-occurrence coverage gate before the guarded second (Returns) start
+  could be attempted, so the experiment never issued that second call. No new
+  409 evidence was collected. Whether two pinned jobs can coexist in one
+  session therefore remains unknown, and no mitigation (sequenced starts vs. a
+  session per affected document) has been chosen or implemented.
 - Intake/workspace state is not persisted across refresh

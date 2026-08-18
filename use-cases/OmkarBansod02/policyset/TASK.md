@@ -2,7 +2,7 @@
 
 PolicySet is a synchronized four-document policy-set editor for a fictional physical-goods ecommerce store (Northstar Goods).
 
-PolicySet owns canonical facts and consistency. SuperDocs will later own document editing, review, and export. AI will later own language edits. Humans approve changes.
+PolicySet owns canonical facts and consistency. SuperDocs owns document editing, review, and export. AI performs language edits. Humans approve changes.
 
 ## Phase 1 — Deterministic domain core
 
@@ -18,4 +18,12 @@ Intake UI, deterministic generation, and a four-document preview workspace. No S
 
 ## Phase 4 — Export
 
-Not started.
+Complete: guided intake, four-document generation, SuperDocs upload/connect,
+single-document AI edit, proposal review with explicit approve/reject,
+authoritative refresh after approval, DOCX export, and PDF export are all
+complete.
+
+The advanced synchronized shared-fact workflow (one edit committed across
+multiple documents at once) is experimental and fail-closed: it has not been
+verified end-to-end, because of documented SuperDocs/provider rough edges (see
+`SUPERDOCS_ISSUES.md`).

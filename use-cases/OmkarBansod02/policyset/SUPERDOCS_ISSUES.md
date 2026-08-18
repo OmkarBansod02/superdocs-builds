@@ -7,7 +7,7 @@ here is claimed as a confirmed, reproducible SuperDocs defect unless the
 evidence for that specific claim is unambiguous from a single artifact. Where
 confidence is lower, that is stated explicitly.
 
-Both issues below were observed while building PolicySet's synchronized
+The three issues below were observed while building PolicySet's synchronized
 managed-fact ChangeSet feature: a single logical edit (the return window
 changing from 30 days to 14 days) that must land, correctly and completely, in
 two managed documents (Terms of Service and Returns Policy) or not commit at
