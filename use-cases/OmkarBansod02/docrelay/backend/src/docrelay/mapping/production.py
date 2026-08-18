@@ -26,8 +26,8 @@ from docrelay.domain.write_plan import (
 )
 from docrelay.integrations.google.canonical import sha256_json
 
-MAPPER_VERSION = "docrelay.google-supported-block-mapper.v4"
-COMPILER_VERSION = "docrelay.google-write-plan-compiler.v4"
+MAPPER_VERSION = "docrelay.google-supported-block-mapper.v5"
+COMPILER_VERSION = "docrelay.google-write-plan-compiler.v5"
 MAPPING_SCHEMA_VERSION = "docrelay.mapping-proof.v1"
 VERIFIER_VERSION = "docrelay.google-native-canonical.v2"
 _ASCII_PLAIN_TEXT = re.compile(r"[A-Za-z0-9]+(?: [A-Za-z0-9]+)*")
@@ -216,7 +216,7 @@ class LegacyStructuralEligibility(_FrozenModel):
     minimum_range: Literal[True] = True
 
 
-class StructuralEligibility(_FrozenModel):
+class SupportedBlockStructuralEligibility(_FrozenModel):
     one_root_tab: Literal[True] = True
     body_segment: Literal[True] = True
     top_level_paragraph: Literal[True] = True
@@ -225,6 +225,20 @@ class StructuralEligibility(_FrozenModel):
     one_plain_text_run: Literal[True] = True
     no_formatting_delta: Literal[True] = True
     internal_ascii_token: Literal[True] = True
+    equal_utf16_length: bool
+    exact_preimage: Literal[True] = True
+    minimum_range: Literal[True] = True
+
+
+class StructuralEligibility(_FrozenModel):
+    one_root_tab: Literal[True] = True
+    body_segment: Literal[True] = True
+    top_level_paragraph: Literal[True] = True
+    supported_named_style: SupportedNamedStyle
+    non_list: Literal[True] = True
+    one_plain_text_run: Literal[True] = True
+    no_formatting_delta: Literal[True] = True
+    contiguous_ascii_text: Literal[True] = True
     equal_utf16_length: bool
     exact_preimage: Literal[True] = True
     minimum_range: Literal[True] = True
@@ -240,7 +254,9 @@ class MappedReplacement(_FrozenModel):
     new_paragraph_sha256: Sha256
     location: ProviderLocation
     candidate_count: Literal[1] = 1
-    eligibility: LegacyStructuralEligibility | StructuralEligibility
+    eligibility: (
+        LegacyStructuralEligibility | SupportedBlockStructuralEligibility | StructuralEligibility
+    )
 
 
 class MappingProofPayload(_FrozenModel):
@@ -250,7 +266,8 @@ class MappingProofPayload(_FrozenModel):
         "docrelay.google-plain-text-mapper.v2",
         "docrelay.google-plain-text-mapper.v3",
         "docrelay.google-supported-block-mapper.v4",
-    ] = "docrelay.google-supported-block-mapper.v4"
+        "docrelay.google-supported-block-mapper.v5",
+    ] = "docrelay.google-supported-block-mapper.v5"
     status: Literal["SUPPORTED"] = "SUPPORTED"
     status_reason: Literal[
         "ALL_V1_CONSTRAINTS_PASSED",
@@ -272,7 +289,9 @@ class MappingProofPayload(_FrozenModel):
     location: ProviderLocation
     replacements: tuple[MappedReplacement, ...] = Field(min_length=1)
     candidate_count: Literal[1] = 1
-    eligibility: LegacyStructuralEligibility | StructuralEligibility
+    eligibility: (
+        LegacyStructuralEligibility | SupportedBlockStructuralEligibility | StructuralEligibility
+    )
 
     @model_validator(mode="after")
     def replacements_match_singular_fields(self) -> Self:
@@ -446,15 +465,29 @@ def normalize_reviewed_change(proposal: ReviewedProposal) -> SemanticReplacement
     new_text = new_paragraph[prefix_length:new_end]
     prefix = old_paragraph[:prefix_length]
     suffix = old_paragraph[old_end:]
+    if not old_text and new_text:
+        if not prefix or not suffix:
+            # A boundary insertion has no deletable minimal preimage. Widen it to
+            # the proven visible block so the operation remains a non-empty text
+            # replacement and the provider terminator remains outside the range.
+            old_text = old_paragraph
+            new_text = new_paragraph
+            prefix = ""
+            suffix = ""
+        else:
+            # Keep an internal insertion narrow by borrowing one unchanged plain
+            # token from the suffix. This preserves a non-empty exact preimage.
+            borrowed = re.match(r"[A-Za-z0-9]+", suffix)
+            if borrowed is not None:
+                token = borrowed.group()
+                old_text = token
+                new_text = f"{new_text}{token}"
+                old_end += len(token)
+                suffix = old_paragraph[old_end:]
     if not old_text or not new_text:
         raise MappingFailure(
             MappingFailureCode.NON_CONTIGUOUS_REPLACEMENT,
             "create/delete deltas are unsupported",
-        )
-    if not prefix or not suffix:
-        raise MappingFailure(
-            MappingFailureCode.NON_INTERNAL_REPLACEMENT,
-            "replacement must be internal to the paragraph",
         )
     if (
         _ASCII_PLAIN_TEXT.fullmatch(old_text) is None
@@ -609,10 +642,11 @@ def map_replacement(
         _malformed("paragraph indexes do not match the persisted UTF-16 text run")
     edit_start = run_start + _utf16_length(change.prefix)
     edit_end = edit_start + _utf16_length(change.old_text)
-    if edit_start <= run_start or edit_end >= run_end - 1:
+    visible_text_end = run_end - _utf16_length("\n")
+    if edit_start < run_start or edit_end > visible_text_end:
         raise MappingFailure(
-            MappingFailureCode.NON_INTERNAL_REPLACEMENT,
-            "replacement range is not internal to the text run",
+            MappingFailureCode.NON_CONTIGUOUS_REPLACEMENT,
+            "replacement range must stay within visible paragraph text",
             candidate_count=1,
         )
 

@@ -204,9 +204,10 @@ def test_legacy_normal_text_mapping_proof_shape_keeps_its_integrity_round_trip()
     legacy_eligibility = {
         key: value
         for key, value in legacy_payload["eligibility"].items()
-        if key != "supported_named_style"
+        if key not in {"contiguous_ascii_text", "supported_named_style"}
     }
     legacy_eligibility["normal_text"] = True
+    legacy_eligibility["internal_ascii_token"] = True
     legacy_payload["eligibility"] = legacy_eligibility
     legacy_payload["replacements"][0]["eligibility"] = legacy_eligibility
 
@@ -215,6 +216,207 @@ def test_legacy_normal_text_mapping_proof_shape_keeps_its_integrity_round_trip()
 
     assert round_tripped == sealed
     assert "supported_named_style" not in sealed.payload.eligibility.model_dump(mode="json")
+
+
+def test_v4_supported_block_mapping_proof_shape_keeps_its_integrity_round_trip() -> None:
+    _, _, current = _supported_mapping()
+    v4_payload = current.payload.model_dump(mode="json")
+    v4_payload["mapper_version"] = "docrelay.google-supported-block-mapper.v4"
+    v4_eligibility = dict(v4_payload["eligibility"])
+    del v4_eligibility["contiguous_ascii_text"]
+    v4_eligibility["internal_ascii_token"] = True
+    v4_payload["eligibility"] = v4_eligibility
+    v4_payload["replacements"][0]["eligibility"] = v4_eligibility
+
+    sealed = SealedMappingProof.seal(MappingProofPayload.model_validate(v4_payload))
+
+    assert SealedMappingProof.model_validate(sealed.model_dump(mode="json")) == sealed
+    assert sealed.payload.mapper_version == "docrelay.google-supported-block-mapper.v4"
+
+
+def test_prefix_replacement_maps_from_visible_text_start() -> None:
+    old_paragraph = "Vendor Agreement"
+    new_paragraph = "Business Agreement"
+    target = _paragraph(old_paragraph, start=10)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert (change.old_text, change.new_text) == ("Vendor", "Business")
+    assert proof.payload.location.edit_start_index == 10
+    assert proof.payload.location.edit_end_index == 16
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(
+        _canonical([_paragraph(new_paragraph, start=10)])
+    )
+
+
+def test_suffix_replacement_maps_through_visible_text_end() -> None:
+    old_paragraph = "Agreement Draft"
+    new_paragraph = "Agreement Final"
+    target = _paragraph(old_paragraph, start=10)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    proof, _ = _compile(change, baseline)
+
+    assert (change.old_text, change.new_text) == ("Draft", "Final")
+    assert proof.payload.location.edit_start_index == 20
+    assert proof.payload.location.edit_end_index == int(target["endIndex"]) - 1
+
+
+def test_vendor_boundary_insertion_becomes_terminator_safe_full_block_replacement() -> None:
+    old_paragraph = "Vendor Agreement"
+    new_paragraph = "Business Vendor Agreement"
+    target = _paragraph(old_paragraph, start=10)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert (change.old_text, change.new_text, change.prefix, change.suffix) == (
+        old_paragraph,
+        new_paragraph,
+        "",
+        "",
+    )
+    assert proof.payload.old_text == old_paragraph
+    assert proof.payload.new_text == new_paragraph
+    assert proof.payload.location.edit_start_index == int(target["startIndex"])
+    assert proof.payload.location.edit_end_index == int(target["endIndex"]) - 1
+    requests = plan.payload.provider_operations[0].requests
+    delete_range = requests[0]["deleteContentRange"]["range"]
+    assert delete_range["endIndex"] == int(target["endIndex"]) - 1
+    expected = deepcopy(baseline.canonical_payload)
+    expected_paragraph = expected["tabs"][0]["body"][0]
+    expected_paragraph["endIndex"] += len("Business ")
+    expected_paragraph["runs"][0]["endIndex"] += len("Business ")
+    expected_paragraph["runs"][0]["text"] = f"{new_paragraph}\n"
+    assert expected_paragraph["runs"][0]["text"].endswith("\n")
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+
+
+def test_internal_insertion_is_widened_to_an_exact_plain_text_replacement() -> None:
+    old_paragraph = "Agreement expires after 30 days."
+    new_paragraph = "Agreement expires after 30 calendar days."
+    target = _paragraph(old_paragraph, start=10)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    _, plan = _compile(change, baseline)
+
+    assert (change.old_text, change.new_text) == ("days", "calendar days")
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(
+        _canonical([_paragraph(new_paragraph, start=10)])
+    )
+
+
+@pytest.mark.parametrize(
+    ("old_paragraph", "new_paragraph"),
+    [
+        ("Alpha Block", "Replacement Content"),
+        ("Short", "Much Longer Version"),
+    ],
+)
+def test_full_normal_text_replacement_supports_variable_lengths(
+    old_paragraph: str, new_paragraph: str
+) -> None:
+    target = _paragraph(old_paragraph, start=10)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert proof.payload.location.edit_start_index == 10
+    assert proof.payload.location.edit_end_index == int(target["endIndex"]) - 1
+    expected = _canonical([_paragraph(new_paragraph, start=10)])
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+
+
+@pytest.mark.parametrize(("named_style", "html_tag"), [("TITLE", "h1"), ("HEADING_3", "h3")])
+def test_full_heading_or_title_replacement_preserves_paragraph_properties(
+    named_style: str, html_tag: str
+) -> None:
+    old_heading = "Current Heading"
+    new_heading = "Updated Title"
+    paragraph_style = {
+        "namedStyleType": named_style,
+        "headingId": "h.stable-provider-id",
+        "keepWithNext": True,
+    }
+    target = _paragraph(old_heading, start=10, paragraph_style=paragraph_style)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(
+            old_html=f"<{html_tag}>{old_heading}</{html_tag}>",
+            new_html=f"<{html_tag}>{new_heading}</{html_tag}>",
+        )
+    )
+
+    proof, plan = _compile(change, baseline)
+
+    assert proof.payload.location.edit_start_index == 10
+    assert proof.payload.location.edit_end_index == int(target["endIndex"]) - 1
+    expected = _canonical(
+        [_paragraph(new_heading, start=10, paragraph_style=paragraph_style)]
+    )
+    expected_paragraph = expected["tabs"][0]["body"][0]
+    assert expected_paragraph["paragraphStyle"] == paragraph_style
+    assert plan.payload.expected_postimage.canonical_sha256 == sha256_json(expected)
+    assert all(
+        "updateParagraphStyle" not in request
+        for request in plan.payload.provider_operations[0].requests
+    )
+
+
+def test_full_block_replacement_with_multiple_styled_runs_remains_unsupported() -> None:
+    old_paragraph = "Vendor Agreement"
+    new_paragraph = "Business Vendor Agreement"
+    runs = [
+        {
+            "kind": "text",
+            "startIndex": 10,
+            "endIndex": 16,
+            "text": "Vendor",
+            "style": {"bold": True},
+        },
+        {
+            "kind": "text",
+            "startIndex": 16,
+            "endIndex": 27,
+            "text": " Agreement\n",
+            "style": {},
+        },
+    ]
+    target = _paragraph(old_paragraph, start=10, runs=runs)
+    baseline = _baseline(_canonical([target]))
+    change = normalize_reviewed_change(
+        _proposal(old_html=f"<p>{old_paragraph}</p>", new_html=f"<p>{new_paragraph}</p>")
+    )
+
+    with pytest.raises(MappingFailure) as error:
+        map_replacement(change, baseline, NOW)
+
+    assert error.value.code is MappingFailureCode.UNSUPPORTED_MULTIPLE_RUNS
+
+
+def test_full_block_deletion_to_empty_remains_unsupported() -> None:
+    with pytest.raises(MappingFailure) as error:
+        normalize_reviewed_change(
+            _proposal(old_html="<p>Vendor Agreement</p>", new_html="<p></p>")
+        )
+
+    assert error.value.code is MappingFailureCode.NON_CONTIGUOUS_REPLACEMENT
 
 
 @pytest.mark.parametrize(
