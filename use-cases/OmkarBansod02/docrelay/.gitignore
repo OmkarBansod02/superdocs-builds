@@ -55,3 +55,4 @@ backend/build/
 backend/dist/
 backend/**/*.egg-info/
 backend/.docrelay-artifacts/
+TASK.md
