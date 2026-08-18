@@ -6,7 +6,7 @@ A policy workspace that turns one structured intake into a consistent four-docum
 
 PolicySet is an S2 SuperDocs build for an early-stage fictional physical-goods business, Northstar Goods. It produces matched Terms of Service, Privacy Policy, Warranty Policy, and Returns Policy without asking an AI model to invent or reconcile the underlying business facts. 
 
-![PolicySet workspace](./docs/policyset-workspace.png)
+![PolicySet workspace](docs/policyset-workspace.png)
 
 ## What it does
 
