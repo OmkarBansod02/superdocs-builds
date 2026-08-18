@@ -1,5 +1,4 @@
 import { formatManagedValue } from "./profile";
-import { fieldsForDocument } from "./registry";
 import type {
   ManagedFieldPath,
   PolicyDocumentSet,
@@ -7,34 +6,6 @@ import type {
   PolicyProfile,
 } from "./types";
 import { ATTORNEY_REVIEW_DISCLAIMER } from "./types";
-
-const FIELD_LABELS: Record<ManagedFieldPath, string> = {
-  "company.legalName": "Legal name",
-  "company.website": "Website",
-  "company.supportEmail": "Support email",
-  "company.mailingAddress": "Mailing address",
-  "company.effectiveDate": "Effective date",
-  "company.governingJurisdiction": "Governing jurisdiction",
-  "store.minimumCustomerAge": "Minimum customer age",
-  "store.shippingRegions": "Shipping regions",
-  "store.paymentProcessor": "Payment processor",
-  "returns.windowDays": "Return window (days)",
-  "returns.eligibleCondition": "Return condition",
-  "returns.returnShippingPayer": "Return shipping paid by",
-  "returns.refundMethod": "Refund method",
-  "returns.processingDays": "Refund processing (days)",
-  "returns.finalSaleExceptions": "Final-sale exceptions",
-  "warranty.durationMonths": "Warranty duration (months)",
-  "warranty.coveredDefects": "Covered defects",
-  "warranty.exclusions": "Warranty exclusions",
-  "warranty.claimMethod": "How to claim warranty",
-  "privacy.collectedDataCategories": "Data collected",
-  "privacy.purposes": "Use purposes",
-  "privacy.processors": "Processors and services",
-  "privacy.analyticsEnabled": "Analytics enabled",
-  "privacy.marketingEnabled": "Marketing enabled",
-  "privacy.retentionSummary": "Retention",
-};
 
 export function renderPolicySet(profile: PolicyProfile): PolicyDocumentSet {
   return {
@@ -174,23 +145,9 @@ function wrapDocument(
 <h1>${escapeHtml(title)}</h1>
 <p>${fact(profile, "company.legalName")}</p>
 </header>
-${renderFactsBlock(profile, documentType)}
 ${body}
 <footer><p>${ATTORNEY_REVIEW_DISCLAIMER}</p></footer>
 </article>`;
-}
-
-function renderFactsBlock(
-  profile: PolicyProfile,
-  documentType: PolicyDocumentType,
-): string {
-  const items = fieldsForDocument(documentType)
-    .map((path) => {
-      return `<div><dt>${escapeHtml(FIELD_LABELS[path])}</dt><dd>${fact(profile, path)}</dd></div>`;
-    })
-    .join("");
-
-  return `<dl class="canonical-facts">${items}</dl>`;
 }
 
 function fact(profile: PolicyProfile, path: ManagedFieldPath): string {

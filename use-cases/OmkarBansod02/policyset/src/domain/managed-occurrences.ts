@@ -1,16 +1,18 @@
 /**
  * Explicit managed-fact occurrence model.
  *
- * PolicySet renders every managed document itself, so it already knows the two
- * shapes a managed return window takes in a document: the summary fact line and
- * the body policy prose. This module locates those occurrences in authoritative
- * SuperDocs HTML by chunk, so a proposal batch can be checked for completeness
- * before approval. It is intentionally limited to `returns.windowDays`.
+ * PolicySet renders every managed document itself, so it already knows the
+ * shapes a managed return window takes in a document's natural legal prose
+ * (PolicySet templates no longer emit a machine-style summary fact line — see
+ * PROGRESS.md). This module locates those occurrences in authoritative
+ * SuperDocs HTML by chunk, so a proposal batch can be checked for
+ * completeness before approval. It is intentionally limited to
+ * `returns.windowDays`.
  */
 import type { PolicyDocumentType } from "./types";
 import { htmlToPolicyText } from "./validator";
 
-export type ManagedOccurrenceKind = "fact_label" | "policy_prose";
+export type ManagedOccurrenceKind = "policy_prose";
 
 export type ManagedOccurrencePattern = {
   id: string;
@@ -22,13 +24,6 @@ export type ManagedOccurrencePattern = {
 /** Every managed shape the return window takes in a PolicySet document. */
 export const RETURN_WINDOW_OCCURRENCE_PATTERNS: readonly ManagedOccurrencePattern[] =
   [
-    {
-      id: "fact-label",
-      kind: "fact_label",
-      label: 'the "Return window (days)" managed fact line',
-      build: (value) =>
-        new RegExp(`return window\\s*\\(days\\)\\s*:?\\s*${value}(?!\\d)`, "i"),
-    },
     {
       id: "prose-delivery-window",
       kind: "policy_prose",
@@ -50,8 +45,8 @@ export const RETURN_WINDOW_OCCURRENCE_PATTERNS: readonly ManagedOccurrencePatter
  * the gate fails closed instead of approving a partial batch.
  */
 export const RETURN_WINDOW_COVERAGE_MODEL = {
-  terms: ["fact_label", "policy_prose"],
-  returns: ["fact_label", "policy_prose"],
+  terms: ["policy_prose"],
+  returns: ["policy_prose"],
 } as const satisfies Partial<
   Record<PolicyDocumentType, readonly ManagedOccurrenceKind[]>
 >;

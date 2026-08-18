@@ -53,25 +53,12 @@ describe("generatePolicyDocuments", () => {
       }
     }
 
-    expect(texts.terms).toContain("Minimum customer age");
-    expect(texts.privacy).not.toContain("Minimum customer age");
-    expect(texts.warranty).not.toContain("Minimum customer age");
-    expect(texts.returns).not.toContain("Minimum customer age");
-
-    expect(texts.privacy).toContain("Data collected");
-    expect(texts.terms).not.toContain("Data collected");
-    expect(texts.warranty).not.toContain("Data collected");
-    expect(texts.returns).not.toContain("Data collected");
-
-    expect(texts.warranty).toContain("Covered defects");
-    expect(texts.terms).not.toContain("Covered defects");
-    expect(texts.privacy).not.toContain("Covered defects");
-    expect(texts.returns).not.toContain("Covered defects");
-
-    expect(texts.returns).toContain("Return shipping paid by");
-    expect(texts.terms).not.toContain("Return shipping paid by");
-    expect(texts.privacy).not.toContain("Return shipping paid by");
-    expect(texts.warranty).not.toContain("Return shipping paid by");
+    // Canonical values live in natural prose only: PolicySet no longer emits
+    // a machine-style summary fact line duplicating them (see PROGRESS.md).
+    for (const documentType of POLICY_DOCUMENT_TYPES) {
+      expect(texts[documentType]).not.toContain("Return window (days)");
+      expect(texts[documentType]).not.toContain("Warranty duration (months)");
+    }
 
     expect(texts.privacy).toContain("90 days");
     expect(texts.terms).not.toContain("90 days");

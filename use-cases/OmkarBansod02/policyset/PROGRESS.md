@@ -457,36 +457,41 @@ pass its gate first. That is not a retry of the same experiment — it depends o
 a non-deterministic provider behavior, so it should be treated as a fresh run
 with its own budget.
 
-### Proposed mitigation — reduce duplicated managed facts (NOT IMPLEMENTED)
+### Template cleanup — reduce duplicated managed facts (implemented)
 
-Recorded as a design direction only. Nothing below has been built: the fact
-line is still generated, templates are unchanged, managed-occurrence code is
-unchanged, and tests are unchanged.
+**Observed.** Generated documents carried the same canonical fact twice: a
+machine-style summary line (e.g. `Return window (days): 30`) in a
+`<dl class="canonical-facts">` block, plus natural legal prose stating the
+same value. Every duplicated representation was another place that had to
+stay synchronized, and another chance for a partial AI edit to leave the
+document self-contradictory — this is exactly the shape of the rough edge
+recorded as Issue 3 in `SUPERDOCS_ISSUES.md`. The duplication was largely
+self-inflicted: PolicySet already holds the canonical value in
+`PolicyProfile` and surfaces it in the Policy Facts panel, and every field the
+summary block listed was already present, individually wrapped in
+`data-managed-field`, inline in the document's own prose.
 
-**Observed provider behavior.** AI document editing may miss one of several
-repeated representations of the same managed fact, even in a pinned,
-single-document edit that names the missed occurrence explicitly.
-
-**Risk.** Generated documents currently carry the same canonical fact twice:
-a machine-style summary line (`Return window (days): 30`) and natural legal
-prose stating the same value. Every duplicate representation is another place
-that must stay synchronized, and each one is another chance for a partial edit
-to leave the document self-contradictory. The duplication is largely
-self-inflicted — PolicySet already holds the canonical value in
-`PolicyProfile` and surfaces it in the Policy Facts panel.
-
-**Proposed PolicySet mitigation.** Keep canonical structured facts in
-`PolicyProfile` and the Policy Facts UI, and stop emitting redundant
-machine-style summary fact lines into the generated legal documents where the
-same value is already expressed in the legal prose. This shrinks the
-synchronization surface the provider has to get right, rather than retrying
-AI calls and hoping for better coverage.
+**Mitigation implemented.** Canonical structured values remain in
+`PolicyProfile` / the Policy Facts UI. `renderers.ts` no longer emits the
+`canonical-facts` summary block in any of the four documents — generated
+policies contain only natural legal prose (plus contact details, effective
+dates, governing law, and the attorney-review disclaimer). For
+`returns.windowDays` specifically, Terms and Returns still each express the
+managed value twice in prose ("within N days of delivery" and "the same
+N-day window"); the managed-occurrence model
+(`src/domain/managed-occurrences.ts`) was updated to drop the retired
+`fact_label` occurrence kind and its pattern, so the coverage model for both
+documents is now `["policy_prose"]`, covering only the occurrences that still
+exist. The SuperDocs edit instruction (`buildTargetedSynchronizedInstruction`
+in `src/superdocs/policyset.ts`) was updated to stop naming the removed
+summary line.
 
 **Remaining limitation.** This does not remove the need for deterministic
-coverage validation. Legal prose can itself state the same fact more than once
-(this document set already does — "within 30 days of delivery" and "30-day
-window" in the same paragraph), so multi-occurrence coverage checking is still
-required regardless of whether the summary line stays.
+coverage validation. Legal prose still states the same fact more than once in
+the same paragraph, so multi-occurrence coverage checking
+(`assertSynchronizedProposalCoverage`) remains required and unchanged in
+strength — it still fails closed on any missing or incomplete occurrence
+before approving a batch.
 
 ### Transient initialization failures
 

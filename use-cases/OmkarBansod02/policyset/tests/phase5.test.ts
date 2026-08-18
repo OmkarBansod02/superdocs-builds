@@ -496,11 +496,7 @@ describe("Phase 5 managed-fact coverage gate", () => {
 
   it("rejects a batch that leaves a required Returns occurrence untouched", () => {
     const changeSet = returnWindowChangeSet();
-    const proposals = [
-      termsFactProposal(),
-      termsBodyProposal(),
-      returnsBodyProposal(),
-    ];
+    const proposals = [termsFactProposal(), termsBodyProposal()];
 
     expect(() =>
       assertSynchronizedProposalCoverage(
@@ -509,7 +505,7 @@ describe("Phase 5 managed-fact coverage gate", () => {
         DOCUMENT_IDS,
         rosterDocuments(30),
       ),
-    ).toThrow(/no proposal covers returns: the "Return window \(days\)"/);
+    ).toThrow(/no proposal covers returns: the body prose/);
   });
 
   it("accepts a batch that covers every required occurrence in both documents", () => {
@@ -582,9 +578,10 @@ describe("Phase 5 managed-fact coverage gate", () => {
     const evidenceDirectory = mkdtempSync(
       join(tmpdir(), "policyset-coverage-evidence-"),
     );
-    // Terms' own pinned job updated the fact line but left the body prose
-    // stale — an incomplete batch within a single targeted document.
-    const proposals = [termsFactProposal()];
+    // Terms' own pinned job updated the "within N days of delivery" prose
+    // but left the "N-day window" cross-reference stale — an incomplete
+    // batch within a single targeted document.
+    const proposals = [termsBodyPartialProposal()];
     const submitReview = vi.fn(async () => ({
       status: "completed",
       batchComplete: true,
@@ -623,7 +620,7 @@ describe("Phase 5 managed-fact coverage gate", () => {
     expect(submitReview).toHaveBeenCalledWith({
       sessionId: "session-1",
       jobId: "job-terms-coverage",
-      decisions: [{ changeId: "change-terms-fact", approved: false }],
+      decisions: [{ changeId: "change-terms-body-partial", approved: false }],
     });
     expect(workspace.profile.returns.windowDays).toBe(30);
     expect(NORTHSTAR_GOODS_PROFILE.returns.windowDays).toBe(30);
@@ -648,13 +645,14 @@ function chunkProposal(
   };
 }
 
+/** An unrelated proposal in the same batch — no return-window occurrence. */
 function termsFactProposal(): PendingChange {
   return chunkProposal(
     "change-terms-fact",
     DOCUMENT_IDS.terms,
-    "terms-fact-window",
-    "<strong>Return window (days): </strong>30",
-    "<strong>Return window (days): </strong>14",
+    "terms-fact-name",
+    "<strong>Legal name: </strong>Northstar Goods",
+    "<strong>Legal name: </strong>Northstar Goods",
   );
 }
 
@@ -668,13 +666,30 @@ function termsBodyProposal(): PendingChange {
   );
 }
 
+/**
+ * Updates the "within N days of delivery" prose to the next value and drops
+ * the stale value everywhere, so the coarse safety check passes, but never
+ * introduces the new "N-day window" cross-reference — an incomplete update
+ * within one chunk that only the finer-grained coverage gate catches.
+ */
+function termsBodyPartialProposal(): PendingChange {
+  return chunkProposal(
+    "change-terms-body-partial",
+    DOCUMENT_IDS.terms,
+    "terms-body-returns",
+    TERMS_BODY_TEXT(30),
+    "Eligible items may be returned within 14 days of delivery if they are unused, in original packaging, and accompanied by proof of purchase. The Returns Policy states the same return window and the full process.",
+  );
+}
+
+/** An unrelated proposal in the same batch — no return-window occurrence. */
 function returnsFactProposal(): PendingChange {
   return chunkProposal(
     "change-returns-fact",
     DOCUMENT_IDS.returns,
-    "returns-fact-window",
-    "<strong>Return window (days): </strong>30",
-    "<strong>Return window (days): </strong>14",
+    "returns-fact-processing",
+    "<strong>Refund processing (days): </strong>7",
+    "<strong>Refund processing (days): </strong>7",
   );
 }
 
@@ -689,12 +704,7 @@ function returnsBodyProposal(): PendingChange {
 }
 
 function fullCoverageProposals(): PendingChange[] {
-  return [
-    termsFactProposal(),
-    termsBodyProposal(),
-    returnsFactProposal(),
-    returnsBodyProposal(),
-  ];
+  return [termsBodyProposal(), returnsBodyProposal()];
 }
 
 function TERMS_BODY_TEXT(windowDays: number): string {
@@ -715,7 +725,6 @@ function rosterHtml(
     parts.push(
       '<h1 data-chunk-id="terms-title">Terms of Service</h1>',
       '<p data-chunk-id="terms-fact-name"><strong>Legal name: </strong>Northstar Goods</p>',
-      `<p data-chunk-id="terms-fact-window"><strong>Return window (days): </strong>${windowDays}</p>`,
       '<h2 data-chunk-id="terms-heading-returns">Returns</h2>',
       `<p data-chunk-id="terms-body-returns">${TERMS_BODY_TEXT(windowDays)}</p>`,
       '<p data-chunk-id="terms-body-warranty">Goods include a 12-month limited warranty against manufacturing defects.</p>',
@@ -723,7 +732,6 @@ function rosterHtml(
   } else if (documentType === "returns") {
     parts.push(
       '<h1 data-chunk-id="returns-title">Returns Policy</h1>',
-      `<p data-chunk-id="returns-fact-window"><strong>Return window (days): </strong>${windowDays}</p>`,
       '<p data-chunk-id="returns-fact-processing"><strong>Refund processing (days): </strong>7</p>',
       '<h2 data-chunk-id="returns-heading-window">Return window</h2>',
       `<p data-chunk-id="returns-body-window">${RETURNS_BODY_TEXT(windowDays)}</p>`,
@@ -986,9 +994,7 @@ describe("Phase 5 session-lock experiment preparation", () => {
           progress: null,
           awaitingKind: null,
           pendingChanges:
-            status === "awaiting_approval"
-              ? [termsFactProposal(), termsBodyProposal()]
-              : [],
+            status === "awaiting_approval" ? [termsBodyProposal()] : [],
           errorCode: null,
         };
       }),
@@ -1037,7 +1043,8 @@ describe("Phase 5 session-lock experiment preparation", () => {
     const client = {
       ...rosterClient(30),
       startChat,
-      // Terms fact line updated but the body prose left stale: coverage fails.
+      // The delivery-window prose updated but the day-window cross-reference
+      // was left stale: coverage fails.
       getJob: vi.fn(async () => ({
         reference: {
           jobId: "job-doc-terms",
@@ -1046,7 +1053,7 @@ describe("Phase 5 session-lock experiment preparation", () => {
         },
         progress: 100,
         awaitingKind: null,
-        pendingChanges: [termsFactProposal()],
+        pendingChanges: [termsBodyPartialProposal()],
         errorCode: null,
       })),
       submitReview,
