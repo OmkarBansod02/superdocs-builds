@@ -403,6 +403,91 @@ Issue 3 is deliberately **not** written yet: one observation with a discarded
 response body is weaker evidence than Issues 1 and 2 rest on, and adding it
 now would undercut them. Issues 1 and 2 are unchanged.
 
+### Phase 5 session-lock experiment — run once, question still unanswered
+
+Ran the controlled experiment live (1 paid chat start; the second was never
+issued). It did **not** answer the session-lock question, because the Terms
+job failed its own coverage gate before the second start could be attempted —
+which is exactly the guard the experiment was specified with.
+
+- Terms pinned job `c3abf5ad…` reached `awaiting_approval` with **one**
+  proposal, then failed the managed-occurrence coverage gate: the proposal
+  updated the body prose (both the "within 30 days of delivery" and
+  "30-day window" occurrences) but left the **"Return window (days): 30"
+  summary fact line untouched**.
+- The gate denied every pending change. Verified afterwards by read-only GETs:
+  the job settled to `completed` with 0 pending changes, and the authoritative
+  Terms document still reads 30. Returns, Privacy, and Warranty are unchanged.
+  Canonical `PolicyProfile.returns.windowDays` never left 30.
+- `locallyObservedSuccessfulChatStarts: 1` (locally observed, not
+  provider-confirmed). The Returns start was never attempted, so **no evidence
+  about concurrent pinned jobs was gathered**: no second 409, no new provider
+  diagnostics. The session-lock classification stays
+  UNDOCUMENTED_SUPERDOCS_LIMITATION / moderate confidence, unchanged, and
+  remains **unresolved and undocumented in `SUPERDOCS_ISSUES.md`**.
+- Evidence: `tmp/phase5-session-lock-report.json` and the sanitized proposal
+  snapshot under `tmp/policyset-proposal-evidence/`.
+
+**This materially strengthens Issue 1.** The incomplete managed-fact update was
+previously observed only on unpinned, multi-document jobs, which left open the
+possibility that message-based routing was the cause. This run reproduces the
+same partial update on a **single-document `document_id`-pinned job** whose
+instruction explicitly named both the fact line and the body prose and said
+"Leave no 30-day return window anywhere in Terms of Service". The model also
+reported `"✅ I have updated the return window from 30 days to 14 days in the
+Terms of Service document."` while one managed occurrence was still stale — a
+confident completion claim that does not match the batch it produced. Pinning
+therefore removes cross-document routing loss but does **not** remove
+within-document incompleteness.
+
+**The AI completion claim is not trusted as a correctness signal.** The
+correctness signals are proposal coverage before approval, and validation of
+the final authoritative document afterward — never the provider's narrative
+text about what it believes it did.
+
+This finding is now written up, sanitized, as **Issue 3** in
+`SUPERDOCS_ISSUES.md` ("Pinned single-document edit can report completion while
+leaving an explicitly named managed occurrence unchanged",
+`SUPERDOCS_ROUGH_EDGE` / possible bug, moderate-to-high confidence in the
+observed behavior). Issue 3 covers only this coverage/completion-claim finding
+— it is **not** about session locking. Issues 1 and 2 are unchanged.
+
+To actually answer the session-lock question, a rerun needs the Terms batch to
+pass its gate first. That is not a retry of the same experiment — it depends on
+a non-deterministic provider behavior, so it should be treated as a fresh run
+with its own budget.
+
+### Proposed mitigation — reduce duplicated managed facts (NOT IMPLEMENTED)
+
+Recorded as a design direction only. Nothing below has been built: the fact
+line is still generated, templates are unchanged, managed-occurrence code is
+unchanged, and tests are unchanged.
+
+**Observed provider behavior.** AI document editing may miss one of several
+repeated representations of the same managed fact, even in a pinned,
+single-document edit that names the missed occurrence explicitly.
+
+**Risk.** Generated documents currently carry the same canonical fact twice:
+a machine-style summary line (`Return window (days): 30`) and natural legal
+prose stating the same value. Every duplicate representation is another place
+that must stay synchronized, and each one is another chance for a partial edit
+to leave the document self-contradictory. The duplication is largely
+self-inflicted — PolicySet already holds the canonical value in
+`PolicyProfile` and surfaces it in the Policy Facts panel.
+
+**Proposed PolicySet mitigation.** Keep canonical structured facts in
+`PolicyProfile` and the Policy Facts UI, and stop emitting redundant
+machine-style summary fact lines into the generated legal documents where the
+same value is already expressed in the legal prose. This shrinks the
+synchronization surface the provider has to get right, rather than retrying
+AI calls and hoping for better coverage.
+
+**Remaining limitation.** This does not remove the need for deterministic
+coverage validation. Legal prose can itself state the same fact more than once
+(this document set already does — "within 30 days of delivery" and "30-day
+window" in the same paragraph), so multi-occurrence coverage checking is still
+required regardless of whether the summary line stays.
+
 ### Transient initialization failures
 
 Transient `SuperDocs is unavailable` failures during session
