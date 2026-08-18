@@ -8,7 +8,9 @@ Built by Omkar Bansod for the SuperDocs Engineer Task.
 
 ## Screenshot
 
-A current public-safe product screenshot is not yet checked in. The images under `frontend/design-concepts/` are design references rather than implementation evidence, so they are intentionally not embedded here.
+A current public-safe product screenshot is not yet checked in. The images under `frontend/design-concepts/` are design references rather than implementation evidence, so they are intentionally not embedded here. 
+
+![DocRelay review workbench](./assets/docrelay-workbench.png)
 
 ## Why DocRelay
 
