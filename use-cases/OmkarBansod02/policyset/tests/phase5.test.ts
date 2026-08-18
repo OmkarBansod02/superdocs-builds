@@ -26,10 +26,14 @@ import {
 } from "@/domain";
 import {
   PolicySetSuperDocsSafetyError,
+  PolicySetSynchronizedStartError,
+  SuperDocsClient,
+  SuperDocsRequestError,
   assertSynchronizedProposalCoverage,
   assertSynchronizedProposalGate,
   assertSynchronizedProposalSafety,
   getPolicyTargetedSynchronizedJob,
+  runSessionLockExperiment,
   startPolicySynchronizedEdit,
   submitPolicyTargetedSynchronizedReview,
   type PendingChange,
@@ -838,3 +842,239 @@ function unwrap<T>(result: Result<T>): T {
   }
   return result.value;
 }
+
+describe("Phase 5 session-lock experiment preparation", () => {
+  it("preserves the HTTP status, request id, and sanitized provider code/detail of a rejected chat start", async () => {
+    const client = new SuperDocsClient({
+      apiKey: "test-key",
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              code: "job_in_flight",
+              detail:
+                "A chat job is already running on this session. api_key=sk_live_abcdefgh12345678 must not survive.",
+            },
+          }),
+          {
+            status: 409,
+            headers: {
+              "Content-Type": "application/json",
+              "X-Request-ID": "req-abc-123",
+            },
+          },
+        )) as unknown as typeof fetch,
+    });
+
+    const error = await client
+      .startChat({ sessionId: "session-1", documentId: "doc-returns", message: "edit" })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(SuperDocsRequestError);
+    const diagnostics = (error as SuperDocsRequestError).diagnostics();
+    expect(diagnostics.statusCode).toBe(409);
+    expect(diagnostics.requestId).toBe("req-abc-123");
+    expect(diagnostics.providerCode).toBe("job_in_flight");
+    expect(diagnostics.providerDetail).toContain("already running on this session");
+    // Secrets never survive into retained diagnostics.
+    expect(diagnostics.providerDetail).not.toContain("sk_live_abcdefgh12345678");
+    expect(diagnostics.providerDetail).toContain("[REDACTED]");
+    // The friendly application message is unchanged.
+    expect((error as SuperDocsRequestError).message).toBe(
+      "SuperDocs rejected the operation for the current job state",
+    );
+  });
+
+  it("preserves an already-started targeted job when a later targeted start fails", async () => {
+    const workspace = generatePolicyWorkspace(NORTHSTAR_GOODS_PROFILE);
+    const changeSet = unwrap(proposeReturnWindowChangeSet(workspace, 14));
+    const startChat = vi.fn(async (input: { documentId?: string; sessionId: string }) => {
+      if (input.documentId === DOCUMENT_IDS.returns) {
+        throw new SuperDocsRequestError(
+          "SuperDocs rejected the operation for the current job state",
+          {
+            statusCode: 409,
+            requestId: "req-second-start",
+            providerCode: "job_in_flight",
+          },
+        );
+      }
+      return {
+        jobId: "job-terms",
+        sessionId: input.sessionId,
+        status: "in_progress" as const,
+      };
+    });
+    const client = {
+      ...rosterClient(30),
+      startChat,
+    } as unknown as NonNullable<Parameters<typeof startPolicySynchronizedEdit>[1]>;
+
+    const error = await startPolicySynchronizedEdit(
+      { sessionId: "session-1", documentIds: DOCUMENT_IDS, changeSet },
+      client,
+    ).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(PolicySetSynchronizedStartError);
+    const startError = error as PolicySetSynchronizedStartError;
+    expect(startError.failedDocumentType).toBe("returns");
+    expect(startError.successfullyStartedJobs).toHaveLength(1);
+    expect(startError.successfullyStartedJobs[0].documentType).toBe("terms");
+    expect(startError.successfullyStartedJobs[0].job.jobId).toBe("job-terms");
+    expect(startError.requestError?.statusCode).toBe(409);
+    expect(startError.requestError?.requestId).toBe("req-second-start");
+  });
+
+  it("counts one locally observed successful chat start when the first succeeds and the second fails", async () => {
+    const workspace = generatePolicyWorkspace(NORTHSTAR_GOODS_PROFILE);
+    const changeSet = unwrap(proposeReturnWindowChangeSet(workspace, 14));
+    const startChat = vi.fn(async (input: { documentId?: string; sessionId: string }) => {
+      if (input.documentId === DOCUMENT_IDS.returns) {
+        throw new SuperDocsRequestError("SuperDocs rejected the operation for the current job state", {
+          statusCode: 409,
+        });
+      }
+      return { jobId: "job-terms", sessionId: input.sessionId, status: "in_progress" as const };
+    });
+    const client = {
+      ...rosterClient(30),
+      startChat,
+    } as unknown as NonNullable<Parameters<typeof startPolicySynchronizedEdit>[1]>;
+
+    const error = (await startPolicySynchronizedEdit(
+      { sessionId: "session-1", documentIds: DOCUMENT_IDS, changeSet },
+      client,
+    ).then(
+      () => null,
+      (caught: unknown) => caught,
+    )) as PolicySetSynchronizedStartError;
+
+    // Counted from what SuperDocs actually accepted, not from a completed
+    // batch. The provider returns no usage metadata, so this stays local.
+    expect(error.successfullyStartedJobs.length).toBe(1);
+    expect(startChat).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not attempt the second pinned start until the first job reaches awaiting_approval", async () => {
+    const changeSet = returnWindowChangeSet();
+    const evidenceDirectory = mkdtempSync(
+      join(tmpdir(), "policyset-session-lock-evidence-"),
+    );
+    const statuses = ["pending", "in_progress", "awaiting_approval"] as const;
+    let poll = 0;
+    const startChat = vi.fn(async (input: { documentId?: string; sessionId: string }) => ({
+      jobId: `job-${input.documentId}`,
+      sessionId: input.sessionId,
+      status: "pending" as const,
+    }));
+    const startCallsAtEachPoll: number[] = [];
+    const client = {
+      ...rosterClient(30),
+      startChat,
+      getJob: vi.fn(async () => {
+        startCallsAtEachPoll.push(startChat.mock.calls.length);
+        const status = statuses[Math.min(poll, statuses.length - 1)];
+        poll += 1;
+        return {
+          reference: { jobId: "job-doc-terms", sessionId: "session-1", status },
+          progress: null,
+          awaitingKind: null,
+          pendingChanges:
+            status === "awaiting_approval"
+              ? [termsFactProposal(), termsBodyProposal()]
+              : [],
+          errorCode: null,
+        };
+      }),
+      submitReview: vi.fn(async () => ({ status: "completed", batchComplete: true })),
+    } as unknown as NonNullable<Parameters<typeof runSessionLockExperiment>[1]>;
+
+    const result = await runSessionLockExperiment(
+      {
+        sessionId: "session-1",
+        documentIds: DOCUMENT_IDS,
+        changeSet,
+        firstDocumentType: "terms",
+        secondDocumentType: "returns",
+        awaitFirstJobReview: async (pollJob) => {
+          let job = await pollJob();
+          while (job.status !== "awaiting_approval") {
+            job = await pollJob();
+          }
+          return job;
+        },
+      },
+      client,
+      { evidenceDirectory },
+    );
+
+    expect(result.outcome).toBe("second_start_accepted");
+    // Only the Terms start had been issued while the job was still settling.
+    expect(startCallsAtEachPoll).toEqual([1, 1, 1]);
+    expect(result.firstJobStatusAtSecondStart).toBe("awaiting_approval");
+    expect(startChat).toHaveBeenCalledTimes(2);
+    expect(startChat.mock.calls[1][0].documentId).toBe(DOCUMENT_IDS.returns);
+    expect(result.locallyObservedSuccessfulChatStarts).toBe(2);
+  });
+
+  it("never approves the first job during the experiment and skips the second start when the first gate fails", async () => {
+    const changeSet = returnWindowChangeSet();
+    const evidenceDirectory = mkdtempSync(
+      join(tmpdir(), "policyset-session-lock-gate-"),
+    );
+    const submitReview = vi.fn(async () => ({ status: "completed", batchComplete: true }));
+    const startChat = vi.fn(async (input: { documentId?: string; sessionId: string }) => ({
+      jobId: `job-${input.documentId}`,
+      sessionId: input.sessionId,
+      status: "awaiting_approval" as const,
+    }));
+    const client = {
+      ...rosterClient(30),
+      startChat,
+      // Terms fact line updated but the body prose left stale: coverage fails.
+      getJob: vi.fn(async () => ({
+        reference: {
+          jobId: "job-doc-terms",
+          sessionId: "session-1",
+          status: "awaiting_approval" as const,
+        },
+        progress: 100,
+        awaitingKind: null,
+        pendingChanges: [termsFactProposal()],
+        errorCode: null,
+      })),
+      submitReview,
+    } as unknown as NonNullable<Parameters<typeof runSessionLockExperiment>[1]>;
+
+    const result = await runSessionLockExperiment(
+      {
+        sessionId: "session-1",
+        documentIds: DOCUMENT_IDS,
+        changeSet,
+        firstDocumentType: "terms",
+        secondDocumentType: "returns",
+        awaitFirstJobReview: (pollJob) => pollJob(),
+      },
+      client,
+      { evidenceDirectory },
+    );
+
+    expect(result.outcome).toBe("first_gate_failed");
+    // The Returns start is never paid for once Terms fails its own gate.
+    expect(startChat).toHaveBeenCalledTimes(1);
+    expect(result.locallyObservedSuccessfulChatStarts).toBe(1);
+    // Every decision submitted during the experiment is a denial.
+    expect(submitReview).toHaveBeenCalled();
+    for (const [call] of submitReview.mock.calls as unknown as [
+      { decisions: { approved: boolean }[] },
+    ][]) {
+      expect(call.decisions.every((decision) => !decision.approved)).toBe(true);
+    }
+  });
+});

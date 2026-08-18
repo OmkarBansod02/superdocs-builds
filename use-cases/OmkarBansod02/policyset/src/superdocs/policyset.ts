@@ -26,6 +26,7 @@ import type {
 
 import { SuperDocsClient, createSessionId } from "./client";
 import { getSuperDocsApiKey } from "./config";
+import { SuperDocsRequestError } from "./errors";
 import { evaluateReturnWindowCoverage } from "./managed-coverage";
 import {
   classifyProposalTarget,
@@ -47,6 +48,39 @@ export class PolicySetSuperDocsSafetyError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "PolicySetSuperDocsSafetyError";
+  }
+}
+
+/**
+ * Thrown when one targeted job started successfully but a later targeted start
+ * failed. Carries the jobs SuperDocs already created so the caller can record
+ * and settle them instead of losing their ids. This type performs no recovery
+ * of its own: nothing is approved, denied, cancelled, or retried here.
+ */
+export class PolicySetSynchronizedStartError extends Error {
+  readonly successfullyStartedJobs: readonly SuperDocsTargetedJob[];
+  readonly failedDocumentType: PolicyDocumentType;
+  readonly requestError: SuperDocsRequestError | null;
+
+  constructor(options: {
+    successfullyStartedJobs: readonly SuperDocsTargetedJob[];
+    failedDocumentType: PolicyDocumentType;
+    cause: unknown;
+  }) {
+    const started = options.successfullyStartedJobs
+      .map((job) => job.documentType)
+      .join(", ");
+    super(
+      `SuperDocs refused to start the ${options.failedDocumentType} targeted job after ${
+        started || "no"
+      } job(s) had already started. Nothing was approved and the canonical return window remains unchanged. Do not retry this operation automatically.`,
+      { cause: options.cause },
+    );
+    this.name = "PolicySetSynchronizedStartError";
+    this.successfullyStartedJobs = options.successfullyStartedJobs;
+    this.failedDocumentType = options.failedDocumentType;
+    this.requestError =
+      options.cause instanceof SuperDocsRequestError ? options.cause : null;
   }
 }
 
@@ -137,14 +171,28 @@ export async function startPolicySynchronizedEdit(
 
   const jobs: SuperDocsTargetedJob[] = [];
   for (const documentType of targetedDocumentTypes) {
-    const reference = await client.startChat({
-      sessionId: input.sessionId,
-      documentId: input.documentIds[documentType],
-      message: buildTargetedSynchronizedInstruction(
-        input.changeSet,
-        documentType,
-      ),
-    });
+    let reference;
+    try {
+      reference = await client.startChat({
+        sessionId: input.sessionId,
+        documentId: input.documentIds[documentType],
+        message: buildTargetedSynchronizedInstruction(
+          input.changeSet,
+          documentType,
+        ),
+      });
+    } catch (error) {
+      // Jobs SuperDocs already created must not be lost with the stack. The
+      // caller decides what to do with them; we only preserve them.
+      if (jobs.length > 0) {
+        throw new PolicySetSynchronizedStartError({
+          successfullyStartedJobs: jobs,
+          failedDocumentType: documentType,
+          cause: error,
+        });
+      }
+      throw error;
+    }
     if (reference.sessionId !== input.sessionId) {
       throw new PolicySetSuperDocsSafetyError(
         "SuperDocs returned a synchronized edit job for a different session.",

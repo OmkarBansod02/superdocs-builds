@@ -359,7 +359,12 @@ export class SuperDocsClient {
 
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!response.ok) {
-      throw statusError(response.status, requestId(response), options.outcomeSensitive === true);
+      throw statusError(
+        response.status,
+        requestId(response),
+        options.outcomeSensitive === true,
+        providerErrorFields(bytes, response.headers.get("Content-Type")),
+      );
     }
 
     return {
@@ -547,10 +552,66 @@ function requestId(response: Response): string | null {
   return value;
 }
 
+/**
+ * Extracts only a machine-readable code and a short human message from a
+ * JSON error body. A non-JSON body (an HTML error page, for example) yields
+ * nothing — we never retain arbitrary response content. `SuperDocsRequestError`
+ * redacts and length-bounds whatever is returned here.
+ */
+function providerErrorFields(
+  bytes: Uint8Array,
+  contentType: string | null,
+): { code: string | null; detail: string | null } {
+  const empty = { code: null, detail: null };
+  const mediaType = (contentType ?? "").split(";", 1)[0].trim().toLowerCase();
+  if (!mediaType.includes("json") || bytes.byteLength === 0) {
+    return empty;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  } catch {
+    return empty;
+  }
+  if (!isRecord(payload)) {
+    return empty;
+  }
+
+  // FastAPI-style bodies nest the real payload under `error` or `detail`.
+  const nested = isRecord(payload.error)
+    ? payload.error
+    : isRecord(payload.detail)
+      ? payload.detail
+      : payload;
+
+  return {
+    code: firstStringField(nested, ["code", "error_code", "type"]),
+    detail: firstStringField(nested, ["detail", "message", "error", "title"]),
+  };
+}
+
+function firstStringField(
+  payload: JsonRecord,
+  keys: readonly string[],
+): string | null {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return null;
+}
+
 function statusError(
   status: number,
   requestIdValue: string | null,
   outcomeSensitive: boolean,
+  provider: { code: string | null; detail: string | null } = {
+    code: null,
+    detail: null,
+  },
 ): SuperDocsRequestError {
   let message = "SuperDocs rejected the request";
   if (status === 401 || status === 403) {
@@ -568,6 +629,8 @@ function statusError(
     statusCode: status,
     requestId: requestIdValue,
     outcomeUnknown: outcomeSensitive && status >= 500,
+    providerCode: provider.code,
+    providerDetail: provider.detail,
   });
 }
 

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { redactSecrets } from "./errors";
 import type { JobSnapshot, PendingChange } from "./types";
 
 export type ProposalTargetClassification = {
@@ -198,16 +199,6 @@ function targetFromStructuralValue(
 
 function nullableRedacted(value: string | null): string | null {
   return value === null ? null : redactSecrets(value);
-}
-
-function redactSecrets(value: string): string {
-  return value
-    .replace(/\b(?:sk_|sk-)[a-z0-9_-]{8,}\b/gi, "[REDACTED_SECRET]")
-    .replace(/(bearer\s+)[a-z0-9._~+/-]+=*/gi, "$1[REDACTED]")
-    .replace(
-      /((?:api[_ -]?key|authorization)\s*[:=]\s*)[^\s<"']+/gi,
-      "$1[REDACTED]",
-    );
 }
 
 function escapeRegExp(value: string): string {

@@ -327,9 +327,98 @@ Terms and Returns, reviewed and approved/rejected as one synchronized batch.
   script does not block `typecheck`/`build`. A new driver script for the
   targeted-job flow would be needed before running a live fallback test.
 
+### Phase 5 targeted-job live run — failed before either job was usable
+
+The targeted-job fallback was run live once. It failed at job start, before
+any proposal existed. Both jobs reported `jobId: null` / `gate: NOT_REACHED`,
+the canonical profile stayed at 30, and the ChangeSet was marked failed.
+
+Investigation findings (no live call made during the investigation):
+
+- **The two pinned starts were sequential, not concurrent.**
+  `startPolicySynchronizedEdit` uses a `for…of` loop with `await` inside;
+  `Promise.allSettled` in the driver applies only to polling. Terms is
+  attempted first (`POLICY_DOCUMENT_TYPES` order), Returns immediately after.
+  The two requests are therefore sequential but temporally overlapping: the
+  Returns start races the Terms job's `pending`/`in_progress` phase.
+- The observed message `SuperDocs rejected the operation for the current job
+  state` is emitted at exactly one place in the adapter — the **HTTP 409**
+  branch of `statusError`. High confidence, but inferred from our own string
+  mapping rather than read from a captured response.
+- **Likely cause: a session-level job-in-flight restriction.** The session was
+  fresh with only uploads on it, so there was nothing for the *first* start to
+  conflict with; the 409 almost certainly came from the second start.
+- **This restriction is not documented for `chat/async` in the local
+  references.** `openapi-live.json` lists only 200/422 for
+  `POST /v1/chat/async`. A session-level in-flight lock *is* documented, but
+  only for revert/redo (which do 409 while a job is `pending`, `in_progress`,
+  or `awaiting_approval`). `document_id` targeting itself is documented and
+  was already live-validated in Phase 4. Current classification:
+  **UNDOCUMENTED_SUPERDOCS_LIMITATION, moderate confidence** — one
+  observation, not yet strengthened.
+- **The previous live report lost the provider error body and request id.**
+  The adapter read the response bytes and then discarded them on the error
+  path, and the driver recorded only `error.message`.
+- **The previous `paidOperationsUsed: 0` was not provider-confirmed.** It was
+  assigned only after the whole batch succeeded, so the throw left the
+  initializer in place. Actual usage was most likely 1 paid Terms chat start.
+  SuperDocs returns no usage metadata, so no count of ours can be called
+  provider-confirmed.
+
+Instrumentation is being repaired before another live test, rather than
+re-running the same experiment blind:
+
+- `SuperDocsRequestError` now carries `providerCode` and `providerDetail`
+  alongside `statusCode`/`requestId`, exposed through `diagnostics()`. Only a
+  machine-readable code and a short, redacted, length-bounded message are kept
+  from JSON error bodies; non-JSON bodies (HTML error pages) contribute
+  nothing, and no headers or credentials are ever retained. Friendly
+  application messages are unchanged.
+- `startPolicySynchronizedEdit` now throws `PolicySetSynchronizedStartError`
+  when a later pinned start fails after an earlier one succeeded, carrying
+  `successfullyStartedJobs`, `failedDocumentType`, and the underlying
+  `SuperDocsRequestError`. It performs no approval, denial, cancellation,
+  retry, or compensation — it only stops the job ids from being lost.
+- The live driver counts accepted chat starts as they occur and reports them
+  as `locallyObservedSuccessfulChatStarts`, explicitly not as billing truth.
+
+The next live run is a single controlled experiment
+(`runSessionLockExperiment`, opt-in and not wired into the app or the UI) that
+answers one question: **can SuperDocs start a second pinned `chat/async` job
+in the same session while the first job is `awaiting_approval`?** Sequence:
+start the Terms pinned job → poll it to `awaiting_approval` → run its
+targeting/structural/coverage gate → **do not approve it** → only then attempt
+the Returns pinned start. If the Terms gate fails, Terms is denied and Returns
+is never started, so that case costs one chat start rather than two.
+
+If that instrumented second start returns 409 while Terms is
+`awaiting_approval` — with a captured status, provider code, detail, and
+request id — we will have enough evidence to document the finding in
+`SUPERDOCS_ISSUES.md` as:
+
+    Observed provider behavior → PolicySet risk → mitigation/workaround
+    → remaining limitation
+
+Issue 3 is deliberately **not** written yet: one observation with a discarded
+response body is weaker evidence than Issues 1 and 2 rest on, and adding it
+now would undercut them. Issues 1 and 2 are unchanged.
+
+### Transient initialization failures
+
+Transient `SuperDocs is unavailable` failures during session
+initialization/upload have now occurred in two independent validation sessions
+(once in Phase 4, twice in the targeted-job run). They are transport-level
+failures with no HTTP response at all, they occur before any paid chat
+operation, and live validation retried them safely. Production currently
+surfaces them rather than retrying automatically — only the git-ignored live
+driver retries. This is **not** classified as a SuperDocs bug: a transport
+failure with no response body cannot be attributed to the provider rather than
+the network path, and there is no reproduction. It is not recorded in
+`SUPERDOCS_ISSUES.md`.
+
 ## Checks run
 
-- `npm test` — 56 passed
+- `npm test` — 61 passed
 - `npm run typecheck` — passed
 - `npm run lint` — passed
 - `npm run build` — passed (Next.js 16.3.0)
@@ -345,6 +434,11 @@ Terms and Returns, reviewed and approved/rejected as one synchronized batch.
 - No Phase 5 live run has reached an approved synchronized commit. All three
   runs used the now-retired unpinned single-job strategy and correctly failed
   closed for the reasons in `SUPERDOCS_ISSUES.md`; `returns.windowDays` has
-  never left 30 in a live run. The explicit-targeted-job fallback described
-  above has not yet been exercised against a live SuperDocs session.
+  never left 30 in a live run. The explicit-targeted-job fallback was run live
+  once and failed at job start (probable session-level job-in-flight
+  restriction, see above); it has not yet produced a reviewable batch.
+- The session-lock experiment is prepared but has not been run. Until it does,
+  whether two pinned jobs can coexist in one session is unknown, and no
+  mitigation (sequenced starts vs. a session per affected document) has been
+  chosen or implemented.
 - Intake/workspace state is not persisted across refresh

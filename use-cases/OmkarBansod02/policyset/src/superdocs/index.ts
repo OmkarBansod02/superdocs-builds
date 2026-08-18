@@ -6,9 +6,12 @@
 export { SuperDocsClient, buildStartChatPayload, createSessionId } from "./client";
 export { getSuperDocsApiKey } from "./config";
 export {
+  PROVIDER_DETAIL_MAX_LENGTH,
   SuperDocsError,
   SuperDocsInvalidResponse,
   SuperDocsRequestError,
+  redactSecrets,
+  type SuperDocsErrorDiagnostics,
 } from "./errors";
 export {
   evaluateReturnWindowCoverage,
@@ -17,6 +20,7 @@ export {
 } from "./managed-coverage";
 export {
   PolicySetSuperDocsSafetyError,
+  PolicySetSynchronizedStartError,
   assertPendingChangesTargetDocument,
   assertSynchronizedProposalCoverage,
   assertSynchronizedProposalGate,
@@ -33,6 +37,12 @@ export {
   submitPolicyDocumentReview,
   submitPolicyTargetedSynchronizedReview,
 } from "./policyset";
+export {
+  runSessionLockExperiment,
+  type SessionLockExperimentInput,
+  type SessionLockExperimentOutcome,
+  type SessionLockExperimentResult,
+} from "./session-lock-experiment";
 export {
   classifyProposalTarget,
   persistPendingProposalEvidence,
