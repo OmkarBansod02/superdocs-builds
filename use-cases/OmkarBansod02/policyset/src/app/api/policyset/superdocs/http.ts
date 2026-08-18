@@ -13,8 +13,10 @@ import {
 } from "@/domain";
 import {
   PolicySetSuperDocsSafetyError,
+  SuperDocsInvalidResponse,
   SuperDocsRequestError,
 } from "@/superdocs";
+import type { ExportFormat } from "@/superdocs/types";
 
 export class PolicySetRequestError extends Error {
   constructor(message: string) {
@@ -111,6 +113,13 @@ export function requiredPolicyDocumentType(value: unknown): PolicyDocumentType {
   return value;
 }
 
+export function requiredExportFormat(value: unknown): ExportFormat {
+  if (value !== "docx" && value !== "pdf") {
+    throw new PolicySetRequestError("format must be docx or pdf.");
+  }
+  return value;
+}
+
 export function requiredDocumentIds(
   value: unknown,
 ): Record<PolicyDocumentType, string> {
@@ -157,6 +166,9 @@ export function routeError(error: unknown): NextResponse {
     return NextResponse.json({ error: error.message }, { status: 409 });
   }
   if (error instanceof SuperDocsRequestError) {
+    return NextResponse.json({ error: error.message }, { status: 502 });
+  }
+  if (error instanceof SuperDocsInvalidResponse) {
     return NextResponse.json({ error: error.message }, { status: 502 });
   }
   if (

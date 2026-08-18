@@ -1,5 +1,7 @@
 import type { PolicyDocumentType } from "@/domain";
 
+export type PolicyDocumentExportFormat = "docx" | "pdf";
+
 export type SuperDocsWorkspaceSession = {
   sessionId: string;
   documentIds: Record<PolicyDocumentType, string>;

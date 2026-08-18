@@ -28,6 +28,7 @@ export {
   assertTargetedProposalGate,
   buildTargetedSynchronizedInstruction,
   createPolicySetSuperDocsClient,
+  exportPolicyDocument,
   getPolicyDocumentEditJob,
   getPolicyTargetedSynchronizedJob,
   getPolicySetSessionDocuments,
@@ -36,6 +37,8 @@ export {
   startPolicyDocumentEdit,
   submitPolicyDocumentReview,
   submitPolicyTargetedSynchronizedReview,
+  policyDocumentExportFilename,
+  type PolicyDocumentExport,
 } from "./policyset";
 export {
   runSessionLockExperiment,

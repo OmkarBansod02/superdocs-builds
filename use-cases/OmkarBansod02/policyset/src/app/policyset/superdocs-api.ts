@@ -1,6 +1,7 @@
 import type { ChangeSet, PolicyDocumentType, PolicyProfile } from "@/domain";
 import type {
   SuperDocsJobView,
+  PolicyDocumentExportFormat,
   SuperDocsReviewView,
   SuperDocsSessionDocumentView,
   SuperDocsSynchronizedStartView,
@@ -74,6 +75,46 @@ export async function refreshSuperDocsDocuments(
     documents: readonly SuperDocsSessionDocumentView[];
   }>(`${API_ROOT}/session?${search}`, { signal, cache: "no-store" });
   return response.documents;
+}
+
+export async function exportSuperDocsDocument(
+  input: {
+    sessionId: string;
+    documentType: PolicyDocumentType;
+    documentId: string;
+    documentIds: Record<PolicyDocumentType, string>;
+    format: PolicyDocumentExportFormat;
+    companyName: string;
+  },
+  signal?: AbortSignal,
+): Promise<{ blob: Blob; filename: string; warningCount: number }> {
+  const response = await fetch(`${API_ROOT}/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    const payload: unknown = await response.json().catch(() => null);
+    const message =
+      isRecord(payload) && typeof payload.error === "string"
+        ? payload.error
+        : "The selected policy could not be exported.";
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new Error("SuperDocs returned an empty export.");
+  }
+  return {
+    blob,
+    filename: responseFilename(response.headers.get("Content-Disposition"), input),
+    warningCount: Number(
+      response.headers.get("X-SuperDocs-Export-Warning-Count") ?? "0",
+    ),
+  };
 }
 
 export async function startSuperDocsSynchronizedChange(
@@ -152,4 +193,13 @@ async function requestJson<T>(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function responseFilename(
+  contentDisposition: string | null,
+  input: { documentType: PolicyDocumentType; format: PolicyDocumentExportFormat },
+): string {
+  const matched = contentDisposition?.match(/filename="([^"]+)"/i)?.[1];
+  const safe = matched?.split(/[\\/]/).pop();
+  return safe || `policyset-${input.documentType}.${input.format}`;
 }

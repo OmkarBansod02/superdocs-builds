@@ -10,6 +10,7 @@ import {
   type PolicyProfile,
 } from "@/domain";
 import {
+  POLICY_DOCUMENT_FILENAMES,
   POLICY_DOCUMENT_TITLES,
   generatePolicyDocuments,
 } from "@/documents";
@@ -33,7 +34,12 @@ import {
   persistPendingProposalEvidence,
   type ProposalEvidenceOptions,
 } from "./proposal-evidence";
-import type { JobSnapshot, PendingChange } from "./types";
+import type {
+  ExportArtifact,
+  ExportFormat,
+  JobSnapshot,
+  PendingChange,
+} from "./types";
 
 type PolicySetSuperDocsClient = Pick<
   SuperDocsClient,
@@ -43,6 +49,16 @@ type PolicySetSuperDocsClient = Pick<
   | "submitReview"
   | "listSessionDocuments"
 >;
+
+type PolicySetExportClient = Pick<
+  SuperDocsClient,
+  "listSessionDocuments" | "exportFocusedDocument"
+>;
+
+export type PolicyDocumentExport = {
+  artifact: ExportArtifact;
+  filename: string;
+};
 
 export class PolicySetSuperDocsSafetyError extends Error {
   constructor(message: string) {
@@ -107,6 +123,82 @@ export async function initializePolicySetSession(
   }
 
   return { sessionId, documentIds };
+}
+
+export async function exportPolicyDocument(
+  input: {
+    sessionId: string;
+    documentType: PolicyDocumentType;
+    documentId: string;
+    documentIds: Record<PolicyDocumentType, string>;
+    format: ExportFormat;
+    companyName: string;
+  },
+  client: PolicySetExportClient = createPolicySetSuperDocsClient(),
+): Promise<PolicyDocumentExport> {
+  assertDocumentMap(input.documentIds);
+
+  const mappedDocumentId = input.documentIds[input.documentType];
+  if (mappedDocumentId !== input.documentId) {
+    throw new PolicySetSuperDocsSafetyError(
+      "The requested document does not match the current PolicySet session map.",
+    );
+  }
+
+  const documents = await client.listSessionDocuments(input.sessionId, {
+    includeHtml: false,
+  });
+  const authoritativeIds = new Set(
+    documents.map((document) => document.identity.documentId),
+  );
+  const mappedIds = POLICY_DOCUMENT_TYPES.map(
+    (documentType) => input.documentIds[documentType],
+  );
+  if (
+    documents.length !== POLICY_DOCUMENT_TYPES.length ||
+    authoritativeIds.size !== POLICY_DOCUMENT_TYPES.length ||
+    mappedIds.some((documentId) => !authoritativeIds.has(documentId))
+  ) {
+    throw new PolicySetSuperDocsSafetyError(
+      "The requested document map does not match the authoritative SuperDocs session.",
+    );
+  }
+
+  const target = documents.find(
+    (document) => document.identity.documentId === mappedDocumentId,
+  );
+  if (!target) {
+    throw new PolicySetSuperDocsSafetyError(
+      "The requested document does not belong to the current PolicySet session.",
+    );
+  }
+
+  const filename = policyDocumentExportFilename(
+    input.companyName,
+    input.documentType,
+    input.format,
+  );
+  const artifact = await client.exportFocusedDocument(target.identity, {
+    format: input.format,
+    filename,
+  });
+  return { artifact, filename };
+}
+
+export function policyDocumentExportFilename(
+  companyName: string,
+  documentType: PolicyDocumentType,
+  format: ExportFormat,
+): string {
+  const company =
+    sanitizeFilenameComponent(
+      companyName.replace(
+        /\s+(?:llc|pllc|inc(?:orporated)?|corp(?:oration)?|ltd|limited)\.?$/i,
+        "",
+      ),
+    ) || "policyset";
+  const document = POLICY_DOCUMENT_FILENAMES[documentType].replace(/\.docx$/, "");
+  return `${company}-${document}.${format}`;
 }
 
 export async function startPolicyDocumentEdit(
@@ -439,7 +531,7 @@ export function buildTargetedSynchronizedInstruction(
 
   return [
     `Change the managed return window from ${previous} days to ${next} days in ${title}.`,
-    `Update every occurrence of the return window in ${title}, including both the "Return window (days)" summary fact line and the body policy prose ("within ${previous} days of delivery" and "${previous}-day window").`,
+    `Update every occurrence of the return window in ${title}'s body policy prose, including "within ${previous} days of delivery" and "${previous}-day window".`,
     `Leave no ${previous}-day return window anywhere in ${title}.`,
     ...otherTitles.map((otherTitle) => `Do not modify ${otherTitle}.`),
     "Do not change any other numeric value, including refund processing days and warranty duration.",
@@ -746,6 +838,17 @@ function assertDocumentMap(
       "The PolicySet document map contains duplicate SuperDocs identities.",
     );
   }
+}
+
+function sanitizeFilenameComponent(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "");
 }
 
 function normalizePolicyContent(html: string): string {

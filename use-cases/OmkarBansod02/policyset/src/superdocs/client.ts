@@ -198,6 +198,11 @@ export class SuperDocsClient {
     if (returnedId !== identity.documentId) {
       throw new SuperDocsInvalidResponse("SuperDocs focused an unexpected document");
     }
+    if (payload.focused === false) {
+      throw new SuperDocsInvalidResponse(
+        "SuperDocs did not confirm that the requested document is focused",
+      );
+    }
 
     const durableId = optionalString(payload.durable_document_id);
     if (

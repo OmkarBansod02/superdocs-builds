@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { PanelLeft, PanelRight, SquarePen } from "lucide-react";
+import { PanelLeft, PanelRight, SquarePen, TriangleAlert } from "lucide-react";
 import {
   POLICY_DOCUMENT_TYPES,
   type ChangeSet,
@@ -20,6 +20,7 @@ import { DOCUMENT_TITLES } from "./document-meta";
 import { DocumentPreview } from "./DocumentPreview";
 import { DocumentRail, type DocumentStatus } from "./DocumentRail";
 import { EditReviewPanel, EditStatusLine } from "./EditReview";
+import { ExportControl } from "./ExportControl";
 import type { PolicyWorkspaceState } from "./generate-workspace";
 import { PolicyFactsPanel } from "./PolicyFactsPanel";
 import { AppHeader, ConsistencyStatus } from "./shell";
@@ -27,6 +28,7 @@ import { SynchronizedReviewDialog } from "./SynchronizedReviewDialog";
 import {
   getSuperDocsJob,
   getSuperDocsSynchronizedJob,
+  exportSuperDocsDocument,
   initializeSuperDocsSession,
   refreshSuperDocsDocuments,
   startSuperDocsEdit,
@@ -35,6 +37,7 @@ import {
   submitSuperDocsSynchronizedReview,
 } from "./superdocs-api";
 import type {
+  PolicyDocumentExportFormat,
   SuperDocsJobView,
   SuperDocsTargetedJob,
   SuperDocsWorkspaceSession,
@@ -72,6 +75,10 @@ export function WorkspaceView({
     "idle" | "connecting" | "connected" | "error"
   >("idle");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] =
+    useState<PolicyDocumentExportFormat | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportWarning, setExportWarning] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [editState, setEditState] = useState<EditState>({ stage: "idle" });
   const [returnWindowInput, setReturnWindowInput] = useState(() =>
@@ -88,7 +95,8 @@ export function WorkspaceView({
   const { profile, documents, validation } = workspace;
   const editBusy = isEditBusy(editState.stage);
   const synchronizedBusy = isSynchronizedBusy(synchronizedState.stage);
-  const operationBusy = editBusy || synchronizedBusy;
+  const exportBusy = exportingFormat !== null;
+  const operationBusy = editBusy || synchronizedBusy || exportBusy;
 
   useEffect(() => {
     const controllers = operationControllersRef.current;
@@ -125,6 +133,46 @@ export function WorkspaceView({
     try {
       await ensureSession(controller.signal);
     } catch {}
+  }
+
+  async function handleExport(format: PolicyDocumentExportFormat) {
+    if (!session || operationBusy) {
+      return;
+    }
+    const selectedDocumentType = activeTab;
+    const selectedDocumentId = session.documentIds[selectedDocumentType];
+    const controller = beginOperation(operationControllersRef.current);
+    setExportingFormat(format);
+    setExportError(null);
+    setExportWarning(null);
+
+    try {
+      const exported = await exportSuperDocsDocument(
+        {
+          sessionId: session.sessionId,
+          documentType: selectedDocumentType,
+          documentId: selectedDocumentId,
+          documentIds: session.documentIds,
+          format,
+          companyName: profile.company.legalName,
+        },
+        controller.signal,
+      );
+      triggerDownload(exported.blob, exported.filename);
+      if (exported.warningCount > 0) {
+        setExportWarning(
+          `${DOCUMENT_TITLES[selectedDocumentType]} downloaded with ${exported.warningCount} SuperDocs export ${exported.warningCount === 1 ? "warning" : "warnings"}.`,
+        );
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setExportError(errorMessage(error));
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setExportingFormat(null);
+      }
+    }
   }
 
   async function handleProposeEdit() {
@@ -619,6 +667,13 @@ export function WorkspaceView({
           reviewingCount={reviewingCount}
         />
         <Separator orientation="vertical" className="mx-1 h-4" />
+        <ExportControl
+          hasSession={session !== null}
+          disabled={session === null || editBusy || synchronizedBusy}
+          exportingFormat={exportingFormat}
+          documentTitle={DOCUMENT_TITLES[activeTab]}
+          onExport={handleExport}
+        />
         <Button variant="quiet" size="sm" onClick={onEditIntake}>
           <SquarePen />
           <span className="hidden sm:inline">Edit intake</span>
@@ -669,6 +724,38 @@ export function WorkspaceView({
             busy={operationBusy}
             status={
               <>
+                {exportError ? (
+                  <div
+                    className="flex items-center gap-2 rounded-[var(--radius-control)] border border-danger-line bg-danger-soft px-3 py-2 text-[13px] text-danger"
+                    role="alert"
+                  >
+                    <TriangleAlert className="size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">{exportError}</span>
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      onClick={() => setExportError(null)}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ) : null}
+                {exportWarning ? (
+                  <div
+                    className="flex items-center gap-2 rounded-[var(--radius-control)] border border-warn-line bg-warn-soft px-3 py-2 text-[13px] text-warn"
+                    role="status"
+                  >
+                    <TriangleAlert className="size-4 shrink-0" />
+                    <span className="min-w-0 flex-1">{exportWarning}</span>
+                    <Button
+                      variant="quiet"
+                      size="sm"
+                      onClick={() => setExportWarning(null)}
+                    >
+                      Dismiss
+                    </Button>
+                  </div>
+                ) : null}
                 <EditStatusLine
                   state={editState}
                   onDismiss={() => setEditState({ stage: "idle" })}
@@ -931,4 +1018,15 @@ function errorMessage(error: unknown): string {
   return error instanceof Error
     ? error.message
     : "The SuperDocs operation could not be completed.";
+}
+
+function triggerDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
