@@ -3,6 +3,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 import pytest
 from cryptography.fernet import Fernet
@@ -350,3 +351,29 @@ async def test_explicit_watch_profile_persists_verified_combined_scope_grant() -
         assert set(connection.granted_scopes["scopes"]) == set(GOOGLE_WATCH_SCOPES)
         assert query["scope"] == [" ".join(GOOGLE_WATCH_SCOPES)]
         assert read_tokens == ["initial-access-secret"]
+
+
+async def test_registered_sources_are_listed_without_reading_google_again() -> None:
+    async with _service_environment() as (session, service, _, read_tokens):
+        connection = await _authorize(service)
+        await service.register_and_capture(connection_id=connection.id, file_id="file-a")
+        await service.register_and_capture(connection_id=connection.id, file_id="file-b")
+        # Re-registering the same file must not create a second source row.
+        await service.register_and_capture(connection_id=connection.id, file_id="file-a")
+        reads_after_registration = len(read_tokens)
+
+        sources = await service.list_sources(connection.id)
+
+        assert [source.provider_file_id for source in sources] == ["file-a", "file-b"]
+        assert all(source.display_name == "Synthetic source" for source in sources)
+        assert all(source.last_seen_at is not None for source in sources)
+        # Listing is a pure projection: no additional Google read client is built.
+        assert len(read_tokens) == reads_after_registration
+        assert await session.scalar(select(func.count()).select_from(CloudDocument)) == 2
+
+
+async def test_listing_sources_for_an_unowned_connection_is_rejected() -> None:
+    async with _service_environment() as (_, service, _, _):
+        with pytest.raises(GoogleIntegrationError) as raised:
+            await service.list_sources(uuid4())
+        assert raised.value.code is GoogleErrorCode.CONNECTION_NOT_FOUND

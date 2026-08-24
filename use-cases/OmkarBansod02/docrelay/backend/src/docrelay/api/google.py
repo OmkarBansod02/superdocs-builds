@@ -114,6 +114,21 @@ class RegisterGoogleSourceResponse(SafeAPIModel):
     preview: FrozenDocumentPreview
 
 
+class RegisteredSourceResponse(SafeAPIModel):
+    """One canonical source document DocRelay has read for this connection."""
+
+    source_id: UUID
+    provider_file_id: str
+    name: str
+    mime_type: str
+    last_seen_at: datetime | None = None
+
+
+class RegisteredSourcesResponse(SafeAPIModel):
+    connection_id: UUID
+    sources: tuple[RegisteredSourceResponse, ...]
+
+
 def _connection_response(connection: CloudConnection) -> GoogleConnectionResponse:
     scopes = connection.granted_scopes.get("scopes", [])
     return GoogleConnectionResponse(
@@ -246,6 +261,38 @@ async def disconnect_google(connection_id: UUID, request: Request) -> GoogleConn
             connection_id
         )
     return _connection_response(connection)
+
+
+@router.get(
+    "/connections/{connection_id}/sources",
+    response_model=RegisteredSourcesResponse,
+)
+async def list_google_sources(connection_id: UUID, request: Request) -> RegisteredSourcesResponse:
+    """Read-only list of the source documents already registered for a connection.
+
+    Recent needs the authoritative set of documents DocRelay has actually read,
+    including one that has been opened but has not produced a run yet. That set
+    already exists as `cloud_documents`; this endpoint only projects it.
+    """
+    runtime = _runtime(request)
+    database: Database = request.app.state.database
+    async with database.sessions() as session:
+        documents = await _service(
+            request=request, session=session, runtime=runtime
+        ).list_sources(connection_id)
+    return RegisteredSourcesResponse(
+        connection_id=connection_id,
+        sources=tuple(
+            RegisteredSourceResponse(
+                source_id=document.id,
+                provider_file_id=document.provider_file_id,
+                name=document.display_name or "Google document",
+                mime_type=document.mime_type,
+                last_seen_at=document.last_seen_at,
+            )
+            for document in documents
+        ),
+    )
 
 
 @router.post(

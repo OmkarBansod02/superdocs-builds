@@ -133,7 +133,7 @@ export function ImportingDocument({
 
           <div className="mx-auto w-full max-w-[576px] shrink-0 px-5 pt-2 pb-4">
             <div
-              className="h-[52px] rounded-[14px] border border-border-light bg-surface-sunken"
+              className="h-[52px] rounded-[14px] border border-border-light bg-surface"
               aria-hidden="true"
             />
           </div>

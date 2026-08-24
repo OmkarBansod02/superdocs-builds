@@ -25,6 +25,7 @@ export function DocumentWorkbench({
   turns,
   draft,
   busy,
+  live,
   composerEnabled,
   stateLabel,
   onDraftChange,
@@ -40,6 +41,7 @@ export function DocumentWorkbench({
   turns: UserInstructionTurn[];
   draft: string;
   busy: boolean;
+  live?: boolean;
   composerEnabled: boolean;
   stateLabel?: string;
   onDraftChange: (value: string) => void;
@@ -105,6 +107,7 @@ export function DocumentWorkbench({
             turns={turns}
             draft={draft}
             busy={busy}
+            live={live}
             composerEnabled={composerEnabled}
             onDraftChange={onDraftChange}
             onSubmit={onSubmit}

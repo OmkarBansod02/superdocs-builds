@@ -92,9 +92,9 @@ describe("successful import opens the conversation/document workbench", () => {
 
     expect(html).toContain("Vendor Agreement");
     expect(html).toContain("A1roV3");
-    expect(html).toContain("Ready when you are.");
-    expect(html).toContain("Ask for a change to this document.");
-    expect(html).toContain("Ask DocRelay anything...");
+    expect(html).toContain("Ready for an edit");
+    expect(html).toContain("Ask for a targeted change to this document.");
+    expect(html).toContain("Ask a question or request a change");
     expect(html).toContain("Payment terms are 30 days after receipt of a valid invoice.");
     expect(html).not.toContain("What do you want to change?");
     expect(html).not.toContain("Start with a change");

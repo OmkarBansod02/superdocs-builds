@@ -50,6 +50,15 @@ export interface SourceRegistration {
   preview?: FrozenDocumentPreview;
 }
 
+/** One canonical source document DocRelay has registered for a connection. */
+export interface RegisteredSource {
+  source_id: string;
+  provider_file_id: string;
+  name: string;
+  mime_type: string;
+  last_seen_at: string | null;
+}
+
 export type WriteAuthorizationState = "REQUIRED" | "AUTHORIZED";
 export type MachineWriteBackStatus =
   | "NOT_READY"
@@ -449,6 +458,17 @@ export function registerSource(
   return request<SourceRegistration>(
     `/api/v1/google/connections/${connectionId}/sources`,
     { method: "POST", body: JSON.stringify({ file_id: fileId }), signal },
+  );
+}
+
+/** Read-only projection of the registered sources. Never touches Google. */
+export function listSources(
+  connectionId: string,
+  signal?: AbortSignal,
+): Promise<{ connection_id: string; sources: RegisteredSource[] }> {
+  return request<{ connection_id: string; sources: RegisteredSource[] }>(
+    `/api/v1/google/connections/${connectionId}/sources`,
+    { signal, cache: "no-store" },
   );
 }
 

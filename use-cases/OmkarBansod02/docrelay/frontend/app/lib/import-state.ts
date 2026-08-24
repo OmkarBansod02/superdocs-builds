@@ -1,4 +1,4 @@
-import { ApiError, type RunSummary } from "./api";
+import { ApiError, type RegisteredSource, type RunSummary } from "./api";
 
 export type SelectedDriveFile = {
   fileId: string;
@@ -26,6 +26,12 @@ export type RecentDocument = {
   providerFileId: string;
   name: string;
   updatedAt: string;
+};
+
+/** The document currently open in the workbench, if any. */
+export type ActiveDocument = {
+  providerFileId: string;
+  name: string;
 };
 
 export const IMPORT_STAGES: readonly { id: ImportStageId; label: string }[] = [
@@ -82,31 +88,110 @@ export function isDocRelayBackupName(name: string): boolean {
   return name.includes(DOCRELAY_BACKUP_NAME_MARKER);
 }
 
-export function recentDocumentsFromRuns(
-  runs: RunSummary[],
+export const GOOGLE_DOC_MIME_TYPE = "application/vnd.google-apps.document";
+
+function timestamp(value: string | null | undefined): number {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/**
+ * Folds one authoritative document into the Recent map.
+ *
+ * Identity is the immutable `provider_file_id`, so the same Google document
+ * reached through a run, through the registered-source list and through the
+ * open workbench collapses into exactly one entry — the newest name and
+ * timestamp win. Internal backup copies are never user documents.
+ */
+function foldRecentDocument(
+  into: Map<string, RecentDocument>,
+  candidate: RecentDocument,
+): void {
+  const providerFileId = candidate.providerFileId.trim();
+  const name = candidate.name.trim();
+  if (!providerFileId || !name) return;
+  if (isDocRelayBackupName(name)) return;
+
+  const existing = into.get(providerFileId);
+  if (!existing) {
+    into.set(providerFileId, { providerFileId, name, updatedAt: candidate.updatedAt });
+    return;
+  }
+  if (timestamp(candidate.updatedAt) > timestamp(existing.updatedAt)) {
+    into.set(providerFileId, { providerFileId, name, updatedAt: candidate.updatedAt });
+  }
+}
+
+/**
+ * Recent documents, derived only from authoritative backend state.
+ *
+ * `sources` is the canonical set of Google documents DocRelay has actually
+ * registered and read — a document that has been opened but has not produced a
+ * run yet lives here and nowhere else. `runs` carries every document that has
+ * since been worked on, manual and watch-origin alike, and supplies the more
+ * recent timestamp once work has happened. `active` is the document open in
+ * this window right now, so the sidebar reflects it before the refetch lands;
+ * it is folded under the same file identity and therefore cannot duplicate an
+ * entry the backend already returned.
+ */
+export function recentDocuments(
+  {
+    runs = [],
+    sources = [],
+    active = null,
+  }: {
+    runs?: RunSummary[];
+    sources?: RegisteredSource[];
+    active?: ActiveDocument | null;
+  },
   limit = 8,
 ): RecentDocument[] {
   const latestByFile = new Map<string, RecentDocument>();
 
-  for (const run of runs) {
-    const providerFileId = run.provider_file_id?.trim();
-    const name = run.document_name?.trim();
-    if (!providerFileId || !name) continue;
-    if (isDocRelayBackupName(name)) continue;
+  for (const source of sources) {
+    if (source.mime_type && source.mime_type !== GOOGLE_DOC_MIME_TYPE) continue;
+    foldRecentDocument(latestByFile, {
+      providerFileId: source.provider_file_id ?? "",
+      name: source.name ?? "",
+      updatedAt: source.last_seen_at ?? "",
+    });
+  }
 
-    const existing = latestByFile.get(providerFileId);
-    if (!existing || Date.parse(run.updated_at) > Date.parse(existing.updatedAt)) {
-      latestByFile.set(providerFileId, {
-        providerFileId,
-        name,
-        updatedAt: run.updated_at,
-      });
-    }
+  for (const run of runs) {
+    foldRecentDocument(latestByFile, {
+      providerFileId: run.provider_file_id ?? "",
+      name: run.document_name ?? "",
+      updatedAt: run.updated_at,
+    });
+  }
+
+  // The open document is added only if the backend has not returned it yet,
+  // and never overwrites an authoritative name or timestamp: it carries no
+  // invented "last worked on" time, only its place at the top of the list.
+  const activeFileId = active?.providerFileId.trim() ?? "";
+  if (active && activeFileId && !latestByFile.has(activeFileId)) {
+    foldRecentDocument(latestByFile, {
+      providerFileId: activeFileId,
+      name: active.name,
+      updatedAt: "",
+    });
   }
 
   return [...latestByFile.values()]
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .sort((a, b) => {
+      if (a.providerFileId === activeFileId) return -1;
+      if (b.providerFileId === activeFileId) return 1;
+      return timestamp(b.updatedAt) - timestamp(a.updatedAt);
+    })
     .slice(0, limit);
+}
+
+/** Runs-only projection, kept for callers that have no source list. */
+export function recentDocumentsFromRuns(
+  runs: RunSummary[],
+  limit = 8,
+): RecentDocument[] {
+  return recentDocuments({ runs }, limit);
 }
 
 export function formatRelativeTime(iso: string, now = Date.now()): string {

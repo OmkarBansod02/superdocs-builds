@@ -298,11 +298,71 @@ describe("conversation empty state and pinned composer", () => {
         }),
       ),
     );
-    expect(html).toContain("Ready when you are.");
-    expect(html).toContain("Ask for a change to this document.");
-    expect(html).toContain("Ask DocRelay anything...");
-    expect(html).toContain("Enter to send");
+    expect(html).toContain("Ready for an edit");
+    expect(html).toContain("Ask for a targeted change to this document.");
+    expect(html).toContain("Ask a question or request a change");
+    expect(html).toContain("Press Enter to send");
     expect(html).toContain('aria-label="Send instruction"');
+  });
+});
+
+describe("the empty state belongs to an empty thread only", () => {
+  const workbench = (props: Record<string, unknown>) => renderToStaticMarkup(
+    createElement(
+      TooltipProvider,
+      null,
+      createElement(DocumentWorkbench, {
+        source: source(),
+        turns: [],
+        draft: "",
+        busy: false,
+        composerEnabled: true,
+        onDraftChange: () => undefined,
+        onSubmit: () => undefined,
+        onRetry: () => undefined,
+        onChangeSource: () => undefined,
+        ...props,
+      }),
+    ),
+  );
+
+  it("shows the compact empty state with at most three examples", () => {
+    const html = workbench({});
+    expect(html).toContain("Ready for an edit");
+    expect(html).toContain('aria-label="Example instructions"');
+    expect(html.match(/<li class="min-w-0">/g) ?? []).toHaveLength(3);
+  });
+
+  it("disappears completely once the first instruction exists", () => {
+    const html = workbench({
+      turns: [{ id: "t1", role: "user", text: "Change 30 days to 45 days.", status: "accepted" }],
+    });
+    expect(html).not.toContain("Ready for an edit");
+    expect(html).not.toContain('aria-label="Example instructions"');
+    expect(html).toContain("Change 30 days to 45 days.");
+  });
+
+  it("disappears when a workflow event exists even with no instruction yet", () => {
+    // The workspace always passes a list of conditional children; only the
+    // rendered ones may count as conversation content.
+    const html = workbench({
+      children: [
+        null,
+        createElement(ConversationErrorEvent, {
+          message: "Could not load this document's saved workflow history.",
+          recoverable: true,
+          onRetry: () => undefined,
+        }),
+        null,
+      ],
+    });
+    expect(html).not.toContain("Ready for an edit");
+    expect(html).toContain("saved workflow history");
+  });
+
+  it("still shows the empty state when every conditional child is null", () => {
+    const html = workbench({ children: [null, null, null] });
+    expect(html).toContain("Ready for an edit");
   });
 });
 

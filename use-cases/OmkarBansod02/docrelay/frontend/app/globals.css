@@ -24,7 +24,7 @@
      thing that is pure white by default. */
   --sidebar: #f1f2ee;          /* navigation, quietly separated from the work */
   --background: #f7f8f5;       /* working canvas the workbench sits inside */
-  --conversation: #fbfcfa;     /* conversation pane */
+  --conversation: #f5f7f4;     /* conversation pane: bright, cool, clearly not paper */
   --chrome: #fbfcfa;           /* the workbench's single top band, both tools */
   --canvas: #e9ece8;           /* document canvas behind the page */
   --surface: #ffffff;          /* cards, inputs, controls, document chrome */
@@ -687,6 +687,34 @@
   @keyframes docrelay-live {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.35; }
+  }
+
+  /* Three dots that are always present and only change opacity: work reads as
+     ongoing within a second, and nothing reflows when it stops. Under reduced
+     motion the global rule settles them at their resting opacity. */
+  .live-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+
+  .live-dots > span {
+    width: 3px;
+    height: 3px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.24;
+    animation: docrelay-dots 1.4s var(--motion-ease) infinite;
+  }
+
+  .live-dots > span:nth-child(2) { animation-delay: 0.18s; }
+  .live-dots > span:nth-child(3) { animation-delay: 0.36s; }
+
+  @keyframes docrelay-dots {
+    0%, 60%, 100% { opacity: 0.24; }
+    30% { opacity: 1; }
   }
 
   /* ---------------------------------------------------------------------- */

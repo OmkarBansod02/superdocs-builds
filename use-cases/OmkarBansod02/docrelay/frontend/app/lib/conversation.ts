@@ -31,11 +31,20 @@ export function takeQueuedRecentDocument(): RecentDocumentSelection | null {
   return file;
 }
 
-export function setActiveDocumentId(providerFileId: string | null): void {
+export type ActiveDocumentDetail = {
+  providerFileId: string | null;
+  /** Title of the open document, so the sidebar can name it immediately. */
+  name?: string | null;
+};
+
+export function setActiveDocumentId(
+  providerFileId: string | null,
+  name?: string | null,
+): void {
   if (typeof window === "undefined") return;
   window.dispatchEvent(
-    new CustomEvent<{ providerFileId: string | null }>(ACTIVE_DOCUMENT_EVENT, {
-      detail: { providerFileId },
+    new CustomEvent<ActiveDocumentDetail>(ACTIVE_DOCUMENT_EVENT, {
+      detail: { providerFileId, name: providerFileId ? name ?? null : null },
     }),
   );
 }

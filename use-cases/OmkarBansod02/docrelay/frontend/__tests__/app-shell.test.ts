@@ -28,9 +28,16 @@ vi.mock("../app/lib/api", () => ({
     connections: [],
   })),
   listRuns: vi.fn(async () => ({ runs: [] })),
+  listSources: vi.fn(async () => ({ connection_id: "conn-1", sources: [] })),
 }));
 
-import { getConnections, listRuns, type RunSummary } from "../app/lib/api";
+import {
+  getConnections,
+  listRuns,
+  listSources,
+  type RegisteredSource,
+  type RunSummary,
+} from "../app/lib/api";
 import { AppShell } from "../app/components/app-shell";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { ACTIVE_DOCUMENT_EVENT, NEW_DOCUMENT_EVENT } from "../app/lib/conversation";
@@ -78,6 +85,26 @@ function runSummary(overrides: Partial<RunSummary>): RunSummary {
   };
 }
 
+const CONNECTED = {
+  connection_id: "conn-1",
+  provider: "GOOGLE" as const,
+  status: "CONNECTED" as const,
+  granted_scopes: [],
+  last_validated_at: null,
+  disconnected_at: null,
+};
+
+function registeredSource(overrides: Partial<RegisteredSource> = {}): RegisteredSource {
+  return {
+    source_id: "source-1",
+    provider_file_id: "file-vendor",
+    name: "Vendor Agreement",
+    mime_type: "application/vnd.google-apps.document",
+    last_seen_at: "2026-08-14T12:00:00Z",
+    ...overrides,
+  };
+}
+
 async function flushEffects() {
   await act(async () => {
     await Promise.resolve();
@@ -93,12 +120,14 @@ describe("application shell", () => {
     restoreRecentDocument("file-vendor");
     vi.mocked(getConnections).mockReset();
     vi.mocked(listRuns).mockReset();
+    vi.mocked(listSources).mockReset();
     vi.mocked(getConnections).mockResolvedValue({
       oauth_configured: true,
       selected_scopes: [],
       connections: [],
     });
     vi.mocked(listRuns).mockResolvedValue({ runs: [] });
+    vi.mocked(listSources).mockResolvedValue({ connection_id: "conn-1", sources: [] });
   });
 
   it("renders primary navigation and brand without changing routes", async () => {
@@ -269,6 +298,163 @@ describe("application shell", () => {
 
     expect(readHiddenRecents().has("file-vendor")).toBe(false);
     expect(container.textContent).toContain("Vendor Agreement");
+
+    root.unmount();
+  });
+
+  it("lists a registered source that has no run yet, without a reload", async () => {
+    vi.mocked(getConnections).mockResolvedValue({
+      oauth_configured: true,
+      selected_scopes: [],
+      connections: [CONNECTED],
+    });
+    // The document was opened and registered, but nothing has been asked of it.
+    vi.mocked(listRuns).mockResolvedValue({ runs: [] });
+    vi.mocked(listSources).mockResolvedValue({
+      connection_id: "conn-1",
+      sources: [registeredSource()],
+    });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AppShell, null, createElement("div", null, "Workspace content")),
+        ),
+      );
+    });
+    await flushEffects();
+
+    expect(listSources).toHaveBeenCalledWith("conn-1", expect.anything());
+    expect(container.textContent).toContain("Vendor Agreement");
+    expect(container.textContent).not.toContain("No documents yet.");
+
+    root.unmount();
+  });
+
+  it("refetches when a document is opened and never duplicates the same source", async () => {
+    vi.mocked(getConnections).mockResolvedValue({
+      oauth_configured: true,
+      selected_scopes: [],
+      connections: [CONNECTED],
+    });
+    vi.mocked(listRuns).mockResolvedValue({
+      runs: [runSummary({ provider_file_id: "file-vendor", document_name: "Vendor Agreement" })],
+    });
+    vi.mocked(listSources).mockResolvedValue({
+      connection_id: "conn-1",
+      sources: [registeredSource()],
+    });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AppShell, null, createElement("div", null, "Workspace content")),
+        ),
+      );
+    });
+    await flushEffects();
+
+    const callsBeforeOpen = vi.mocked(listSources).mock.calls.length;
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(ACTIVE_DOCUMENT_EVENT, {
+          detail: { providerFileId: "file-vendor", name: "Vendor Agreement" },
+        }),
+      );
+    });
+    await flushEffects();
+
+    // Opening the document invalidates the list without a page reload.
+    expect(vi.mocked(listSources).mock.calls.length).toBeGreaterThan(callsBeforeOpen);
+    // The run, the registered source and the open document are one entry.
+    const rows = container.querySelectorAll('[aria-label="Recent documents"] li');
+    expect(rows).toHaveLength(1);
+
+    root.unmount();
+  });
+
+  it("names a freshly opened document before the source list resolves", async () => {
+    vi.mocked(getConnections).mockResolvedValue({
+      oauth_configured: true,
+      selected_scopes: [],
+      connections: [CONNECTED],
+    });
+    vi.mocked(listRuns).mockResolvedValue({ runs: [] });
+    vi.mocked(listSources).mockResolvedValue({ connection_id: "conn-1", sources: [] });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AppShell, null, createElement("div", null, "Workspace content")),
+        ),
+      );
+    });
+    await flushEffects();
+    expect(container.textContent).toContain("No documents yet.");
+
+    await act(async () => {
+      window.dispatchEvent(
+        new CustomEvent(ACTIVE_DOCUMENT_EVENT, {
+          detail: { providerFileId: "file-new", name: "Master Services Agreement" },
+        }),
+      );
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Master Services Agreement");
+
+    root.unmount();
+  });
+
+  it("keeps a backup copy out of Recent even when it is a registered source", async () => {
+    vi.mocked(getConnections).mockResolvedValue({
+      oauth_configured: true,
+      selected_scopes: [],
+      connections: [CONNECTED],
+    });
+    vi.mocked(listRuns).mockResolvedValue({ runs: [] });
+    vi.mocked(listSources).mockResolvedValue({
+      connection_id: "conn-1",
+      sources: [
+        registeredSource(),
+        registeredSource({
+          source_id: "source-2",
+          provider_file_id: "file-backup",
+          name: "Vendor Agreement — DocRelay backup — 2026-08-14T12-00-00Z — A1roV34H9ERMvb0",
+          last_seen_at: "2026-08-14T12:05:00Z",
+        }),
+      ],
+    });
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(
+          TooltipProvider,
+          null,
+          createElement(AppShell, null, createElement("div", null, "Workspace content")),
+        ),
+      );
+    });
+    await flushEffects();
+
+    expect(container.textContent).toContain("Vendor Agreement");
+    expect(container.textContent).not.toContain("DocRelay backup");
+    expect(container.querySelectorAll('[aria-label="Recent documents"] li')).toHaveLength(1);
 
     root.unmount();
   });

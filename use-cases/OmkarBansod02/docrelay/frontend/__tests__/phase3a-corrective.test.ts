@@ -102,10 +102,13 @@ describe("panels stay structurally distinct and contained", () => {
     );
     expect(html).toContain('aria-label="Document conversation"');
     expect(html).toContain('aria-label="Document"');
-    // Locked desktop conversation geometry (420 default / 360 min / 470 max).
-    expect(html).toContain("lg:w-[420px]");
-    expect(html).toContain("lg:min-w-[360px]");
-    expect(html).toContain("lg:max-w-[470px]");
+    // Desktop conversation geometry is one resizable, clamped width driven by
+    // the `--conversation-w` custom property on the workbench.
+    expect(html).toContain("conversation-pane");
+    expect(html).toContain("--conversation-w:452px");
+    expect(html).toContain('aria-label="Resize conversation pane"');
+    expect(html).toContain('aria-valuemin="380"');
+    expect(html).toContain('aria-valuemax="640"');
     // Document preview still uses the frozen source blocks.
     expect(html).toContain("Payment is due within 40 days.");
     expect(html).toContain("read-only");
@@ -140,7 +143,7 @@ describe("review renders a contained conversation card, never the old page layou
       }),
     );
     expect(html).toContain("1 change prepared for review");
-    expect(html).toContain("Change 1");
+    expect(html).toContain("Proposed change 1");
     expect(html).toContain(">40</mark>");
     expect(html).toContain(">25</mark>");
     expect(html).toContain("days.");

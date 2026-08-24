@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,15 +24,25 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-import { getAuthorizeUrl, getConnections, listRuns, type GoogleConnection } from "../lib/api";
+import {
+  getAuthorizeUrl,
+  getConnections,
+  listRuns,
+  listSources,
+  type GoogleConnection,
+  type RegisteredSource,
+  type RunSummary,
+} from "../lib/api";
 import {
   ACTIVE_DOCUMENT_EVENT,
   NEW_DOCUMENT_EVENT,
   requestOpenRecentDocument,
+  type ActiveDocumentDetail,
 } from "../lib/conversation";
 import {
   formatRelativeTime,
-  recentDocumentsFromRuns,
+  recentDocuments,
+  type ActiveDocument,
   type RecentDocument,
 } from "../lib/import-state";
 import {
@@ -61,9 +71,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [connection, setConnection] = useState<GoogleConnection | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [recent, setRecent] = useState<RecentDocument[]>([]);
-  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [sources, setSources] = useState<RegisteredSource[]>([]);
+  const [active, setActive] = useState<ActiveDocument | null>(null);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const activeFileId = active?.providerFileId ?? null;
   // Presentation of the rail is driven by the `data-sidebar` attribute the
   // head script already applied before first paint, so this value only informs
   // behaviour (tooltips, aria) and never causes a hydration mismatch.
@@ -89,28 +101,50 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => controller.abort();
   }, []);
 
+  // Recent is derived from authoritative backend state only: the registered
+  // source documents and the runs performed on them. Re-running whenever the
+  // open document changes is the invalidation step — registering a source is
+  // exactly what makes it appear in `listSources`, so no reload is needed.
+  const connectionId = connection?.connection_id ?? null;
   useEffect(() => {
-    if (!connection) return;
+    // Without a connection there is nothing authoritative to read; the list is
+    // already gated on `connection` below, so no state has to be cleared here.
+    if (!connectionId) return;
 
     const controller = new AbortController();
+    const aborted = (reason: unknown) => (
+      controller.signal.aborted
+      || (reason instanceof Error && reason.name === "AbortError")
+    );
+
     void listRuns(controller.signal)
       .then((response) => {
         if (controller.signal.aborted) return;
-        setRecent(recentDocumentsFromRuns(response.runs));
+        setRuns(response.runs);
       })
       .catch((reason) => {
-        if (reason instanceof DOMException && reason.name === "AbortError") return;
-        if (reason instanceof Error && reason.name === "AbortError") return;
-        if (!controller.signal.aborted) setRecent([]);
+        if (!aborted(reason)) setRuns([]);
+      });
+
+    void listSources(connectionId, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return;
+        setSources(response.sources);
+      })
+      .catch((reason) => {
+        if (!aborted(reason)) setSources([]);
       });
 
     return () => controller.abort();
-  }, [connection, pathname]);
+  }, [connectionId, pathname, activeFileId]);
 
   useEffect(() => {
     const onActive = (event: Event) => {
-      const detail = (event as CustomEvent<{ providerFileId: string | null }>).detail;
-      setActiveFileId(detail?.providerFileId ?? null);
+      const detail = (event as CustomEvent<ActiveDocumentDetail>).detail;
+      const providerFileId = detail?.providerFileId ?? null;
+      setActive(providerFileId
+        ? { providerFileId, name: detail?.name?.trim() || "Google document" }
+        : null);
     };
     window.addEventListener(ACTIVE_DOCUMENT_EVENT, onActive);
     return () => window.removeEventListener(ACTIVE_DOCUMENT_EVENT, onActive);
@@ -122,6 +156,10 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (activeFileId) restoreRecentDocument(activeFileId);
   }, [activeFileId]);
 
+  const recent = useMemo(
+    () => recentDocuments({ runs, sources, active }),
+    [active, runs, sources],
+  );
   const visibleRecent = connection ? recent.filter((item) => !hidden.has(item.providerFileId)) : [];
 
   const openRecent = (document: RecentDocument) => {

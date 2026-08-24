@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { listRuns, listWatchRules, listWatches, type RunSummary } from "../lib/api";
+import { isDocRelayBackupName } from "../lib/import-state";
 import { ICON_STROKE, icons } from "@/lib/icons";
 import { GoogleDocsMark } from "./brand";
 import { RunStatus } from "./run-status";
@@ -102,6 +103,13 @@ export function RunsWorkspace() {
                         <span className="flex items-center gap-2.5 text-[13.5px] font-medium tracking-[-0.014em] text-ink">
                           <GoogleDocsMark className="size-[15px]" />
                           <span className="min-w-0 truncate">{run.document_name}</span>
+                          {/* The run really did target this Google file, so the
+                              row stays — it is only labelled for what the file
+                              is: a versioned copy DocRelay created, not the
+                              authoritative source document. */}
+                          {isDocRelayBackupName(run.document_name) ? (
+                            <span className="pill pill-neutral shrink-0">Backup copy</span>
+                          ) : null}
                         </span>
                       </td>
                       <td className="px-3 py-4 text-[13.25px] text-muted">

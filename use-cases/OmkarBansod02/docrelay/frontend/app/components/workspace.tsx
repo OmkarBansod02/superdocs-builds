@@ -654,11 +654,17 @@ export function Workspace() {
 
   const sourced = workbenchSource(state);
   const reopeningFileId = reopenThread?.file.fileId ?? null;
+  const reopeningName = reopenThread?.file.name ?? null;
 
+  // The sidebar learns the open document's identity and title from here, so a
+  // freshly opened source is named in Recent before any refetch resolves.
   useEffect(() => {
-    setActiveDocumentId(sourced?.source.provider_file_id ?? reopeningFileId);
+    setActiveDocumentId(
+      sourced?.source.provider_file_id ?? reopeningFileId,
+      sourced?.source.name ?? reopeningName,
+    );
     return () => setActiveDocumentId(null);
-  }, [reopeningFileId, sourced?.source.provider_file_id]);
+  }, [reopeningFileId, reopeningName, sourced?.source.name, sourced?.source.provider_file_id]);
 
   const entryKey =
     state.stage === "importing"
@@ -685,6 +691,15 @@ export function Workspace() {
       || (!matchingThread.canContinue && !confirmedNoWrite)
     ),
   );
+  // Truthful "work is happening" signal: every branch below is a real pending
+  // request or a run the backend has not finished, never a timer.
+  const workflowLive = submitting
+    || threadBusy
+    || state.stage === "processing"
+    || (state.stage === "dry-run" && state.writing)
+    || (state.stage === "review" && state.submitting)
+    || (state.stage === "write-result" && state.deciding);
+
   const retryReopen = () => {
     if (!reopenThread) return;
     const connection = "connection" in state ? state.connection : null;
@@ -739,6 +754,7 @@ export function Workspace() {
         turns={conversation}
         draft={draft}
         busy={submitting || threadBusy}
+        live={workflowLive}
         composerEnabled={composerCanContinue && !threadBlocked}
         stateLabel={matchingThread?.historyError
           ? "Needs attention"
@@ -760,10 +776,10 @@ export function Workspace() {
           : undefined}
       >
         {matchingThread?.historyLoading ? (
-          <DocRelayEvent title="Loading saved document history…" />
+          <DocRelayEvent title="Loading saved document history" live />
         ) : null}
         {matchingThread?.activeRunLoading ? (
-          <DocRelayEvent title="Loading the active workflow…" />
+          <DocRelayEvent title="Loading the active workflow" live />
         ) : null}
         {matchingThread?.historyError ? (
           <ConversationErrorEvent
@@ -865,13 +881,14 @@ function ReopenSourceFailure({
             turns={turns}
             draft=""
             busy={thread.historyLoading}
+            live={thread.historyLoading}
             composerEnabled={false}
             onDraftChange={() => undefined}
             onSubmit={() => undefined}
             onRetry={() => undefined}
           >
             {thread.historyLoading ? (
-              <DocRelayEvent title="Loading saved document history…" />
+              <DocRelayEvent title="Loading saved document history" live />
             ) : null}
             {thread.historyError ? (
               <DocRelayEvent title="Saved workflow history could not be loaded." />

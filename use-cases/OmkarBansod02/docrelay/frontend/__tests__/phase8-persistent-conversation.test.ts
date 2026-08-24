@@ -22,6 +22,7 @@ vi.mock("../app/lib/api", async (importOriginal) => {
     getConnections: vi.fn(),
     getRun: vi.fn(),
     listRuns: vi.fn(),
+    listSources: vi.fn(),
     registerSource: vi.fn(),
     startRun: vi.fn(),
     resumeRun: vi.fn(),
@@ -36,6 +37,7 @@ import {
   getConnections,
   getRun,
   listRuns,
+  listSources,
   registerSource,
   startRun,
   type RunSummary,
@@ -214,6 +216,7 @@ describe("recent document reopen", () => {
     vi.mocked(getConnections).mockReset();
     vi.mocked(getRun).mockReset();
     vi.mocked(listRuns).mockReset();
+    vi.mocked(listSources).mockReset();
     vi.mocked(registerSource).mockReset();
     vi.mocked(startRun).mockReset();
     vi.mocked(createDryRun).mockReset();
@@ -223,6 +226,7 @@ describe("recent document reopen", () => {
       connections: [connection],
     });
     vi.mocked(listRuns).mockResolvedValue({ runs: persistedRuns });
+    vi.mocked(listSources).mockResolvedValue({ connection_id: "connection-1", sources: [] });
     vi.mocked(registerSource)
       .mockResolvedValueOnce(source("capture-R3", "R3"))
       .mockResolvedValueOnce(source("capture-R4", "R4"));
@@ -264,7 +268,11 @@ describe("recent document reopen", () => {
     await flushEffects();
 
     expect(registerSource).toHaveBeenNthCalledWith(1, "connection-1", "file-vendor", expect.any(AbortSignal));
-    expect(listRuns).toHaveBeenCalledTimes(2);
+    // Shell load, the workspace's own history read, and the shell's refetch
+    // once the document is open — that last one is what keeps Recent current
+    // without a reload.
+    expect(listRuns).toHaveBeenCalledTimes(3);
+    expect(listSources).toHaveBeenCalledTimes(2);
     const text = container.textContent ?? "";
     expect(text.indexOf("Change payment from 30 to 20.")).toBeLessThan(text.indexOf("Now change support from 5 to 7."));
     expect(text.match(/Change written and verified\./g)).toHaveLength(2);

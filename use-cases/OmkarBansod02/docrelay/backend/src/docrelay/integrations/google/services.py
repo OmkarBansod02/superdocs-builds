@@ -228,6 +228,29 @@ class GoogleConnectionService:
         )
         return tuple(rows)
 
+    async def list_sources(self, connection_id: UUID) -> tuple[CloudDocument, ...]:
+        """Registered source documents for one connection, most recent first.
+
+        This is a read-only projection of the canonical `CloudDocument` rows
+        that `register_and_capture` already persists for every source DocRelay
+        has actually read — manual picks and watch-discovered documents alike.
+        Nothing is fetched from Google and no row is created or modified.
+        """
+        connection = await self._owned_connection(connection_id)
+        rows = await self._session.scalars(
+            select(CloudDocument)
+            .where(CloudDocument.connection_id == connection.id)
+            .order_by(
+                # `last_seen_at` is written on every capture, so it is the
+                # truthful recency key; the null guard keeps the ordering
+                # portable if a row ever predates that field.
+                CloudDocument.last_seen_at.is_(None),
+                CloudDocument.last_seen_at.desc(),
+                CloudDocument.updated_at.desc(),
+            )
+        )
+        return tuple(rows)
+
     async def disconnect(self, connection_id: UUID) -> CloudConnection:
         connection = await self._owned_connection(connection_id)
         credential = await self._credential_for(connection.id)

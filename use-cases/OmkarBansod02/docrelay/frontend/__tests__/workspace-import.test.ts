@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ApiError, type RunSummary } from "../app/lib/api";
+import { ApiError, type RegisteredSource, type RunSummary } from "../app/lib/api";
 import {
   buildRegistrationPayload,
   extractSelectedFile,
@@ -8,8 +8,20 @@ import {
   isDocRelayBackupName,
   mapImportFailure,
   mapPickerFailure,
+  recentDocuments,
   recentDocumentsFromRuns,
 } from "../app/lib/import-state";
+
+function source(overrides: Partial<RegisteredSource> = {}): RegisteredSource {
+  return {
+    source_id: "source-1",
+    provider_file_id: "file-1",
+    name: "Vendor Agreement",
+    mime_type: "application/vnd.google-apps.document",
+    last_seen_at: "2026-08-12T09:00:00Z",
+    ...overrides,
+  };
+}
 
 function run(overrides: Partial<RunSummary>): RunSummary {
   return {
@@ -172,5 +184,80 @@ describe("picker selection still does not register on cancel", () => {
     });
     expect(file).not.toBeNull();
     expect(buildRegistrationPayload(file!)).toEqual({ file_id: "file-9" });
+  });
+});
+
+describe("recent documents from registered sources and the open document", () => {
+  it("lists a registered source that has produced no run yet", () => {
+    const recent = recentDocuments({ runs: [], sources: [source()] });
+
+    expect(recent).toEqual([
+      { providerFileId: "file-1", name: "Vendor Agreement", updatedAt: "2026-08-12T09:00:00Z" },
+    ]);
+  });
+
+  it("collapses the same file reached through a source, a run and the open document", () => {
+    const recent = recentDocuments({
+      runs: [run({ provider_file_id: "file-1", document_name: "Vendor Agreement" })],
+      sources: [source()],
+      active: { providerFileId: "file-1", name: "Vendor Agreement" },
+    });
+
+    expect(recent).toHaveLength(1);
+    // The run is newer than the last capture, so its timestamp wins.
+    expect(recent[0]).toEqual({
+      providerFileId: "file-1",
+      name: "Vendor Agreement",
+      updatedAt: "2026-08-12T12:00:00Z",
+    });
+  });
+
+  it("shows the open document immediately and invents no timestamp for it", () => {
+    const recent = recentDocuments({
+      runs: [],
+      sources: [],
+      active: { providerFileId: "file-new", name: "Master Services Agreement" },
+    });
+
+    expect(recent).toEqual([
+      { providerFileId: "file-new", name: "Master Services Agreement", updatedAt: "" },
+    ]);
+    expect(formatRelativeTime("")).toBe("");
+  });
+
+  it("pins the open document first without disturbing the rest of the order", () => {
+    const recent = recentDocuments({
+      runs: [
+        run({ run_id: "b", provider_file_id: "file-b", document_name: "B", updated_at: "2026-08-13T10:00:00Z" }),
+        run({ run_id: "c", provider_file_id: "file-c", document_name: "C", updated_at: "2026-08-11T10:00:00Z" }),
+      ],
+      sources: [source({ provider_file_id: "file-a", name: "A", last_seen_at: "2026-08-09T10:00:00Z" })],
+      active: { providerFileId: "file-a", name: "A" },
+    });
+
+    expect(recent.map((item) => item.name)).toEqual(["A", "B", "C"]);
+  });
+
+  it("never lets a backup copy or a non-Google-Doc source enter Recent", () => {
+    const recent = recentDocuments({
+      sources: [
+        source(),
+        source({
+          source_id: "source-2",
+          provider_file_id: "file-backup",
+          name: "Vendor Agreement — DocRelay backup — 2026-08-14T12-00-00Z — A1roV34H9ERMvb0",
+          last_seen_at: "2026-08-14T12:05:00Z",
+        }),
+        source({
+          source_id: "source-3",
+          provider_file_id: "file-sheet",
+          name: "Rate card",
+          mime_type: "application/vnd.google-apps.spreadsheet",
+          last_seen_at: "2026-08-14T13:00:00Z",
+        }),
+      ],
+    });
+
+    expect(recent.map((item) => item.providerFileId)).toEqual(["file-1"]);
   });
 });

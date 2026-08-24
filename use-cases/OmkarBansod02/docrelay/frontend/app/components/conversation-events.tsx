@@ -110,11 +110,30 @@ export function TurnFrame({
   );
 }
 
+/**
+ * Ongoing-work indicator: three dots that are always laid out and only change
+ * opacity, so nothing shifts when the work finishes. Used only where the
+ * application really is waiting on something.
+ */
+export function LiveDots({ label = "In progress" }: { label?: string }) {
+  return (
+    <>
+      <span className="live-dots" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </span>
+      <span className="sr-only">{label}</span>
+    </>
+  );
+}
+
 export function DocRelayEvent({
   title,
   subtitle,
   mark,
   quiet = false,
+  live = false,
   children,
 }: {
   title?: string;
@@ -123,6 +142,8 @@ export function DocRelayEvent({
   mark?: "verified" | "attention";
   /** Historical, read-only turns recede behind the active run. */
   quiet?: boolean;
+  /** True only while this event is waiting on real asynchronous work. */
+  live?: boolean;
   children?: ReactNode;
 }) {
   return (
@@ -151,8 +172,10 @@ export function DocRelayEvent({
               "type-message min-w-0",
               quiet ? "font-normal text-muted" : "font-medium text-foreground",
             )}
+            aria-live={live ? "polite" : undefined}
           >
             {title}
+            {live ? <LiveDots /> : null}
           </p>
         ) : null}
         {subtitle ? (
@@ -245,7 +268,7 @@ export function ProcessingEvent({
   const attention = attentionMessage(run.attention_code);
 
   return (
-    <DocRelayEvent title="Preparing changes">
+    <DocRelayEvent title="Preparing changes" live>
       {/* A rail rather than a list of bullets: the run reads as one continuous
           process, and a completed step visibly leads into the next. */}
       <ol className="relative" aria-label="Progress" aria-live="polite">
@@ -275,9 +298,7 @@ export function ProcessingEvent({
               aria-current={step.state === "current" ? "step" : undefined}
             >
               {step.label}
-              {step.state === "current" ? (
-                <span className="sr-only"> in progress</span>
-              ) : null}
+              {step.state === "current" ? <LiveDots label="in progress" /> : null}
               {step.state === "complete" ? (
                 <span className="sr-only"> complete</span>
               ) : null}
@@ -601,8 +622,8 @@ export function DryRunEvent({
 
   if (writing) {
     return (
-      <DocRelayEvent title="Writing back safely">
-        <div className="flex items-start gap-2.5 rounded-[10px] border border-border-light bg-surface-sunken px-3.5 py-3">
+      <DocRelayEvent title="Writing back safely" live>
+        <div className="flex items-start gap-2.5 rounded-[10px] border border-border-light bg-surface px-3.5 py-3">
           <span className="relative mt-[3px] grid size-3.5 shrink-0 place-items-center" aria-hidden="true">
             <span className="absolute inset-0 rounded-full bg-primary/15 live-dot" />
             <span className="size-[7px] rounded-full bg-primary" />
@@ -680,7 +701,7 @@ export function DryRunEvent({
             />
           </button>
           {showEvidence ? (
-            <dl className="mt-2 space-y-2 rounded-[10px] border border-border-light bg-surface-sunken px-3 py-2.5 font-mono text-[11.5px] leading-[1.5] text-muted">
+            <dl className="mt-2 space-y-2 rounded-[10px] border border-border-light bg-surface px-3 py-2.5 font-mono text-[11.5px] leading-[1.5] text-muted">
               {dryRun.mapping_proof_id ? (
                 <EvidenceRow label="MappingProof" value={dryRun.mapping_proof_id} />
               ) : null}
