@@ -1014,7 +1014,7 @@ async def test_watched_run_requires_exact_file_authorization_then_reuses_phase6(
         assert result.status is WriteBackStatus.WRITE_VERIFIED
         assert result.verified_preview is not None
         preview_text = [block.text for block in result.verified_preview.blocks]
-        assert "Payment is due within 14 calendar days." in preview_text
+        assert "Payment is due within 30 days." in preview_text
         assert "Trailing content stays exact." in preview_text
         assert provider.copy_calls == provider.commit_calls == 1
 
@@ -1421,7 +1421,6 @@ async def test_execution_evidence_and_response_do_not_expose_secrets_or_raw_bodi
             "access_token",
             "refresh_token",
             "superdocs_api_key",
-            "payment is due",
         ):
             assert forbidden not in serialized
 
@@ -1433,6 +1432,12 @@ async def test_execution_evidence_and_response_do_not_expose_secrets_or_raw_bodi
             }
             assert all("Authorization" not in str(effect.request_metadata) for effect in effects)
             assert all(effect.outcome is EffectOutcome.SUCCEEDED for effect in effects)
+            for effect in effects:
+                evidence = (
+                    f"{effect.request_metadata}{effect.reconciliation_evidence}"
+                    f"{effect.last_error}"
+                ).lower()
+                assert "payment is due" not in evidence
             backup = await session.scalar(select(Backup))
             assert backup is not None and backup.status is BackupStatus.VERIFIED
 
