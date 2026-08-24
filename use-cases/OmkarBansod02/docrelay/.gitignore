@@ -56,3 +56,4 @@ backend/dist/
 backend/**/*.egg-info/
 backend/.docrelay-artifacts/
 TASK.md
+PROGRESS.md

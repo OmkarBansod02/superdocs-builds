@@ -8,8 +8,6 @@ Built by Omkar Bansod for the SuperDocs Engineer Task.
 
 ## Screenshot
 
-A current public-safe product screenshot is not yet checked in. The images under `frontend/design-concepts/` are design references rather than implementation evidence, so they are intentionally not embedded here. 
-
 ![DocRelay review workbench](./assets/docrelay-workbench.png)
 
 ## Why DocRelay
@@ -330,17 +328,17 @@ DOCRELAY_LIVE_PHASE6_CONFLICT_FILE_ID=dedicated-conflict-google-doc-id \
 uv run pytest -q tests/test_phase6_live.py
 ```
 
-This test intentionally requires two dedicated synthetic native Google Docs: it creates a real backup, writes the success document, and simulates a concurrent edit in the conflict document. The repository records a live single-replacement success and stale-write rejection. Live Watch restricted-scope discovery and live multi-approved write remain manual/pending evidence.
+This test intentionally requires two dedicated synthetic native Google Docs: it creates a real backup, writes the success document, and simulates a concurrent edit in the conflict document. The repository records a live single-replacement success and stale-write rejection. A Watch-origin document has additionally been taken manually through restricted-scope discovery, exact-file authorization, and verified write-back, and a concurrent human edit was manually confirmed to stop at `GOOGLE_SOURCE_REVISION_CONFLICT` before any overwrite. A live multi-approved write remains manual/pending evidence.
 
 ## Supported scope and limitations
 
 DocRelay deliberately prefers a bounded proven write subset over best-effort mutation of arbitrary Google Docs structure.
 
 - V1 targets explicitly authorized native Google Docs in My Drive-compatible locations with one provable parent; Watch roots must be owned My Drive folders. Uploaded DOCX/PDF, Sheets, Slides, Shared Drives, shared-with-me Watch roots, and multi-parent/ambiguous backup destinations are not write-back targets.
-- A writable replacement must be a unique internal ordinary-ASCII text span in a top-level `NORMAL_TEXT`, non-list body paragraph represented by one plain text run, with no formatting delta. Variable UTF-16 lengths and multiple non-overlapping approved replacements are supported.
-- Heading/title edits, tables, lists, headers/footers, multi-run or styled-span edits, creates/appends/deletes, non-ASCII replacements, overlapping ranges, and ambiguous repeated preimages fail closed. Those structures are still retained and compared during post-write verification.
+- A writable replacement must be a unique ordinary-ASCII text span in a top-level, non-list body paragraph whose named style is `NORMAL_TEXT`, `TITLE`, `SUBTITLE`, or `HEADING_1`–`HEADING_6`, represented by one plain text run with no formatting delta. Internal, prefix, suffix, and full visible-block replacements, variable UTF-16 lengths, and multiple non-overlapping approved replacements are supported.
+- Tables, lists, headers/footers, multi-block structural transformations, multi-run or styled-span edits, creates/appends/deletes, non-ASCII replacements, overlapping ranges, and ambiguous repeated preimages fail closed. Those structures are still retained and compared during post-write verification.
 - The document preview is a read-only rendering of the frozen canonical source, not a replacement Google Docs editor and not visual fidelity proof.
-- Watch requires the restricted `drive.readonly` scope for unattended discovery. The code enforces a selected owned-root boundary, but production use still requires the applicable Google verification, security, privacy, and retention work; the live restricted-scope descendant-discovery proof remains pending.
+- Watch requires the restricted `drive.readonly` scope for unattended discovery. The code enforces a selected owned-root boundary, but production use still requires the applicable Google verification, security, privacy, and retention work.
 - Watch deduplicates an already-enqueued provider version. It does not currently persist a dedicated suppression marker for the new provider version created by DocRelay's own successful write, so post-write self-trigger suppression is not claimed.
 - Watched documents require exact-file Picker authorization before write-back because discovery authority is not write authority.
 - Multi-document support is multiple independent document runs and grouped summaries, not cross-document reasoning or a shared SuperDocs session.
